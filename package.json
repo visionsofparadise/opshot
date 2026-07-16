@@ -1,0 +1,70 @@
+{
+  "name": "opshot",
+  "version": "0.1.0",
+  "description": "Valtio state with snapshot reads, one mutate write path, and snapshot-diff ops",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./react": {
+      "import": "./dist/resnapshot.js",
+      "types": "./dist/resnapshot.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Matt Cavender",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/visionsofparadise/opshot.git"
+  },
+  "scripts": {
+    "check": "concurrently \"eslint . --fix --cache --format ./agent-eslint.js\" \"tsc --noEmit --pretty false 2>&1 | node ./agent-tsc.js\"",
+    "check:verbose": "concurrently \"eslint . --cache\" \"tsc --noEmit\"",
+    "lint": "eslint . --fix --cache --format ./agent-eslint.js",
+    "lint:verbose": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "unit": "vitest run unit",
+    "build": "tsup --config tsup.config.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "valtio": "2.3.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.17",
+    "concurrently": "^10.0.3",
+    "eslint": "^9.39.5",
+    "eslint-plugin-barrel-files": "^3.0.1",
+    "eslint-plugin-check-file": "^3.3.1",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
+  }
+}
