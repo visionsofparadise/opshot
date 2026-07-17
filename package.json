@@ -1,7 +1,7 @@
 {
   "name": "opshot",
   "version": "0.1.0",
-  "description": "Valtio state with snapshot reads, one mutate write path, and snapshot-diff ops",
+  "description": "Plain-object state for React: mutate it directly, re-render only the components that read what changed, and track every change operation",
   "type": "module",
   "exports": {
     ".": {
