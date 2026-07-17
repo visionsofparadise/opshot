@@ -2,7 +2,7 @@ import { proxy, ref, snapshot, type Snapshot } from "valtio/vanilla";
 import { diffSnapshots, type Op } from "./diff";
 
 export type MutateOptions = Record<string, unknown>;
-export type Mutate<T extends object> = (callback: (draft: T) => void, options?: MutateOptions) => void;
+export type Mutate<T extends object> = (callback: (proxy: T) => void, options?: MutateOptions) => void;
 export type StateListener<T extends object> = (state: State<T>, ops: Array<Op>, options: MutateOptions) => void;
 
 export interface OpshotHandle<T extends object> {
@@ -11,6 +11,7 @@ export interface OpshotHandle<T extends object> {
 	readonly mutate: Mutate<T>;
 	readonly subscribe: (listener: StateListener<T>) => () => void;
 	readonly isSameState: (other: unknown) => boolean;
+	readonly unwrap: () => Snapshot<T>;
 }
 
 export type State<T extends object> = Snapshot<T> & {
@@ -28,12 +29,17 @@ interface MutableOpshotHandle<T extends object> {
 	readonly mutate: Mutate<T>;
 	readonly subscribe: (listener: StateListener<T>) => () => void;
 	readonly isSameState: (other: unknown) => boolean;
+	readonly unwrap: () => Snapshot<T>;
 	readonly [stateBrand]: true;
 }
 
 const hasOwn = <K extends PropertyKey>(value: object, key: K): value is Record<K, unknown> => Object.hasOwn(value, key);
 
 export function createState<T extends object>(define: Define<T>): State<T> {
+	return createGroupState(define);
+}
+
+export function createGroupState<T extends object>(define: Define<T>, groupListeners?: Set<StateListener<object>>): State<T> {
 	const callback: DefineCallback<T> = typeof define === "function" ? define : () => define;
 
 	const listeners = new Set<StateListener<T>>();
@@ -68,10 +74,13 @@ export function createState<T extends object>(define: Define<T>): State<T> {
 
 		if (before === after) return;
 
+		if (listeners.size === 0 && (groupListeners?.size ?? 0) === 0) return;
+
 		const ops = diffSnapshots(before, after);
 
 		if (ops.length === 0) return;
 
+		for (const listener of [...(groupListeners ?? [])]) listener(after as State<T>, ops, options);
 		for (const listener of [...listeners]) listener(after as State<T>, ops, options);
 	};
 
@@ -85,6 +94,12 @@ export function createState<T extends object>(define: Define<T>): State<T> {
 
 	const isSameState = (other: unknown): boolean => isState(other) && other.op === handle;
 
+	const unwrap = (): Snapshot<T> => {
+		const { op, ...rest } = get();
+
+		return rest as Snapshot<T>;
+	};
+
 	const literal = callback(mutate, get);
 
 	if (Object.hasOwn(literal, "op")) throw new Error('opshot: "op" is a reserved key on a state');
@@ -93,7 +108,7 @@ export function createState<T extends object>(define: Define<T>): State<T> {
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(literal));
 
-	const handle: MutableOpshotHandle<T> = { proxy: base, isMutating: false, mutate, subscribe, isSameState, [stateBrand]: true };
+	const handle: MutableOpshotHandle<T> = { proxy: base, isMutating: false, mutate, subscribe, isSameState, unwrap, [stateBrand]: true };
 
 	Object.defineProperty(base, "op", { value: ref(handle), enumerable: true, writable: false, configurable: false });
 

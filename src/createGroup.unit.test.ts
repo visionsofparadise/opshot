@@ -1,7 +1,8 @@
 import { createGroup } from "./createGroup";
 import { createState, type MutateOptions, type State } from "./createState";
-import { type Op } from "./diff";
-import { unwrap } from "./unwrap";
+import { diffSnapshots, type Op } from "./diff";
+
+vi.mock(import("./diff"), { spy: true });
 
 interface Counter {
   count: number;
@@ -16,7 +17,7 @@ interface Emission {
 const defineCounter = (): Counter => ({ count: 0 });
 
 describe("createGroup", () => {
-  it("hears every state it minted, with the state reference and options", () => {
+  it("hears every state it created, with the state reference and options", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
@@ -27,12 +28,12 @@ describe("createGroup", () => {
     const first = group.createState<Counter>(defineCounter);
     const second = group.createState<Counter>(defineCounter);
 
-    first.op.mutate((draft) => {
-      draft.count = 1;
+    first.op.mutate((proxy) => {
+      proxy.count = 1;
     }, { transactionKey: "drag" });
 
-    second.op.mutate((draft) => {
-      draft.count = 2;
+    second.op.mutate((proxy) => {
+      proxy.count = 2;
     });
 
     expect(emissions).toHaveLength(2);
@@ -56,8 +57,8 @@ describe("createGroup", () => {
 
     const state = group.createState<Counter>(defineCounter);
 
-    state.op.mutate((draft) => {
-      draft.count = 1;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
     });
 
     const received = emissions[0]?.state;
@@ -89,13 +90,13 @@ describe("createGroup", () => {
 
       reentered = true;
 
-      state.op.mutate((draft) => {
-        draft.count = 99;
+      state.op.mutate((proxy) => {
+        proxy.count = 99;
       });
     });
 
-    state.op.mutate((draft) => {
-      draft.count = 1;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
     });
 
     expect(emissions).toHaveLength(2);
@@ -108,7 +109,7 @@ describe("createGroup", () => {
       { do: { op: "replace", path: "/count", value: 99 }, undo: { op: "replace", path: "/count", value: 1 } },
     ]);
     expect(emissions[1]?.state).toEqual(expect.objectContaining({ count: 99 }));
-    expect(unwrap(state).count).toBe(99);
+    expect(state.op.unwrap().count).toBe(99);
   });
 
   it("does not hear a standalone state", () => {
@@ -126,8 +127,8 @@ describe("createGroup", () => {
       ownEmissions.push(ops);
     });
 
-    standalone.op.mutate((draft) => {
-      draft.count = 1;
+    standalone.op.mutate((proxy) => {
+      proxy.count = 1;
     });
 
     expect(emissions).toHaveLength(0);
@@ -149,8 +150,8 @@ describe("createGroup", () => {
 
     const state = first.createState<Counter>(defineCounter);
 
-    state.op.mutate((draft) => {
-      draft.count = 1;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
     });
 
     expect(firstEmissions).toHaveLength(1);
@@ -166,11 +167,50 @@ describe("createGroup", () => {
     const state = group.createState<Counter>(defineCounter);
 
     remove();
-    state.op.mutate((draft) => {
-      draft.count = 1;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
     });
 
     expect(emissions).toHaveLength(0);
+  });
+
+  it("a group listener turns emission on for every state it created, and its removal turns it off", () => {
+    const group = createGroup();
+    const first = group.createState<Counter>(defineCounter);
+    const second = group.createState<Counter>(defineCounter);
+
+    vi.mocked(diffSnapshots).mockClear();
+
+    first.op.mutate((proxy) => {
+      proxy.count = 1;
+    });
+
+    expect(diffSnapshots).not.toHaveBeenCalled();
+
+    const emissions = new Array<Emission>();
+    const remove = group.subscribe((state, ops, options) => {
+      emissions.push({ state, ops, options });
+    });
+
+    first.op.mutate((proxy) => {
+      proxy.count = 2;
+    });
+    second.op.mutate((proxy) => {
+      proxy.count = 5;
+    });
+
+    expect(diffSnapshots).toHaveBeenCalledTimes(2);
+    expect(emissions).toHaveLength(2);
+
+    remove();
+
+    first.op.mutate((proxy) => {
+      proxy.count = 3;
+    });
+
+    expect(diffSnapshots).toHaveBeenCalledTimes(2);
+    expect(emissions).toHaveLength(2);
+    expect(first.op.unwrap().count).toBe(3);
   });
 
   it("calls a group listener first whenever it subscribed, then state listeners in subscription order", () => {
@@ -183,8 +223,8 @@ describe("createGroup", () => {
     group.subscribe(() => order.push("group"));
     state.op.subscribe(() => order.push("second"));
 
-    state.op.mutate((draft) => {
-      draft.count = 1;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
     });
 
     expect(order).toEqual(["group", "first", "second"]);

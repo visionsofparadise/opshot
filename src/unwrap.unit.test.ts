@@ -2,7 +2,6 @@ import { ref } from "valtio/vanilla";
 
 import { createGroup } from "./createGroup";
 import { createState, type State } from "./createState";
-import { unwrap } from "./unwrap";
 
 interface Counter {
   count: number;
@@ -19,8 +18,8 @@ const createCounter = (): State<Counter> =>
     count: 0,
     label: "hits",
     increment: () => {
-      mutate((draft) => {
-        draft.count += 1;
+      mutate((proxy) => {
+        proxy.count += 1;
       });
     },
   }));
@@ -37,8 +36,8 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
     count: 0,
     label: "hits",
     increment: () => {
-      mutate((draft) => {
-        draft.count += 1;
+      mutate((proxy) => {
+        proxy.count += 1;
       });
     },
   }));
@@ -49,7 +48,7 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
 describe("unwrap", () => {
   it("strips exactly the library keys and keeps data and domain methods", () => {
     const state = createCounter();
-    const data = unwrap(state);
+    const data = state.op.unwrap();
 
     expect(Object.keys(data)).toEqual(["count", "label", "increment"]);
     expect(data.count).toBe(0);
@@ -68,7 +67,7 @@ describe("unwrap", () => {
     const later = emitted as State<Counter>;
 
     for (const generation of [state, later]) {
-      const data: object = unwrap(generation);
+      const data: object = generation.op.unwrap();
 
       expect(Object.keys(data)).toEqual(["count", "label", "increment"]);
       expect("op" in data).toBe(false);
@@ -82,7 +81,7 @@ describe("unwrap", () => {
     state.increment();
 
     expect(state.count).toBe(0);
-    expect(unwrap(state).count).toBe(2);
+    expect(state.op.unwrap().count).toBe(2);
   });
 
   it("returns current values from a stale generation held from mid-history", () => {
@@ -100,7 +99,7 @@ describe("unwrap", () => {
     state.increment();
 
     expect(stale.count).toBe(1);
-    expect(unwrap(stale).count).toBe(3);
+    expect(stale.op.unwrap().count).toBe(3);
   });
 
   it("keeps a domain method working through the unwrapped copy, detached", () => {
@@ -108,11 +107,11 @@ describe("unwrap", () => {
 
     state.increment();
 
-    const increment = unwrap(state).increment;
+    const increment = state.op.unwrap().increment;
 
     increment();
 
-    expect(unwrap(state).count).toBe(2);
+    expect(state.op.unwrap().count).toBe(2);
   });
 
   it("recomputes a getter on every unwrap", () => {
@@ -123,17 +122,17 @@ describe("unwrap", () => {
         return this.count * 2;
       },
       increment: () => {
-        mutate((draft) => {
-          draft.count += 1;
+        mutate((proxy) => {
+          proxy.count += 1;
         });
       },
     }));
 
-    expect(unwrap(state).doubled).toBe(0);
+    expect(state.op.unwrap().doubled).toBe(0);
 
     state.increment();
 
-    expect(unwrap(state).doubled).toBe(2);
+    expect(state.op.unwrap().doubled).toBe(2);
   });
 
   it("keeps a ref() field mutable through the unwrapped copy", () => {
@@ -146,7 +145,7 @@ describe("unwrap", () => {
 
     const state = createState<Log>(() => ({ index: 0, entries }));
 
-    unwrap(state).entries.push("one");
+    state.op.unwrap().entries.push("one");
 
     expect(entries).toEqual(["one"]);
   });
@@ -159,6 +158,6 @@ describe("unwrap", () => {
 
     const state = createState<Settings>(() => ({ theme: "dark", levels: [1, 2] }));
 
-    expect(JSON.parse(JSON.stringify(unwrap(state)))).toEqual({ theme: "dark", levels: [1, 2] });
+    expect(JSON.parse(JSON.stringify(state.op.unwrap()))).toEqual({ theme: "dark", levels: [1, 2] });
   });
 });

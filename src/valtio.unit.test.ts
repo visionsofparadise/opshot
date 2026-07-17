@@ -1,6 +1,18 @@
+import { createProxy } from "proxy-compare";
 import { proxy, ref, snapshot, subscribe, unstable_getInternalStates } from "valtio/vanilla";
 
 describe("valtio assumptions", () => {
+  it("shares one proxy-compare instance: snapshots are marked tracked and refs untracked", () => {
+    const bookkeeping = ref({ entries: new Array<string>() });
+    const state = proxy({ count: 0, bookkeeping });
+    const snap = snapshot(state);
+
+    const wrapped = createProxy(snap, new WeakMap(), new WeakMap(), new WeakMap());
+
+    expect(wrapped).not.toBe(snap);
+    expect(wrapped.bookkeeping).toBe(bookkeeping);
+  });
+
   it("shares untouched subtrees across snapshot generations", () => {
     const state = proxy({ left: { value: 1 }, right: { value: 2 } });
 

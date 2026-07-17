@@ -3,7 +3,6 @@ import { applyPatch } from "fast-json-patch";
 import { createGroup, type Group } from "./createGroup";
 import { createState, type MutateOptions, type State } from "./createState";
 import { type Op } from "./diff";
-import { unwrap } from "./unwrap";
 
 interface HistoryEntry {
   state: State<object>;
@@ -28,9 +27,9 @@ const createRecorder = (group: Group): Recorder => {
 
       if (!entry) return;
 
-      entry.state.op.mutate((draft) => {
+      entry.state.op.mutate((proxy) => {
         applyPatch(
-          draft,
+          proxy,
           [...entry.ops].reverse().map((op) => op.undo),
         );
       }, { appliedOps: true });
@@ -42,9 +41,9 @@ const createRecorder = (group: Group): Recorder => {
 
       if (!entry) return;
 
-      entry.state.op.mutate((draft) => {
+      entry.state.op.mutate((proxy) => {
         applyPatch(
-          draft,
+          proxy,
           entry.ops.map((op) => op.do),
         );
       }, { appliedOps: true });
@@ -143,8 +142,8 @@ describe("scenarios", () => {
     });
 
     for (const exposure of [1, 2, 3]) {
-      grade.op.mutate((draft) => {
-        draft.exposure = exposure;
+      grade.op.mutate((proxy) => {
+        proxy.exposure = exposure;
       }, { transactionKey: "drag" });
     }
 
@@ -162,54 +161,54 @@ describe("scenarios", () => {
     const graph = createGraph(group);
     const recorder = createRecorder(group);
 
-    expect(unwrap(graph)).toEqual(initialGraph);
+    expect(graph.op.unwrap()).toEqual(initialGraph);
 
-    graph.op.mutate((draft) => {
-      draft.nodes.push({ id: "reverb", parameters: { gain: 4 } });
-      draft.edges.push({ from: "output", to: "reverb" });
+    graph.op.mutate((proxy) => {
+      proxy.nodes.push({ id: "reverb", parameters: { gain: 4 } });
+      proxy.edges.push({ from: "output", to: "reverb" });
     });
 
-    expect(unwrap(graph)).toEqual(pushedGraph);
+    expect(graph.op.unwrap()).toEqual(pushedGraph);
 
-    graph.op.mutate((draft) => {
-      draft.nodes.splice(1, 1);
-      draft.edges.splice(0, 2);
+    graph.op.mutate((proxy) => {
+      proxy.nodes.splice(1, 1);
+      proxy.edges.splice(0, 2);
     });
 
-    expect(unwrap(graph)).toEqual(splicedGraph);
+    expect(graph.op.unwrap()).toEqual(splicedGraph);
 
-    graph.op.mutate((draft) => {
-      const node = draft.nodes[0];
+    graph.op.mutate((proxy) => {
+      const node = proxy.nodes[0];
 
       if (node) node.parameters.gain = 99;
     });
 
-    expect(unwrap(graph)).toEqual(parameterGraph);
+    expect(graph.op.unwrap()).toEqual(parameterGraph);
     expect(recorder.stack).toHaveLength(3);
 
     recorder.undo();
 
-    expect(unwrap(graph)).toEqual(splicedGraph);
+    expect(graph.op.unwrap()).toEqual(splicedGraph);
 
     recorder.undo();
 
-    expect(unwrap(graph)).toEqual(pushedGraph);
+    expect(graph.op.unwrap()).toEqual(pushedGraph);
 
     recorder.undo();
 
-    expect(unwrap(graph)).toEqual(initialGraph);
+    expect(graph.op.unwrap()).toEqual(initialGraph);
 
     recorder.redo();
 
-    expect(unwrap(graph)).toEqual(pushedGraph);
+    expect(graph.op.unwrap()).toEqual(pushedGraph);
 
     recorder.redo();
 
-    expect(unwrap(graph)).toEqual(splicedGraph);
+    expect(graph.op.unwrap()).toEqual(splicedGraph);
 
     recorder.redo();
 
-    expect(unwrap(graph)).toEqual(parameterGraph);
+    expect(graph.op.unwrap()).toEqual(parameterGraph);
   });
 
   it("does not record its own replays, so the stack survives undo and redo", () => {
@@ -217,12 +216,12 @@ describe("scenarios", () => {
     const grade = createGrade(group);
     const recorder = createRecorder(group);
 
-    grade.op.mutate((draft) => {
-      draft.exposure = 1;
+    grade.op.mutate((proxy) => {
+      proxy.exposure = 1;
     });
 
-    grade.op.mutate((draft) => {
-      draft.exposure = 2;
+    grade.op.mutate((proxy) => {
+      proxy.exposure = 2;
     });
 
     expect(recorder.stack).toHaveLength(2);
@@ -242,7 +241,7 @@ describe("scenarios", () => {
 
     expect(recorder.stack).toHaveLength(2);
     expect(recorder.index).toBe(0);
-    expect(unwrap(grade).exposure).toBe(1);
+    expect(grade.op.unwrap().exposure).toBe(1);
   });
 
   it("emits to a persistence subscriber for organic mutations and for replays alike", () => {
@@ -255,8 +254,8 @@ describe("scenarios", () => {
       persisted.push(options);
     });
 
-    grade.op.mutate((draft) => {
-      draft.exposure = 1;
+    grade.op.mutate((proxy) => {
+      proxy.exposure = 1;
     });
 
     recorder.undo();
@@ -265,20 +264,20 @@ describe("scenarios", () => {
     expect(persisted).toEqual([{}, { appliedOps: true }, { appliedOps: true }]);
   });
 
-  it("hears nothing from a standalone state the group never minted", () => {
+  it("hears nothing from a standalone state the group never created", () => {
     const group = createGroup();
     const grade = createGrade(group);
     const selection = createState<{ nodeId: string | undefined }>(() => ({ nodeId: undefined }));
     const recorder = createRecorder(group);
 
-    selection.op.mutate((draft) => {
-      draft.nodeId = "filter";
+    selection.op.mutate((proxy) => {
+      proxy.nodeId = "filter";
     });
 
     expect(recorder.stack).toHaveLength(0);
 
-    grade.op.mutate((draft) => {
-      draft.exposure = 1;
+    grade.op.mutate((proxy) => {
+      proxy.exposure = 1;
     });
 
     expect(recorder.stack).toHaveLength(1);

@@ -1,4 +1,4 @@
-import { createState, type Define, type State, type StateListener } from "./createState";
+import { createGroupState, type Define, type State, type StateListener } from "./createState";
 
 export interface Group {
 	createState<T extends object>(define: Define<T>): State<T>;
@@ -10,13 +10,7 @@ export function createGroup(): Group {
 
 	return {
 		createState<T extends object>(define: Define<T>): State<T> {
-			const state = createState(define);
-
-			state.op.subscribe((emitted, ops, options) => {
-				for (const listener of [...listeners]) listener(emitted, ops, options);
-			});
-
-			return state;
+			return createGroupState(define, listeners);
 		},
 		subscribe(listener: StateListener<object>): () => void {
 			listeners.add(listener);

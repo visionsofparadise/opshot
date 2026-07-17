@@ -25,21 +25,6 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
 
 const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> => isPlainObject(value) || isPlainArray(value);
 
-const frozenByOpshot = new WeakSet();
-
-const deepFreeze = <T>(value: T): T => {
-	if (isCloneable(value)) {
-		if (frozenByOpshot.has(value)) return value;
-
-		Object.freeze(value);
-		frozenByOpshot.add(value);
-
-		for (const child of Object.values(value)) deepFreeze(child);
-	}
-
-	return value;
-};
-
 const cloneValue = (value: unknown): unknown => {
 	if (isPlainArray(value)) return value.map(cloneValue);
 
@@ -56,28 +41,28 @@ const toPointer = (path: Path): string => {
 	return `/${path.map((segment) => String(segment).replaceAll("~", "~0").replaceAll("/", "~1")).join("/")}`;
 };
 
-const removing = (pointer: string): PatchOperation => Object.freeze({ op: "remove" as const, path: pointer });
+const removing = (pointer: string): PatchOperation => ({ op: "remove", path: pointer });
 
 const carrying = (op: "add" | "replace", pointer: string, value: unknown): PatchOperation => {
-	const frozen = deepFreeze(value);
+	if (!isCloneable(value)) return { op, path: pointer, value };
 
-	if (!isCloneable(frozen)) return Object.freeze({ op, path: pointer, value: frozen });
-
-	return Object.freeze({
+	return {
 		op,
 		path: pointer,
 		get value() {
-			return cloneValue(frozen);
+			return cloneValue(value);
 		},
-	});
+	};
 };
 
-const addPair = (pointer: string, after: unknown): Op => Object.freeze({ do: carrying("add", pointer, after), undo: removing(pointer) });
+const addPair = (pointer: string, after: unknown): Op => ({ do: carrying("add", pointer, after), undo: removing(pointer) });
 
-const removePair = (pointer: string, before: unknown): Op => Object.freeze({ do: removing(pointer), undo: carrying("add", pointer, before) });
+const removePair = (pointer: string, before: unknown): Op => ({ do: removing(pointer), undo: carrying("add", pointer, before) });
 
-const replacePair = (pointer: string, before: unknown, after: unknown): Op =>
-	Object.freeze({ do: carrying("replace", pointer, after), undo: carrying("replace", pointer, before) });
+const replacePair = (pointer: string, before: unknown, after: unknown): Op => ({
+	do: carrying("replace", pointer, after),
+	undo: carrying("replace", pointer, before),
+});
 
 const diffValue = (before: unknown, after: unknown, path: Path, ops: Array<Op>): void => {
 	if (Object.is(before, after)) return;

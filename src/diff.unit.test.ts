@@ -139,7 +139,7 @@ describe("diffSnapshots", () => {
     ]);
   });
 
-  it("mints a fresh clone on every read of a cloneable value", () => {
+  it("creates a fresh clone on every read of a cloneable value", () => {
     const [op] = diffSnapshots({}, { document: { item: { value: 1 }, tags: ["a"] } });
 
     const first = readValue(op?.do) as { item: { value: number }; tags: Array<string> };
@@ -152,58 +152,30 @@ describe("diffSnapshots", () => {
     expect(second).toEqual(first);
   });
 
-  it("deep-freezes the source subtree it places in ops and hands out unfrozen clones", () => {
+  it("leaves the source unfrozen; clones are independent of the record while the source stays shared", () => {
     const document = { item: { value: 1 }, tags: ["a"] };
     const [op] = diffSnapshots({}, { document });
 
     expect(op?.do.op).toBe("add");
-    expect(Object.isFrozen(document)).toBe(true);
-    expect(Object.isFrozen(document.item)).toBe(true);
-    expect(Object.isFrozen(document.tags)).toBe(true);
-    expect(() => document.tags.push("b")).toThrow(TypeError);
-    expect(() => {
-      document.item.value = 2;
-    }).toThrow(TypeError);
+    expect(Object.isFrozen(document)).toBe(false);
 
     const clone = readValue(op?.do) as { item: { value: number }; tags: Array<string> };
-
-    expect(Object.isFrozen(clone)).toBe(false);
-    expect(Object.isFrozen(clone.item)).toBe(false);
-    expect(Object.isFrozen(clone.tags)).toBe(false);
 
     clone.tags.push("b");
     clone.item.value = 2;
 
     expect(document).toEqual({ item: { value: 1 }, tags: ["a"] });
     expect(readValue(op?.do)).toEqual({ item: { value: 1 }, tags: ["a"] });
-  });
 
-  it("deep-freezes a shallow-frozen source container's children", () => {
-    const inner = { x: 1 };
-    const list = [1];
-    const source = Object.freeze({ inner, list });
+    document.item.value = 3;
 
-    expect(Object.isFrozen(inner)).toBe(false);
-    expect(Object.isFrozen(list)).toBe(false);
-
-    const [op] = diffSnapshots({}, { doc: source });
-
-    expect(op?.do.op).toBe("add");
-    expect(Object.isFrozen(inner)).toBe(true);
-    expect(Object.isFrozen(list)).toBe(true);
-    expect(() => {
-      inner.x = 2;
-    }).toThrow(TypeError);
-    expect(() => list.push(2)).toThrow(TypeError);
+    expect(readValue(op?.do)).toEqual({ item: { value: 3 }, tags: ["a"] });
   });
 
   it("leaves ref() values inside op values mutable", () => {
     const bookkeeping = ref({ entries: new Array<string>() });
     const document = { bookkeeping };
     const [op] = diffSnapshots({}, { document });
-
-    expect(Object.isFrozen(document)).toBe(true);
-    expect(Object.isFrozen(bookkeeping)).toBe(false);
 
     bookkeeping.entries.push("one");
 
@@ -230,9 +202,6 @@ describe("diffSnapshots", () => {
     const document = { emitter };
     const [op] = diffSnapshots({}, { document });
 
-    expect(Object.isFrozen(document)).toBe(true);
-    expect(Object.isFrozen(emitter)).toBe(false);
-
     emitter.count = 1;
 
     expect((readValue(op?.do) as { emitter: Emitter }).emitter.count).toBe(1);
@@ -257,7 +226,7 @@ describe("diffSnapshots", () => {
     expect(Object.isFrozen(clone.emitter)).toBe(false);
   });
 
-  it("keeps producing correct generations after op values are frozen", () => {
+  it("keeps producing correct generations after op values share snapshot subtrees", () => {
     const state = proxy({ document: { item: { value: 1 }, tags: ["a"] } });
 
     const first = snapshot(state);
@@ -272,9 +241,6 @@ describe("diffSnapshots", () => {
         undo: { op: "replace", path: "/document/tags", value: ["a"] },
       },
     ]);
-    expect(Object.isFrozen(first.document.tags)).toBe(true);
-    expect(Object.isFrozen(second.document.tags)).toBe(true);
-
     state.document.tags.push("c");
 
     const third = snapshot(state);

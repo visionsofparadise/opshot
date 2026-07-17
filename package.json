@@ -44,6 +44,7 @@
     }
   },
   "dependencies": {
+    "proxy-compare": "^3.0.1",
     "valtio": "2.3.2"
   },
   "devDependencies": {

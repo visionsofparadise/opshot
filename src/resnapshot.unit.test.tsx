@@ -24,8 +24,8 @@ const createCounter = (): State<Counter> =>
   createState<Counter>((mutate) => ({
     count: 0,
     increment: () => {
-      mutate((draft) => {
-        draft.count += 1;
+      mutate((proxy) => {
+        proxy.count += 1;
       });
     },
   }));
@@ -66,7 +66,11 @@ describe("resnapshot", () => {
     const Probe = resnapshot<ProbeProps>((props) => {
       received = props;
 
-      return null;
+      return (
+        <span data-testid="values">
+          {props.counter.count},{props.context.nested.count}
+        </span>
+      );
     });
 
     render(<Probe counter={counter} context={{ nested }} label="one" />);
@@ -76,6 +80,8 @@ describe("resnapshot", () => {
       nested.increment();
       nested.increment();
     });
+
+    expect(screen.getByTestId("values").textContent).toBe("1,2");
 
     expect(received?.counter).not.toBe(counter);
     expect(received?.counter.count).toBe(1);
@@ -212,8 +218,8 @@ describe("resnapshot", () => {
     expect(screen.getByTestId("count").textContent).toBe("1");
 
     await act(async () => {
-      counter.op.mutate((draft) => {
-        applyPatch(draft, [...recorded].reverse().map((op) => op.undo));
+      counter.op.mutate((proxy) => {
+        applyPatch(proxy, [...recorded].reverse().map((op) => op.undo));
       }, { appliedOps: true });
     });
 
@@ -360,5 +366,123 @@ describe("resnapshot", () => {
     rerender(<Probe label="two" />);
 
     expect(screen.getByTestId("label").textContent).toBe("two");
+  });
+
+  it("re-renders only the components whose read fields changed", async () => {
+    const state = createState({ count: 0, label: "hits" });
+    const renders = { count: 0, label: 0 };
+
+    const CountView = resnapshot<{ state: State<{ count: number; label: string }> }>(({ state: snap }) => {
+      renders.count += 1;
+
+      return <span data-testid="count">{snap.count}</span>;
+    });
+
+    const LabelView = resnapshot<{ state: State<{ count: number; label: string }> }>(({ state: snap }) => {
+      renders.label += 1;
+
+      return <span data-testid="label">{snap.label}</span>;
+    });
+
+    render(
+      <>
+        <CountView state={state} />
+        <LabelView state={state} />
+      </>,
+    );
+
+    expect(renders).toEqual({ count: 1, label: 1 });
+
+    await act(async () => {
+      state.op.mutate((proxy) => {
+        proxy.count += 1;
+      });
+    });
+
+    expect(screen.getByTestId("count").textContent).toBe("1");
+    expect(renders).toEqual({ count: 2, label: 1 });
+
+    await act(async () => {
+      state.op.mutate((proxy) => {
+        proxy.label = "misses";
+      });
+    });
+
+    expect(screen.getByTestId("label").textContent).toBe("misses");
+    expect(renders).toEqual({ count: 2, label: 2 });
+  });
+
+  it("gates re-renders per nested field read", async () => {
+    interface Pair {
+      a: { value: number };
+      b: { value: number };
+    }
+
+    const state = createState<Pair>(() => ({ a: { value: 1 }, b: { value: 2 } }));
+
+    let renders = 0;
+
+    const AView = resnapshot<{ state: State<Pair> }>(({ state: snap }) => {
+      renders += 1;
+
+      return <span data-testid="a">{snap.a.value}</span>;
+    });
+
+    render(<AView state={state} />);
+
+    await act(async () => {
+      state.op.mutate((proxy) => {
+        proxy.b.value = 9;
+      });
+    });
+
+    expect(renders).toBe(1);
+
+    await act(async () => {
+      state.op.mutate((proxy) => {
+        proxy.a.value = 5;
+      });
+    });
+
+    expect(screen.getByTestId("a").textContent).toBe("5");
+    expect(renders).toBe(2);
+  });
+
+  it("renders current values for a field first read after a gated change", async () => {
+    const state = createState({ count: 0, label: "hits" });
+
+    const View = resnapshot<{ state: State<{ count: number; label: string }>; showLabel: boolean }>(
+      ({ state: snap, showLabel }) => <span data-testid="view">{showLabel ? snap.label : String(snap.count)}</span>,
+    );
+
+    let showLabel: (() => void) | undefined;
+
+    const Parent: FC = () => {
+      const [isLabelShown, setIsLabelShown] = useState(false);
+
+      showLabel = () => {
+        setIsLabelShown(true);
+      };
+
+      return <View state={state} showLabel={isLabelShown} />;
+    };
+
+    render(<Parent />);
+
+    expect(screen.getByTestId("view").textContent).toBe("0");
+
+    await act(async () => {
+      state.op.mutate((proxy) => {
+        proxy.label = "misses";
+      });
+    });
+
+    expect(screen.getByTestId("view").textContent).toBe("0");
+
+    act(() => {
+      showLabel?.();
+    });
+
+    expect(screen.getByTestId("view").textContent).toBe("misses");
   });
 });

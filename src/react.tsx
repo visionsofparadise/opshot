@@ -1,4 +1,5 @@
-import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore, type FC } from "react";
+import { createProxy, isChanged } from "proxy-compare";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FC } from "react";
 import { snapshot as valtioSnapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { createGroup, type Group } from "./createGroup";
 import { createState, isState, type Define, type State } from "./createState";
@@ -72,8 +73,16 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 	return { ...object, [head]: updated };
 }
 
+interface Tracking {
+	affected: WeakMap<object, unknown>;
+	proxyCache: WeakMap<object, unknown>;
+}
+
+const targetCache = new WeakMap<object, unknown>();
+
 function useResnapshotAll(snapshots: Array<State<object>>): Array<object> {
-	const lastSnapshots = useRef<Array<object>>([]);
+	const lastRendered = useRef<Array<object>>([]);
+	const lastReturned = useRef<Array<object>>([]);
 
 	const nextProxies = snapshots.map((snap) => snap.op.proxy);
 	const [proxies, setProxies] = useState(nextProxies);
@@ -82,31 +91,66 @@ function useResnapshotAll(snapshots: Array<State<object>>): Array<object> {
 
 	if (isStale) setProxies(nextProxies);
 
+	const trackings = useMemo(() => proxies.map((): Tracking => ({ affected: new WeakMap(), proxyCache: new WeakMap() })), [proxies]);
+
 	const getSnapshot = useCallback((): Array<object> => {
 		const next = proxies.map((proxied) => valtioSnapshot(proxied));
-		const last = lastSnapshots.current;
+		const last = lastReturned.current;
 
 		if (last.length === next.length && last.every((snap, index) => snap === next[index])) return last;
 
-		lastSnapshots.current = next;
+		lastReturned.current = next;
 
 		return next;
 	}, [proxies]);
 
 	const subscribe = useCallback(
 		(callback: () => void) => {
-			const unsubscribes = proxies.map((proxied) => valtioSubscribe(proxied, callback));
+			const unsubscribes = proxies.map((proxied, index) =>
+				valtioSubscribe(proxied, () => {
+					const prev = lastRendered.current[index];
+					const tracking = trackings[index];
+
+					if (prev && tracking && prev !== valtioSnapshot(proxied)) {
+						if (!tracking.affected.has(prev)) return;
+
+						try {
+							if (!isChanged(prev, valtioSnapshot(proxied), tracking.affected, new WeakMap())) return;
+						} catch {
+							// isChanged over exotic values falls back to notifying
+						}
+					}
+
+					callback();
+				}),
+			);
 
 			return () => {
 				for (const unsubscribe of unsubscribes) unsubscribe();
 			};
 		},
-		[proxies],
+		[proxies, trackings],
 	);
 
 	const freshSnapshots = useSyncExternalStore(subscribe, getSnapshot);
 
-	return isStale ? snapshots : freshSnapshots;
+	useLayoutEffect(() => {
+		lastRendered.current = freshSnapshots;
+	});
+
+	const trackedSnapshots = useMemo(
+		() =>
+			freshSnapshots.map((snap, index) => {
+				const tracking = trackings[index];
+
+				if (!tracking) return snap;
+
+				return createProxy(snap, tracking.affected, tracking.proxyCache, targetCache);
+			}),
+		[freshSnapshots, trackings],
+	);
+
+	return isStale ? snapshots : trackedSnapshots;
 }
 
 export function resnapshot<P extends object>(component: FC<P>): FC<P> {
@@ -118,7 +162,7 @@ export function resnapshot<P extends object>(component: FC<P>): FC<P> {
 		const freshSnapshots = useResnapshotAll(staleSnapshots);
 
 		const freshProps = useMemo(() => {
-			if (staleSnapshots.every((snap, index) => snap === freshSnapshots[index])) return props;
+			if (freshSnapshots === staleSnapshots) return props;
 
 			return snapshotPaths.reduce<P>((acc, path, index) => setAtPath(acc, path, freshSnapshots[index]), props);
 		}, [props, snapshotPaths, staleSnapshots, freshSnapshots]);
@@ -133,5 +177,9 @@ export function resnapshot<P extends object>(component: FC<P>): FC<P> {
 
 export const useCreateGroup = (): Group => useState(() => createGroup())[0];
 
-export const useCreateState = <T extends object>(define: Define<T>, group?: Group): State<T> =>
-	useState(() => (group ? group.createState(define) : createState(define)))[0];
+export const useCreateState = <T extends object>(define: Define<T>, group?: Group): State<T> => {
+	const created = useState(() => (group ? group.createState(define) : createState(define)))[0];
+	const [fresh] = useResnapshotAll([created]);
+
+	return fresh as State<T>;
+};

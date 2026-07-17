@@ -2,8 +2,9 @@ import { ref } from "valtio/vanilla";
 
 import { createGroup } from "./createGroup";
 import { createState, isState, type MutateOptions, type OpshotHandle, type State } from "./createState";
-import { type Op } from "./diff";
-import { unwrap } from "./unwrap";
+import { diffSnapshots, type Op } from "./diff";
+
+vi.mock(import("./diff"), { spy: true });
 
 interface Counter {
   count: number;
@@ -18,8 +19,8 @@ const createCounter = (): State<Counter> =>
   createState<Counter>((mutate) => ({
     count: 0,
     increment: () => {
-      mutate((draft) => {
-        draft.count += 1;
+      mutate((proxy) => {
+        proxy.count += 1;
       });
     },
   }));
@@ -35,8 +36,8 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
   const state = group.createState<Counter>((mutate) => ({
     count: 0,
     increment: () => {
-      mutate((draft) => {
-        draft.count += 1;
+      mutate((proxy) => {
+        proxy.count += 1;
       });
     },
   }));
@@ -64,8 +65,8 @@ describe("createState", () => {
       return {
         count: 1,
         increment: () => {
-          mutate((draft) => {
-            draft.count += 1;
+          mutate((proxy) => {
+            proxy.count += 1;
           });
         },
       };
@@ -79,8 +80,8 @@ describe("createState", () => {
   it("throws when mutate or get is called during define", () => {
     expect(() =>
       createState<{ count: number }>((mutate) => {
-        mutate((draft) => {
-          draft.count = 1;
+        mutate((proxy) => {
+          proxy.count = 1;
         });
 
         return { count: 0 };
@@ -111,7 +112,7 @@ describe("createState", () => {
     }).toThrow(TypeError);
 
     expect(emissions).toHaveLength(0);
-    expect(unwrap(state).count).toBe(0);
+    expect(state.op.unwrap().count).toBe(0);
   });
 
   it("throws on an assignment to a later generation too", () => {
@@ -128,7 +129,7 @@ describe("createState", () => {
       Object.assign(current, { count: 9 });
     }).toThrow(TypeError);
 
-    expect(unwrap(state).count).toBe(1);
+    expect(state.op.unwrap().count).toBe(1);
   });
 
   it("leaves a held generation stale while unwrap returns current values", () => {
@@ -137,7 +138,7 @@ describe("createState", () => {
     state.increment();
 
     expect(state.count).toBe(0);
-    expect(unwrap(state).count).toBe(1);
+    expect(state.op.unwrap().count).toBe(1);
   });
 
   it("carries mutate, domain methods, and recomputed getters onto snapshot generations", () => {
@@ -154,8 +155,8 @@ describe("createState", () => {
         return this.count * 2;
       },
       increment: () => {
-        mutate((draft) => {
-          draft.count += 1;
+        mutate((proxy) => {
+          proxy.count += 1;
         });
       },
     }));
@@ -174,13 +175,13 @@ describe("createState", () => {
     expect(second).not.toBe(first);
     expect(second.doubled).toBe(2);
 
-    second.op.mutate((draft) => {
-      draft.count = 5;
+    second.op.mutate((proxy) => {
+      proxy.count = 5;
     });
 
-    expect(unwrap(first).doubled).toBe(10);
+    expect(first.op.unwrap().doubled).toBe(10);
     expect(first.doubled).toBe(0);
-    expect(unwrap(first).count).toBe(5);
+    expect(first.op.unwrap().count).toBe(5);
   });
 
   it("answers isSameState across generations in both directions, and false for another state", () => {
@@ -208,8 +209,8 @@ describe("createState", () => {
     const state = createCounter();
     const emissions = recordEmissions(state);
 
-    state.op.mutate((draft) => {
-      draft.count = 1;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
     }, { transactionKey: "drag", appliedOps: true });
 
     expect(emissions).toHaveLength(1);
@@ -218,8 +219,8 @@ describe("createState", () => {
     ]);
     expect(emissions[0]?.options).toEqual({ transactionKey: "drag", appliedOps: true });
 
-    state.op.mutate((draft) => {
-      draft.count = 2;
+    state.op.mutate((proxy) => {
+      proxy.count = 2;
     });
 
     expect(emissions).toHaveLength(2);
@@ -233,8 +234,8 @@ describe("createState", () => {
         return this.count * 2;
       },
       increment: () => {
-        mutate((draft) => {
-          draft.count += 1;
+        mutate((proxy) => {
+          proxy.count += 1;
         });
       },
     }));
@@ -253,8 +254,8 @@ describe("createState", () => {
     const emissions = recordEmissions(state);
 
     state.op.mutate(() => undefined);
-    state.op.mutate((draft) => {
-      draft.count = 0;
+    state.op.mutate((proxy) => {
+      proxy.count = 0;
     });
 
     expect(emissions).toHaveLength(0);
@@ -264,9 +265,9 @@ describe("createState", () => {
     const state = createCounter();
     const emissions = recordEmissions(state);
 
-    state.op.mutate((draft) => {
-      draft.count = 1;
-      draft.count = 0;
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
+      proxy.count = 0;
     });
 
     expect(emissions).toHaveLength(0);
@@ -276,8 +277,8 @@ describe("createState", () => {
     const state = createCounter();
 
     expect(() =>
-      state.op.mutate((draft) => {
-        draft.count = 1;
+      state.op.mutate((proxy) => {
+        proxy.count = 1;
 
         state.op.mutate((inner) => {
           inner.count = 2;
@@ -299,7 +300,7 @@ describe("createState", () => {
 
     state.increment();
 
-    expect(unwrap(state).count).toBe(1);
+    expect(state.op.unwrap().count).toBe(1);
   });
 
   it("lets a mutate of a second state run inside a callback and emit independently", () => {
@@ -308,8 +309,8 @@ describe("createState", () => {
     const firstEmissions = recordEmissions(first);
     const secondEmissions = recordEmissions(second);
 
-    first.op.mutate((draft) => {
-      draft.count = 1;
+    first.op.mutate((proxy) => {
+      proxy.count = 1;
 
       second.op.mutate((other) => {
         other.count = 7;
@@ -321,7 +322,7 @@ describe("createState", () => {
     expect(secondEmissions[0]?.ops).toEqual([
       { do: { op: "replace", path: "/count", value: 7 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
-    expect(unwrap(second).count).toBe(7);
+    expect(second.op.unwrap().count).toBe(7);
   });
 
   it("stops calling a listener after its remover runs", () => {
@@ -344,7 +345,7 @@ describe("createState", () => {
     increment();
     increment();
 
-    expect(unwrap(state).count).toBe(2);
+    expect(state.op.unwrap().count).toBe(2);
   });
 
   it("recognizes states and rejects other values", () => {
@@ -384,9 +385,9 @@ describe("createState", () => {
       index: 0,
       entries: ref(new Array<string>()),
       append: (entry) => {
-        mutate((draft) => {
-          draft.entries.push(entry);
-          draft.index += 1;
+        mutate((proxy) => {
+          proxy.entries.push(entry);
+          proxy.index += 1;
         });
       },
     }));
@@ -394,7 +395,7 @@ describe("createState", () => {
 
     state.append("one");
 
-    expect(unwrap(state).entries).toEqual(["one"]);
+    expect(state.op.unwrap().entries).toEqual(["one"]);
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
       { do: { op: "replace", path: "/index", value: 1 }, undo: { op: "replace", path: "/index", value: 0 } },
@@ -410,7 +411,7 @@ describe("createState", () => {
 
     expect((state.op.proxy as Counter).count).toBe(0);
     expect(Object.hasOwn(literal, "op")).toBe(false);
-    expect(unwrap(state).count).toBe(0);
+    expect(state.op.unwrap().count).toBe(0);
     expect(emissions).toHaveLength(0);
   });
 
@@ -422,12 +423,12 @@ describe("createState", () => {
 
     expect(first.op.isSameState(second)).toBe(false);
 
-    first.op.mutate((draft) => {
-      draft.count = 5;
+    first.op.mutate((proxy) => {
+      proxy.count = 5;
     });
 
-    expect(unwrap(first).count).toBe(5);
-    expect(unwrap(second).count).toBe(0);
+    expect(first.op.unwrap().count).toBe(5);
+    expect(second.op.unwrap().count).toBe(0);
     expect(defaults.count).toBe(0);
   });
 
@@ -435,15 +436,15 @@ describe("createState", () => {
     const state = createState({ count: 0 });
     const emissions = recordEmissions(state);
 
-    state.op.mutate((draft) => {
-      draft.count = 3;
+    state.op.mutate((proxy) => {
+      proxy.count = 3;
     });
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
       { do: { op: "replace", path: "/count", value: 3 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
-    expect(unwrap(state).count).toBe(3);
+    expect(state.op.unwrap().count).toBe(3);
     expect(state.count).toBe(0);
   });
 
@@ -453,7 +454,7 @@ describe("createState", () => {
     state.increment();
     state.increment();
 
-    expect(unwrap(state).count).toBe(2);
+    expect(state.op.unwrap().count).toBe(2);
   });
 
   it("accepts the same plain object twice and yields top-level-independent states", () => {
@@ -465,12 +466,12 @@ describe("createState", () => {
     expect(first.op).not.toBe(second.op);
     expect(first.op.isSameState(second)).toBe(false);
 
-    first.op.mutate((draft) => {
-      draft.count = 5;
+    first.op.mutate((proxy) => {
+      proxy.count = 5;
     });
 
-    expect(unwrap(first).count).toBe(5);
-    expect(unwrap(second).count).toBe(0);
+    expect(first.op.unwrap().count).toBe(5);
+    expect(second.op.unwrap().count).toBe(0);
     expect(defaults.count).toBe(0);
   });
 
@@ -502,5 +503,40 @@ describe("createState", () => {
     expect(other.op).not.toBe(state.op);
     expect(stacks.get(current.op)).toBe("counter");
     expect(stacks.get(other.op)).toBeUndefined();
+  });
+
+  it("skips the diff while nothing listens, and resumes when a listener arrives", () => {
+    const state = createState({ count: 0 });
+
+    vi.mocked(diffSnapshots).mockClear();
+
+    state.op.mutate((proxy) => {
+      proxy.count = 1;
+    });
+
+    expect(diffSnapshots).not.toHaveBeenCalled();
+    expect(state.op.unwrap().count).toBe(1);
+
+    const heard = new Array<Array<Op>>();
+    const unsubscribe = state.op.subscribe((_state, ops) => heard.push(ops));
+
+    state.op.mutate((proxy) => {
+      proxy.count = 2;
+    });
+
+    expect(diffSnapshots).toHaveBeenCalledTimes(1);
+    expect(heard).toEqual([
+      [{ do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+    ]);
+
+    unsubscribe();
+
+    state.op.mutate((proxy) => {
+      proxy.count = 3;
+    });
+
+    expect(diffSnapshots).toHaveBeenCalledTimes(1);
+    expect(heard).toHaveLength(1);
+    expect(state.op.unwrap().count).toBe(3);
   });
 });
