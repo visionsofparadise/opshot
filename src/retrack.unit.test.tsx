@@ -7,7 +7,7 @@ import { subscribe as valtioSubscribe } from "valtio/vanilla";
 
 import { createState, type State } from "./createState";
 import { type Op } from "./diff";
-import { resnapshot } from "./react";
+import { retrack } from "./react";
 
 vi.mock("valtio/vanilla", async (importOriginal) => {
   const actual = await importOriginal<typeof import("valtio/vanilla")>();
@@ -24,8 +24,8 @@ const createCounter = (): State<Counter> =>
   createState<Counter>((mutate) => ({
     count: 0,
     increment: () => {
-      mutate((proxy) => {
-        proxy.count += 1;
+      mutate((mutable) => {
+        mutable.count += 1;
       });
     },
   }));
@@ -50,7 +50,7 @@ class Emitter {
 
 const Inner: FC<{ state: State<Counter> }> = ({ state }) => <span>{state.count}</span>;
 
-describe("resnapshot", () => {
+describe("retrack", () => {
   it("substitutes fresh snapshots for states anywhere in props", async () => {
     interface ProbeProps {
       counter: State<Counter>;
@@ -63,7 +63,7 @@ describe("resnapshot", () => {
 
     let received: ProbeProps | undefined;
 
-    const Probe = resnapshot<ProbeProps>((props) => {
+    const Probe = retrack<ProbeProps>((props) => {
       received = props;
 
       return (
@@ -85,12 +85,12 @@ describe("resnapshot", () => {
 
     expect(received?.counter).not.toBe(counter);
     expect(received?.counter.count).toBe(1);
-    expect(received?.counter.op.proxy).toBe(counter.op.proxy);
+    expect(received?.counter.op.unsafeMutable).toBe(counter.op.unsafeMutable);
     expect(counter.count).toBe(0);
 
     expect(received?.context.nested).not.toBe(nested);
     expect(received?.context.nested.count).toBe(2);
-    expect(received?.context.nested.op.proxy).toBe(nested.op.proxy);
+    expect(received?.context.nested.op.unsafeMutable).toBe(nested.op.unsafeMutable);
 
     expect(received?.label).toBe("one");
   });
@@ -98,7 +98,7 @@ describe("resnapshot", () => {
   it("does not rebuild the valtio subscription when re-rendering with unchanged states", () => {
     const counter = createCounter();
 
-    const Child = resnapshot<{ counter: State<Counter>; tick: number }>(({ counter: snap, tick }) => (
+    const Child = retrack<{ counter: State<Counter>; tick: number }>(({ counter: snap, tick }) => (
       <span>{snap.count + tick}</span>
     ));
 
@@ -137,7 +137,7 @@ describe("resnapshot", () => {
   it("re-renders with the fresh snapshot when a state mutates outside React", async () => {
     const counter = createCounter();
 
-    const Probe = resnapshot<{ counter: State<Counter> }>(({ counter: snap }) => (
+    const Probe = retrack<{ counter: State<Counter> }>(({ counter: snap }) => (
       <span data-testid="count">{snap.count}</span>
     ));
 
@@ -157,7 +157,7 @@ describe("resnapshot", () => {
     const second = createCounter();
     const renders: Record<string, number> = { first: 0, second: 0 };
 
-    const Child = resnapshot<{ counter: State<Counter>; name: string }>(({ counter, name }) => {
+    const Child = retrack<{ counter: State<Counter>; name: string }>(({ counter, name }) => {
       renders[name] = (renders[name] ?? 0) + 1;
 
       return <span>{counter.count}</span>;
@@ -201,11 +201,11 @@ describe("resnapshot", () => {
     const counter = createCounter();
     const recorded: Array<Op> = [];
 
-    counter.op.subscribe((_state, ops, options) => {
-      if (options.appliedOps !== true) recorded.push(...ops);
+    counter.op.subscribe((_state, ops, meta) => {
+      if (meta.replay !== true) recorded.push(...ops);
     });
 
-    const Probe = resnapshot<{ counter: State<Counter> }>(({ counter: snap }) => (
+    const Probe = retrack<{ counter: State<Counter> }>(({ counter: snap }) => (
       <span data-testid="count">{snap.count}</span>
     ));
 
@@ -218,9 +218,9 @@ describe("resnapshot", () => {
     expect(screen.getByTestId("count").textContent).toBe("1");
 
     await act(async () => {
-      counter.op.mutate((proxy) => {
-        applyPatch(proxy, [...recorded].reverse().map((op) => op.undo));
-      }, { appliedOps: true });
+      counter.mutate((mutable) => {
+        applyPatch(mutable, [...recorded].reverse().map((op) => op.undo));
+      }, { replay: true });
     });
 
     expect(screen.getByTestId("count").textContent).toBe("0");
@@ -238,7 +238,7 @@ describe("resnapshot", () => {
 
     let received: ProbeProps | undefined;
 
-    const Probe = resnapshot<ProbeProps>((props) => {
+    const Probe = retrack<ProbeProps>((props) => {
       received = props;
 
       return null;
@@ -255,7 +255,7 @@ describe("resnapshot", () => {
     const doc = createDoc("draft");
     const selection = createSelection("n1");
 
-    const Panel = resnapshot<{ context: { doc?: State<Doc>; selection: State<Selection> } }>(({ context }) => (
+    const Panel = retrack<{ context: { doc?: State<Doc>; selection: State<Selection> } }>(({ context }) => (
       <span data-testid="panel">
         {context.doc?.title ?? "-"}/{context.selection.nodeId}
       </span>
@@ -288,7 +288,7 @@ describe("resnapshot", () => {
     const doc = createDoc("draft");
     const selection = createSelection("n1");
 
-    const Panel = resnapshot<{ context: { doc?: State<Doc>; selection: State<Selection> } }>(({ context }) => (
+    const Panel = retrack<{ context: { doc?: State<Doc>; selection: State<Selection> } }>(({ context }) => (
       <span data-testid="panel">
         {context.doc?.title ?? "-"}/{context.selection.nodeId}
       </span>
@@ -323,7 +323,7 @@ describe("resnapshot", () => {
 
     first.increment();
 
-    const Row = resnapshot<{ list: Array<State<Counter>> }>(({ list }) => (
+    const Row = retrack<{ list: Array<State<Counter>> }>(({ list }) => (
       <span data-testid="row">{list.map((counter) => counter.count).join(",")}</span>
     ));
 
@@ -357,7 +357,7 @@ describe("resnapshot", () => {
   });
 
   it("renders a component with no states in props", () => {
-    const Probe = resnapshot<{ label: string }>(({ label }) => <span data-testid="label">{label}</span>);
+    const Probe = retrack<{ label: string }>(({ label }) => <span data-testid="label">{label}</span>);
 
     const { rerender } = render(<Probe label="one" />);
 
@@ -372,13 +372,13 @@ describe("resnapshot", () => {
     const state = createState({ count: 0, label: "hits" });
     const renders = { count: 0, label: 0 };
 
-    const CountView = resnapshot<{ state: State<{ count: number; label: string }> }>(({ state: snap }) => {
+    const CountView = retrack<{ state: State<{ count: number; label: string }> }>(({ state: snap }) => {
       renders.count += 1;
 
       return <span data-testid="count">{snap.count}</span>;
     });
 
-    const LabelView = resnapshot<{ state: State<{ count: number; label: string }> }>(({ state: snap }) => {
+    const LabelView = retrack<{ state: State<{ count: number; label: string }> }>(({ state: snap }) => {
       renders.label += 1;
 
       return <span data-testid="label">{snap.label}</span>;
@@ -394,8 +394,8 @@ describe("resnapshot", () => {
     expect(renders).toEqual({ count: 1, label: 1 });
 
     await act(async () => {
-      state.op.mutate((proxy) => {
-        proxy.count += 1;
+      state.mutate((mutable) => {
+        mutable.count += 1;
       });
     });
 
@@ -403,8 +403,8 @@ describe("resnapshot", () => {
     expect(renders).toEqual({ count: 2, label: 1 });
 
     await act(async () => {
-      state.op.mutate((proxy) => {
-        proxy.label = "misses";
+      state.mutate((mutable) => {
+        mutable.label = "misses";
       });
     });
 
@@ -422,7 +422,7 @@ describe("resnapshot", () => {
 
     let renders = 0;
 
-    const AView = resnapshot<{ state: State<Pair> }>(({ state: snap }) => {
+    const AView = retrack<{ state: State<Pair> }>(({ state: snap }) => {
       renders += 1;
 
       return <span data-testid="a">{snap.a.value}</span>;
@@ -431,16 +431,16 @@ describe("resnapshot", () => {
     render(<AView state={state} />);
 
     await act(async () => {
-      state.op.mutate((proxy) => {
-        proxy.b.value = 9;
+      state.mutate((mutable) => {
+        mutable.b.value = 9;
       });
     });
 
     expect(renders).toBe(1);
 
     await act(async () => {
-      state.op.mutate((proxy) => {
-        proxy.a.value = 5;
+      state.mutate((mutable) => {
+        mutable.a.value = 5;
       });
     });
 
@@ -451,7 +451,7 @@ describe("resnapshot", () => {
   it("renders current values for a field first read after a gated change", async () => {
     const state = createState({ count: 0, label: "hits" });
 
-    const View = resnapshot<{ state: State<{ count: number; label: string }>; showLabel: boolean }>(
+    const View = retrack<{ state: State<{ count: number; label: string }>; showLabel: boolean }>(
       ({ state: snap, showLabel }) => <span data-testid="view">{showLabel ? snap.label : String(snap.count)}</span>,
     );
 
@@ -472,8 +472,8 @@ describe("resnapshot", () => {
     expect(screen.getByTestId("view").textContent).toBe("0");
 
     await act(async () => {
-      state.op.mutate((proxy) => {
-        proxy.label = "misses";
+      state.mutate((mutable) => {
+        mutable.label = "misses";
       });
     });
 

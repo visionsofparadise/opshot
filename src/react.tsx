@@ -2,7 +2,7 @@ import { createProxy, isChanged } from "proxy-compare";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FC } from "react";
 import { snapshot as valtioSnapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { createGroup, type Group } from "./createGroup";
-import { createState, isState, type Define, type State } from "./createState";
+import { createGroupState, isMeta, isState, type Define, type Meta, type State } from "./createState";
 
 type PropPath = Array<string | number>;
 
@@ -15,7 +15,7 @@ function shouldTraverse(value: unknown): boolean {
 	return prototype === Object.prototype || prototype === null;
 }
 
-function findSnapshotPaths(value: unknown, path: PropPath = [], paths: Array<PropPath> = []): Array<PropPath> {
+function findStatePaths(value: unknown, path: PropPath = [], paths: Array<PropPath> = []): Array<PropPath> {
 	if (isState(value)) {
 		paths.push(path);
 
@@ -26,13 +26,13 @@ function findSnapshotPaths(value: unknown, path: PropPath = [], paths: Array<Pro
 
 	if (Array.isArray(value)) {
 		value.forEach((item, index) => {
-			findSnapshotPaths(item, [...path, index], paths);
+			findStatePaths(item, [...path, index], paths);
 		});
 	} else {
 		for (const [key, propertyValue] of Object.entries(value as object)) {
 			if (key === "children") continue;
 
-			findSnapshotPaths(propertyValue, [...path, key], paths);
+			findStatePaths(propertyValue, [...path, key], paths);
 		}
 	}
 
@@ -80,11 +80,11 @@ interface Tracking {
 
 const targetCache = new WeakMap<object, unknown>();
 
-function useResnapshotAll(snapshots: Array<State<object>>): Array<object> {
+function useRetrackAll(states: Array<{ readonly op: { readonly unsafeMutable: object } }>): Array<object> {
 	const lastRendered = useRef<Array<object>>([]);
 	const lastReturned = useRef<Array<object>>([]);
 
-	const nextProxies = snapshots.map((snap) => snap.op.proxy);
+	const nextProxies = states.map((state) => state.op.unsafeMutable);
 	const [proxies, setProxies] = useState(nextProxies);
 
 	const isStale = proxies.length !== nextProxies.length || proxies.some((proxied, index) => proxied !== nextProxies[index]);
@@ -132,54 +132,64 @@ function useResnapshotAll(snapshots: Array<State<object>>): Array<object> {
 		[proxies, trackings],
 	);
 
-	const freshSnapshots = useSyncExternalStore(subscribe, getSnapshot);
+	const freshStates = useSyncExternalStore(subscribe, getSnapshot);
 
 	useLayoutEffect(() => {
-		lastRendered.current = freshSnapshots;
+		lastRendered.current = freshStates;
 	});
 
 	const trackedSnapshots = useMemo(
 		() =>
-			freshSnapshots.map((snap, index) => {
+			freshStates.map((snap, index) => {
 				const tracking = trackings[index];
 
 				if (!tracking) return snap;
 
 				return createProxy(snap, tracking.affected, tracking.proxyCache, targetCache);
 			}),
-		[freshSnapshots, trackings],
+		[freshStates, trackings],
 	);
 
-	return isStale ? snapshots : trackedSnapshots;
+	return isStale ? states : trackedSnapshots;
 }
 
-export function resnapshot<P extends object>(component: FC<P>): FC<P> {
+export function retrack<P extends object>(component: FC<P>): FC<P> {
 	const componentName = component.displayName ?? component.name;
 
-	const Resnapshotted: FC<P> = (props) => {
-		const snapshotPaths = useMemo(() => findSnapshotPaths(props), [props]);
-		const staleSnapshots = useMemo(() => snapshotPaths.map((path) => getAtPath(props, path)).filter(isState), [props, snapshotPaths]);
-		const freshSnapshots = useResnapshotAll(staleSnapshots);
+	const Retracked: FC<P> = (props) => {
+		const snapshotPaths = useMemo(() => findStatePaths(props), [props]);
+		const staleStates = useMemo(() => snapshotPaths.map((path) => getAtPath(props, path)).filter(isState), [props, snapshotPaths]);
+		const freshStates = useRetrackAll(staleStates);
 
 		const freshProps = useMemo(() => {
-			if (freshSnapshots === staleSnapshots) return props;
+			if (freshStates === staleStates) return props;
 
-			return snapshotPaths.reduce<P>((acc, path, index) => setAtPath(acc, path, freshSnapshots[index]), props);
-		}, [props, snapshotPaths, staleSnapshots, freshSnapshots]);
+			return snapshotPaths.reduce<P>((acc, path, index) => setAtPath(acc, path, freshStates[index]), props);
+		}, [props, snapshotPaths, staleStates, freshStates]);
 
 		return component(freshProps);
 	};
 
-	Resnapshotted.displayName = `resnapshot(${componentName === "" ? "Anonymous" : componentName})`;
+	Retracked.displayName = `retrack(${componentName === "" ? "Anonymous" : componentName})`;
 
-	return memo(Resnapshotted);
+	return memo(Retracked);
 }
 
-export const useCreateGroup = (): Group => useState(() => createGroup())[0];
+export function useGroup(): Group;
+export function useGroup<In extends object, Out extends object>(meta: Meta<In, Out>): Group<In, Out>;
+export function useGroup<In extends object, Out extends object>(meta?: Meta<In, Out>): Group<In, Out> {
+	return useState(() => (meta === undefined ? createGroup() : createGroup(meta)) as Group<In, Out>)[0];
+}
 
-export const useCreateState = <T extends object>(define: Define<T>, group?: Group): State<T> => {
-	const created = useState(() => (group ? group.createState(define) : createState(define)))[0];
-	const [fresh] = useResnapshotAll([created]);
+export function useTrackedState<T extends object>(define: Define<T>): State<T>;
+export function useTrackedState<T extends object, In extends object, Out extends object>(define: Define<T, In, Out>, groupOrMeta: Group<In, Out> | Meta<In, Out>): State<T, In, Out>;
+export function useTrackedState<T extends object, In extends object, Out extends object>(define: Define<T, In, Out>, groupOrMeta?: Group<In, Out> | Meta<In, Out>): State<T, In, Out> {
+	const created = useState(() => {
+		if (groupOrMeta !== undefined && !isMeta(groupOrMeta)) return (groupOrMeta as Group<In, Out>).createState(define);
 
-	return fresh as State<T>;
-};
+		return createGroupState(define, undefined, groupOrMeta as Meta<In, Out> | undefined);
+	})[0];
+	const [fresh] = useRetrackAll([created]);
+
+	return fresh as State<T, In, Out>;
+}

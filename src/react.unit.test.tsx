@@ -4,27 +4,27 @@ import { act, render, renderHook, screen } from "@testing-library/react";
 import { type FC } from "react";
 
 import { createGroup } from "./createGroup";
-import { type State } from "./createState";
+import { createMeta, type State } from "./createState";
 import { type Op } from "./diff";
-import { resnapshot, useCreateGroup, useCreateState } from "./react";
+import { retrack, useGroup, useTrackedState } from "./react";
 
 interface Counter {
   count: number;
   increment: () => void;
 }
 
-const counterDefine = (mutate: (callback: (proxy: Counter) => void) => void): Counter => ({
+const counterDefine = (mutate: (callback: (mutable: Counter) => void) => void): Counter => ({
   count: 0,
   increment: () => {
-    mutate((proxy) => {
-      proxy.count += 1;
+    mutate((mutable) => {
+      mutable.count += 1;
     });
   },
 });
 
-describe("useCreateState", () => {
+describe("useTrackedState", () => {
   it("returns the same state instance across re-renders", () => {
-    const { result, rerender } = renderHook(() => useCreateState<Counter>(counterDefine));
+    const { result, rerender } = renderHook(() => useTrackedState<Counter>(counterDefine));
 
     const first = result.current;
 
@@ -35,11 +35,11 @@ describe("useCreateState", () => {
   });
 
   it("creates a working standalone state from a plain-object define", () => {
-    const { result } = renderHook(() => useCreateState<{ count: number }>({ count: 0 }));
+    const { result } = renderHook(() => useTrackedState<{ count: number }>({ count: 0 }));
 
     act(() => {
-      result.current.op.mutate((proxy) => {
-        proxy.count += 1;
+      result.current.mutate((mutable) => {
+        mutable.count += 1;
       });
     });
 
@@ -50,7 +50,7 @@ describe("useCreateState", () => {
     let held: State<Counter> | undefined;
 
     const CounterView: FC = () => {
-      const counter = useCreateState<Counter>(counterDefine);
+      const counter = useTrackedState<Counter>(counterDefine);
 
       held = counter;
 
@@ -73,7 +73,7 @@ describe("useCreateState", () => {
 
     let held: State<Counter> | undefined;
 
-    const CounterButton = resnapshot<{ counter: State<Counter> }>(({ counter }) => {
+    const CounterButton = retrack<{ counter: State<Counter> }>(({ counter }) => {
       renders.button += 1;
 
       return <span data-testid="count">{counter.count}</span>;
@@ -82,7 +82,7 @@ describe("useCreateState", () => {
     const App: FC = () => {
       renders.app += 1;
 
-      const counter = useCreateState<Counter>(counterDefine);
+      const counter = useTrackedState<Counter>(counterDefine);
 
       held = counter;
 
@@ -106,7 +106,7 @@ describe("useCreateState", () => {
 
     let held: State<Counter> | undefined;
 
-    const CounterButton = resnapshot<{ counter: State<Counter> }>(({ counter }) => {
+    const CounterButton = retrack<{ counter: State<Counter> }>(({ counter }) => {
       renders.button += 1;
 
       return <span data-testid="child">{counter.count}</span>;
@@ -115,7 +115,7 @@ describe("useCreateState", () => {
     const App: FC = () => {
       renders.app += 1;
 
-      const counter = useCreateState<Counter>(counterDefine);
+      const counter = useTrackedState<Counter>(counterDefine);
 
       held = counter;
 
@@ -150,7 +150,7 @@ describe("useCreateState", () => {
 
     let held: State<Pair> | undefined;
 
-    const Child = resnapshot<{ pair: State<Pair> }>(({ pair }) => {
+    const Child = retrack<{ pair: State<Pair> }>(({ pair }) => {
       renders.child += 1;
 
       return (
@@ -163,7 +163,7 @@ describe("useCreateState", () => {
     const App: FC = () => {
       renders.app += 1;
 
-      const pair = useCreateState<Pair>({ x: 0, y: 0 });
+      const pair = useTrackedState<Pair>({ x: 0, y: 0 });
 
       held = pair;
 
@@ -180,8 +180,8 @@ describe("useCreateState", () => {
     expect(renders).toEqual({ app: 1, child: 1 });
 
     await act(async () => {
-      held?.op.mutate((proxy) => {
-        proxy.y += 1;
+      held?.mutate((mutable) => {
+        mutable.y += 1;
       });
     });
 
@@ -189,8 +189,8 @@ describe("useCreateState", () => {
     expect(renders).toEqual({ app: 1, child: 2 });
 
     await act(async () => {
-      held?.op.mutate((proxy) => {
-        proxy.x += 1;
+      held?.mutate((mutable) => {
+        mutable.x += 1;
       });
     });
 
@@ -207,7 +207,7 @@ describe("useCreateState", () => {
       heard.push(ops);
     });
 
-    const { result } = renderHook(() => useCreateState<Counter>(counterDefine, group));
+    const { result } = renderHook(() => useTrackedState(counterDefine, group));
 
     act(() => {
       result.current.increment();
@@ -216,16 +216,57 @@ describe("useCreateState", () => {
     expect(heard).toHaveLength(1);
     expect(result.current.op.unwrap().count).toBe(1);
   });
+
+  it("delivers merged meta from a state created with a token", () => {
+    const token = createMeta<{ replay: boolean }>({ replay: false });
+    const heard = new Array<{ replay: boolean }>();
+
+    const { result } = renderHook(() => useTrackedState({ count: 0 }, token));
+
+    result.current.op.subscribe((_state, _ops, meta) => {
+      heard.push(meta);
+    });
+
+    act(() => {
+      result.current.mutate((mutable) => {
+        mutable.count += 1;
+      });
+    });
+
+    expect(heard).toEqual([{ replay: false }]);
+    expect(result.current.op.unwrap().count).toBe(1);
+  });
 });
 
-describe("useCreateGroup", () => {
+describe("useGroup", () => {
   it("returns the same group instance across re-renders", () => {
-    const { result, rerender } = renderHook(() => useCreateGroup());
+    const { result, rerender } = renderHook(() => useGroup());
 
     const first = result.current;
 
     rerender();
 
     expect(result.current).toBe(first);
+  });
+
+  it("delivers merged meta through a group created with a token", () => {
+    const token = createMeta<{ replay: boolean }>({ replay: false });
+    const heard = new Array<{ replay: boolean }>();
+
+    const { result } = renderHook(() => useGroup(token));
+
+    result.current.subscribe((_state, _ops, meta) => {
+      heard.push(meta);
+    });
+
+    const state = result.current.createState({ count: 0 });
+
+    act(() => {
+      state.mutate((mutable) => {
+        mutable.count += 1;
+      });
+    });
+
+    expect(heard).toEqual([{ replay: false }]);
   });
 });

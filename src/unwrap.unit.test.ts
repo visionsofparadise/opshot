@@ -18,8 +18,8 @@ const createCounter = (): State<Counter> =>
     count: 0,
     label: "hits",
     increment: () => {
-      mutate((proxy) => {
-        proxy.count += 1;
+      mutate((mutable) => {
+        mutable.count += 1;
       });
     },
   }));
@@ -36,8 +36,8 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
     count: 0,
     label: "hits",
     increment: () => {
-      mutate((proxy) => {
-        proxy.count += 1;
+      mutate((mutable) => {
+        mutable.count += 1;
       });
     },
   }));
@@ -55,7 +55,7 @@ describe("unwrap", () => {
     expect(data.label).toBe("hits");
   });
 
-  it("strips the library key from every generation", () => {
+  it("strips the library keys from every generation", () => {
     const { state, emissions } = createTrackedCounter();
 
     state.increment();
@@ -71,6 +71,7 @@ describe("unwrap", () => {
 
       expect(Object.keys(data)).toEqual(["count", "label", "increment"]);
       expect("op" in data).toBe(false);
+      expect("mutate" in data).toBe(false);
     }
   });
 
@@ -122,8 +123,8 @@ describe("unwrap", () => {
         return this.count * 2;
       },
       increment: () => {
-        mutate((proxy) => {
-          proxy.count += 1;
+        mutate((mutable) => {
+          mutable.count += 1;
         });
       },
     }));

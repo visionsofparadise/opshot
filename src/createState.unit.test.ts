@@ -1,7 +1,7 @@
 import { ref } from "valtio/vanilla";
 
 import { createGroup } from "./createGroup";
-import { createState, isState, type MutateOptions, type OpshotHandle, type State } from "./createState";
+import { createMeta, createState, isMeta, isState, type OpshotHandle, type State } from "./createState";
 import { diffSnapshots, type Op } from "./diff";
 
 vi.mock(import("./diff"), { spy: true });
@@ -19,8 +19,8 @@ const createCounter = (): State<Counter> =>
   createState<Counter>((mutate) => ({
     count: 0,
     increment: () => {
-      mutate((proxy) => {
-        proxy.count += 1;
+      mutate((mutable) => {
+        mutable.count += 1;
       });
     },
   }));
@@ -36,8 +36,8 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
   const state = group.createState<Counter>((mutate) => ({
     count: 0,
     increment: () => {
-      mutate((proxy) => {
-        proxy.count += 1;
+      mutate((mutable) => {
+        mutable.count += 1;
       });
     },
   }));
@@ -45,11 +45,11 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
   return { state, emissions };
 };
 
-const recordEmissions = (state: State<object>): Array<{ ops: Array<Op>; options: MutateOptions }> => {
-  const emissions = new Array<{ ops: Array<Op>; options: MutateOptions }>();
+const recordEmissions = (state: State<object>): Array<{ ops: Array<Op>; meta: Record<string, unknown> }> => {
+  const emissions = new Array<{ ops: Array<Op>; meta: Record<string, unknown> }>();
 
-  state.op.subscribe((_state, ops, options) => {
-    emissions.push({ ops, options });
+  state.op.subscribe((_state, ops, meta) => {
+    emissions.push({ ops, meta });
   });
 
   return emissions;
@@ -65,8 +65,8 @@ describe("createState", () => {
       return {
         count: 1,
         increment: () => {
-          mutate((proxy) => {
-            proxy.count += 1;
+          mutate((mutable) => {
+            mutable.count += 1;
           });
         },
       };
@@ -80,8 +80,8 @@ describe("createState", () => {
   it("throws when mutate or get is called during define", () => {
     expect(() =>
       createState<{ count: number }>((mutate) => {
-        mutate((proxy) => {
-          proxy.count = 1;
+        mutate((mutable) => {
+          mutable.count = 1;
         });
 
         return { count: 0 };
@@ -100,7 +100,7 @@ describe("createState", () => {
   it("returns a snapshot, not the proxy", () => {
     const state = createCounter();
 
-    expect(state).not.toBe(state.op.proxy);
+    expect(state).not.toBe(state.op.unsafeMutable);
   });
 
   it("throws on an assignment to a returned state, and emits nothing", () => {
@@ -155,8 +155,8 @@ describe("createState", () => {
         return this.count * 2;
       },
       increment: () => {
-        mutate((proxy) => {
-          proxy.count += 1;
+        mutate((mutable) => {
+          mutable.count += 1;
         });
       },
     }));
@@ -175,8 +175,8 @@ describe("createState", () => {
     expect(second).not.toBe(first);
     expect(second.doubled).toBe(2);
 
-    second.op.mutate((proxy) => {
-      proxy.count = 5;
+    second.mutate((mutable) => {
+      mutable.count = 5;
     });
 
     expect(first.op.unwrap().doubled).toBe(10);
@@ -205,26 +205,26 @@ describe("createState", () => {
     expect(state.op.isSameState(undefined)).toBe(false);
   });
 
-  it("emits once per mutate with the caller's options verbatim", () => {
+  it("emits once per mutate with the caller's meta verbatim", () => {
     const state = createCounter();
     const emissions = recordEmissions(state);
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
-    }, { transactionKey: "drag", appliedOps: true });
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    }, { transactionKey: "drag", replay: true });
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
       { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
-    expect(emissions[0]?.options).toEqual({ transactionKey: "drag", appliedOps: true });
+    expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
-    state.op.mutate((proxy) => {
-      proxy.count = 2;
+    state.mutate((mutable) => {
+      mutable.count = 2;
     });
 
     expect(emissions).toHaveLength(2);
-    expect(emissions[1]?.options).toEqual({});
+    expect(emissions[1]?.meta).toEqual({});
   });
 
   it("emits ops for a getter, which snapshots carry as data", () => {
@@ -234,8 +234,8 @@ describe("createState", () => {
         return this.count * 2;
       },
       increment: () => {
-        mutate((proxy) => {
-          proxy.count += 1;
+        mutate((mutable) => {
+          mutable.count += 1;
         });
       },
     }));
@@ -253,9 +253,9 @@ describe("createState", () => {
     const state = createCounter();
     const emissions = recordEmissions(state);
 
-    state.op.mutate(() => undefined);
-    state.op.mutate((proxy) => {
-      proxy.count = 0;
+    state.mutate(() => undefined);
+    state.mutate((mutable) => {
+      mutable.count = 0;
     });
 
     expect(emissions).toHaveLength(0);
@@ -265,9 +265,9 @@ describe("createState", () => {
     const state = createCounter();
     const emissions = recordEmissions(state);
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
-      proxy.count = 0;
+    state.mutate((mutable) => {
+      mutable.count = 1;
+      mutable.count = 0;
     });
 
     expect(emissions).toHaveLength(0);
@@ -277,10 +277,10 @@ describe("createState", () => {
     const state = createCounter();
 
     expect(() =>
-      state.op.mutate((proxy) => {
-        proxy.count = 1;
+      state.mutate((mutable) => {
+        mutable.count = 1;
 
-        state.op.mutate((inner) => {
+        state.mutate((inner) => {
           inner.count = 2;
         });
       }),
@@ -291,7 +291,7 @@ describe("createState", () => {
     const state = createCounter();
 
     expect(() =>
-      state.op.mutate(() => {
+      state.mutate(() => {
         throw new Error("boom");
       }),
     ).toThrow("boom");
@@ -309,10 +309,10 @@ describe("createState", () => {
     const firstEmissions = recordEmissions(first);
     const secondEmissions = recordEmissions(second);
 
-    first.op.mutate((proxy) => {
-      proxy.count = 1;
+    first.mutate((mutable) => {
+      mutable.count = 1;
 
-      second.op.mutate((other) => {
+      second.mutate((other) => {
         other.count = 7;
       });
     });
@@ -351,14 +351,14 @@ describe("createState", () => {
   it("recognizes states and rejects other values", () => {
     expect(isState(createCounter())).toBe(true);
     expect(isState({ count: 1 })).toBe(false);
-    expect(isState({ op: { proxy: 1 } })).toBe(false);
+    expect(isState({ op: { unsafeMutable: 1 } })).toBe(false);
     expect(isState(null)).toBe(false);
     expect(isState(undefined)).toBe(false);
     expect(isState("state")).toBe(false);
   });
 
   it("rejects a foreign object shaped like a state, which the old duck-check accepted", () => {
-    expect(isState({ op: { proxy: {} } })).toBe(false);
+    expect(isState({ op: { unsafeMutable: {} } })).toBe(false);
   });
 
   it("keeps isState true on the fresh generation a subscriber receives after a mutation", () => {
@@ -385,9 +385,9 @@ describe("createState", () => {
       index: 0,
       entries: ref(new Array<string>()),
       append: (entry) => {
-        mutate((proxy) => {
-          proxy.entries.push(entry);
-          proxy.index += 1;
+        mutate((mutable) => {
+          mutable.entries.push(entry);
+          mutable.index += 1;
         });
       },
     }));
@@ -409,7 +409,7 @@ describe("createState", () => {
 
     literal.count = 9;
 
-    expect((state.op.proxy as Counter).count).toBe(0);
+    expect((state.op.unsafeMutable as Counter).count).toBe(0);
     expect(Object.hasOwn(literal, "op")).toBe(false);
     expect(state.op.unwrap().count).toBe(0);
     expect(emissions).toHaveLength(0);
@@ -423,8 +423,8 @@ describe("createState", () => {
 
     expect(first.op.isSameState(second)).toBe(false);
 
-    first.op.mutate((proxy) => {
-      proxy.count = 5;
+    first.mutate((mutable) => {
+      mutable.count = 5;
     });
 
     expect(first.op.unwrap().count).toBe(5);
@@ -436,8 +436,8 @@ describe("createState", () => {
     const state = createState({ count: 0 });
     const emissions = recordEmissions(state);
 
-    state.op.mutate((proxy) => {
-      proxy.count = 3;
+    state.mutate((mutable) => {
+      mutable.count = 3;
     });
 
     expect(emissions).toHaveLength(1);
@@ -466,8 +466,8 @@ describe("createState", () => {
     expect(first.op).not.toBe(second.op);
     expect(first.op.isSameState(second)).toBe(false);
 
-    first.op.mutate((proxy) => {
-      proxy.count = 5;
+    first.mutate((mutable) => {
+      mutable.count = 5;
     });
 
     expect(first.op.unwrap().count).toBe(5);
@@ -485,6 +485,10 @@ describe("createState", () => {
 
   it("throws on a define literal carrying the reserved op key", () => {
     expect(() => createState(() => ({ op: "anything" }))).toThrow('opshot: "op" is a reserved key on a state');
+  });
+
+  it("throws on a define literal carrying the reserved mutate key", () => {
+    expect(() => createState({ mutate: 1 })).toThrow('opshot: "mutate" is a reserved key on a state');
   });
 
   it("keeps op identical and Map-keyable across generations, distinct across states", () => {
@@ -510,8 +514,8 @@ describe("createState", () => {
 
     vi.mocked(diffSnapshots).mockClear();
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
+    state.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(diffSnapshots).not.toHaveBeenCalled();
@@ -520,8 +524,8 @@ describe("createState", () => {
     const heard = new Array<Array<Op>>();
     const unsubscribe = state.op.subscribe((_state, ops) => heard.push(ops));
 
-    state.op.mutate((proxy) => {
-      proxy.count = 2;
+    state.mutate((mutable) => {
+      mutable.count = 2;
     });
 
     expect(diffSnapshots).toHaveBeenCalledTimes(1);
@@ -531,12 +535,93 @@ describe("createState", () => {
 
     unsubscribe();
 
-    state.op.mutate((proxy) => {
-      proxy.count = 3;
+    state.mutate((mutable) => {
+      mutable.count = 3;
     });
 
     expect(diffSnapshots).toHaveBeenCalledTimes(1);
     expect(heard).toHaveLength(1);
     expect(state.op.unwrap().count).toBe(3);
+  });
+
+  it("attaches mutate flat on the state, identity-stable across generations, and not on the handle", () => {
+    const { state, emissions } = createTrackedCounter();
+
+    state.mutate((mutable) => {
+      mutable.count = 5;
+    });
+
+    const current = emissions[0];
+
+    if (!current) throw new Error("the group heard no emission");
+
+    expect(emissions).toHaveLength(1);
+    expect(current.mutate).toBe(state.mutate);
+    expect("mutate" in state.op).toBe(false);
+    expect(state.op.unwrap().count).toBe(5);
+  });
+
+  it("merges defaults under the caller's meta for a defaulted token, caller winning", () => {
+    const token = createMeta<{ replay: boolean; transactionKey?: string }>({ replay: false });
+    const state = createState({ count: 0 }, token);
+    const heard = new Array<{ replay: boolean; transactionKey?: string }>();
+
+    state.op.subscribe((_state, _ops, meta) => {
+      heard.push(meta);
+    });
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    }, {});
+
+    state.mutate((mutable) => {
+      mutable.count = 2;
+    }, { replay: true, transactionKey: "drag" });
+
+    expect(heard).toEqual([{ replay: false }, { replay: true, transactionKey: "drag" }]);
+  });
+
+  it("delivers exactly the caller's meta through a bare token, and requires it for required fields", () => {
+    const token = createMeta<{ actor: string }>();
+    const state = createState({ count: 0 }, token);
+    const heard = new Array<{ actor: string }>();
+
+    state.op.subscribe((_state, _ops, meta) => {
+      heard.push(meta);
+    });
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    }, { actor: "matt" });
+
+    // @ts-expect-error a required meta field makes the meta argument required
+    state.mutate((mutable) => {
+      mutable.count = 2;
+    });
+
+    expect(heard).toEqual([{ actor: "matt" }, {}]);
+  });
+
+  it("skips the diff and the merge while nothing listens on a token state", () => {
+    const token = createMeta<{ replay: boolean }>({ replay: false });
+    const state = createState({ count: 0 }, token);
+
+    vi.mocked(diffSnapshots).mockClear();
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    });
+
+    expect(diffSnapshots).not.toHaveBeenCalled();
+    expect(state.op.unwrap().count).toBe(1);
+  });
+
+  it("brands tokens: a forged defaults object is not a token, and a token state is still a state", () => {
+    const token = createMeta<{ replay: boolean }>({ replay: false });
+
+    expect(isMeta(token)).toBe(true);
+    expect(isMeta({ defaults: {} })).toBe(false);
+    expect(isMeta(undefined)).toBe(false);
+    expect(isState(createState({ count: 0 }, token))).toBe(true);
   });
 });

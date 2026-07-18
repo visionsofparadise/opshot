@@ -1,5 +1,5 @@
 import { createGroup } from "./createGroup";
-import { createState, type MutateOptions, type State } from "./createState";
+import { createMeta, createState, type State } from "./createState";
 import { diffSnapshots, type Op } from "./diff";
 
 vi.mock(import("./diff"), { spy: true });
@@ -11,29 +11,29 @@ interface Counter {
 interface Emission {
   state: State<object>;
   ops: Array<Op>;
-  options: MutateOptions;
+  meta: Record<string, unknown>;
 }
 
 const defineCounter = (): Counter => ({ count: 0 });
 
 describe("createGroup", () => {
-  it("hears every state it created, with the state reference and options", () => {
+  it("hears every state it created, with the state reference and meta", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, options) => {
-      emissions.push({ state, ops, options });
+    group.subscribe((state, ops, meta) => {
+      emissions.push({ state, ops, meta });
     });
 
     const first = group.createState<Counter>(defineCounter);
     const second = group.createState<Counter>(defineCounter);
 
-    first.op.mutate((proxy) => {
-      proxy.count = 1;
+    first.mutate((mutable) => {
+      mutable.count = 1;
     }, { transactionKey: "drag" });
 
-    second.op.mutate((proxy) => {
-      proxy.count = 2;
+    second.mutate((mutable) => {
+      mutable.count = 2;
     });
 
     expect(emissions).toHaveLength(2);
@@ -42,30 +42,30 @@ describe("createGroup", () => {
     expect(emissions[0]?.ops).toEqual([
       { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
-    expect(emissions[0]?.options).toEqual({ transactionKey: "drag" });
+    expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
     expect(second.op.isSameState(emissions[1]?.state)).toBe(true);
-    expect(emissions[1]?.options).toEqual({});
+    expect(emissions[1]?.meta).toEqual({});
   });
 
   it("carries the latest snapshot to the listener, not the proxy", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, options) => {
-      emissions.push({ state, ops, options });
+    group.subscribe((state, ops, meta) => {
+      emissions.push({ state, ops, meta });
     });
 
     const state = group.createState<Counter>(defineCounter);
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
+    state.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     const received = emissions[0]?.state;
 
     if (!received) throw new Error("the group heard no emission");
 
-    expect(received).not.toBe(state.op.proxy);
+    expect(received).not.toBe(state.op.unsafeMutable);
     expect(received).not.toBe(state);
     expect(state.op.isSameState(received)).toBe(true);
     expect(received).toEqual(expect.objectContaining({ count: 1 }));
@@ -78,8 +78,8 @@ describe("createGroup", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, options) => {
-      emissions.push({ state, ops, options });
+    group.subscribe((state, ops, meta) => {
+      emissions.push({ state, ops, meta });
     });
 
     const state = group.createState<Counter>(defineCounter);
@@ -90,13 +90,13 @@ describe("createGroup", () => {
 
       reentered = true;
 
-      state.op.mutate((proxy) => {
-        proxy.count = 99;
+      state.mutate((mutable) => {
+        mutable.count = 99;
       });
     });
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
+    state.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(emissions).toHaveLength(2);
@@ -116,8 +116,8 @@ describe("createGroup", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, options) => {
-      emissions.push({ state, ops, options });
+    group.subscribe((state, ops, meta) => {
+      emissions.push({ state, ops, meta });
     });
 
     const standalone = createState<Counter>(defineCounter);
@@ -127,8 +127,8 @@ describe("createGroup", () => {
       ownEmissions.push(ops);
     });
 
-    standalone.op.mutate((proxy) => {
-      proxy.count = 1;
+    standalone.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(emissions).toHaveLength(0);
@@ -141,17 +141,17 @@ describe("createGroup", () => {
     const firstEmissions = new Array<Emission>();
     const secondEmissions = new Array<Emission>();
 
-    first.subscribe((state, ops, options) => {
-      firstEmissions.push({ state, ops, options });
+    first.subscribe((state, ops, meta) => {
+      firstEmissions.push({ state, ops, meta });
     });
-    second.subscribe((state, ops, options) => {
-      secondEmissions.push({ state, ops, options });
+    second.subscribe((state, ops, meta) => {
+      secondEmissions.push({ state, ops, meta });
     });
 
     const state = first.createState<Counter>(defineCounter);
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
+    state.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(firstEmissions).toHaveLength(1);
@@ -161,14 +161,14 @@ describe("createGroup", () => {
   it("stops calling a listener after its remover runs", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
-    const remove = group.subscribe((state, ops, options) => {
-      emissions.push({ state, ops, options });
+    const remove = group.subscribe((state, ops, meta) => {
+      emissions.push({ state, ops, meta });
     });
     const state = group.createState<Counter>(defineCounter);
 
     remove();
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
+    state.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(emissions).toHaveLength(0);
@@ -181,22 +181,22 @@ describe("createGroup", () => {
 
     vi.mocked(diffSnapshots).mockClear();
 
-    first.op.mutate((proxy) => {
-      proxy.count = 1;
+    first.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(diffSnapshots).not.toHaveBeenCalled();
 
     const emissions = new Array<Emission>();
-    const remove = group.subscribe((state, ops, options) => {
-      emissions.push({ state, ops, options });
+    const remove = group.subscribe((state, ops, meta) => {
+      emissions.push({ state, ops, meta });
     });
 
-    first.op.mutate((proxy) => {
-      proxy.count = 2;
+    first.mutate((mutable) => {
+      mutable.count = 2;
     });
-    second.op.mutate((proxy) => {
-      proxy.count = 5;
+    second.mutate((mutable) => {
+      mutable.count = 5;
     });
 
     expect(diffSnapshots).toHaveBeenCalledTimes(2);
@@ -204,8 +204,8 @@ describe("createGroup", () => {
 
     remove();
 
-    first.op.mutate((proxy) => {
-      proxy.count = 3;
+    first.mutate((mutable) => {
+      mutable.count = 3;
     });
 
     expect(diffSnapshots).toHaveBeenCalledTimes(2);
@@ -223,10 +223,28 @@ describe("createGroup", () => {
     group.subscribe(() => order.push("group"));
     state.op.subscribe(() => order.push("second"));
 
-    state.op.mutate((proxy) => {
-      proxy.count = 1;
+    state.mutate((mutable) => {
+      mutable.count = 1;
     });
 
     expect(order).toEqual(["group", "first", "second"]);
+  });
+
+  it("delivers merged meta from a member state's mutate through a group token", () => {
+    const token = createMeta<{ replay: boolean; transactionKey?: string }>({ replay: false });
+    const group = createGroup(token);
+    const heard = new Array<{ replay: boolean; transactionKey?: string }>();
+
+    group.subscribe((_state, _ops, meta) => {
+      heard.push(meta);
+    });
+
+    const state = group.createState({ count: 0 });
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    }, { transactionKey: "drag" });
+
+    expect(heard).toEqual([{ replay: false, transactionKey: "drag" }]);
   });
 });

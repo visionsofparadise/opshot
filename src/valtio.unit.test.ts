@@ -121,7 +121,7 @@ describe("valtio assumptions", () => {
 
   it("reads a ref() handle assigned after proxy() through later snapshots", () => {
     interface Handle {
-      proxy: object | undefined;
+      unsafeMutable: object | undefined;
       isMutating: boolean;
     }
 
@@ -130,7 +130,7 @@ describe("valtio assumptions", () => {
       readonly op: Handle;
     }
 
-    const handle: Handle = { proxy: undefined, isMutating: false };
+    const handle: Handle = { unsafeMutable: undefined, isMutating: false };
     const literal = { value: 1 } as Branded;
 
     Object.defineProperty(literal, "op", {
@@ -142,19 +142,19 @@ describe("valtio assumptions", () => {
 
     const state = proxy(literal);
 
-    handle.proxy = state;
+    handle.unsafeMutable = state;
 
     const first = snapshot(state);
 
     expect(first.op).toBe(handle);
-    expect(first.op.proxy).toBe(state);
+    expect(first.op.unsafeMutable).toBe(state);
 
     state.value = 2;
 
     const second = snapshot(state);
 
     expect(second.op).toBe(handle);
-    expect(second.op.proxy).toBe(state);
+    expect(second.op.unsafeMutable).toBe(state);
   });
 
   it("leaves snapshots unfrozen: writes throw, adds and deletes and array growth corrupt the cached snapshot", () => {
