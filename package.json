@@ -1,6 +1,6 @@
 {
   "name": "opshot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Plain-object state for React: mutate it directly, re-render only the components that read what changed, and track every change operation",
   "type": "module",
   "exports": {
