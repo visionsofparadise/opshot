@@ -2,12 +2,7 @@
 
 # opshot
 
-Plain-object state for React: mutate it directly, re-render only the components that read what changed, and track every change operation.
-
-- **Self-contained**: a state carries its data, its methods, and its own subscription; pass it around like any object.
-- **Reactive reads**: components read plain properties, and reads are tracked per component: a component re-renders only when a property it read changes.
-- **Safe mutation**: write by mutating the actual object directly inside `mutate`.
-- **Ops events**: every mutation emits its changes as `{ do, undo }` JSON Patch pairs, ready for history, sync, and persistence.
+Mutable state for React, with re-render for only the components that read what changed. (It's [valtio](https://github.com/pmndrs/valtio), but not a footgun.)
 
 ## Install
 
@@ -15,29 +10,81 @@ Plain-object state for React: mutate it directly, re-render only the components 
 npm install opshot
 ```
 
-## Quick start
+## Mutable state
+
+React state is immutable: changing one field means spreading the old object into a new one.
 
 ```tsx
-import { useCreateState } from "opshot/react";
+const [user, setUser] = useState({ name: "Ada", age: 36 });
 
-const Counter = () => {
-	const counter = useCreateState({ count: 0 });
-
-	// Mutate the object directly: assignments, push, delete all work.
-	const increment = () => counter.op.mutate((proxy) => proxy.count++);
-
-	return <button onClick={increment}>{counter.count}</button>;
-};
+setUser((prev) => ({ ...prev, age: 37 }));
 ```
 
-## Creating state
+opshot state is mutable: you assign the field.
+
+```tsx
+const user = useTrackedState({ name: "Ada", age: 36 });
+
+user.mutate((mutable) => (mutable.age = 37));
+```
+
+## Bounded re-renders
+
+React re-renders a component and its children when its state changes.
+
+```tsx
+interface User {
+	name: string;
+	age: number;
+}
+
+const Parent = () => {
+	const [user, setUser] = useState<User>({ name: "Ada", age: 36 });
+
+	const birthday = () => setUser((prev) => ({ ...prev, age: prev.age + 1 }));
+
+	// A click re-renders Parent and Child.
+	return (
+		<>
+			<button onClick={birthday}>+</button>
+			<Child user={user} />
+		</>
+	);
+};
+
+const Child = ({ user }: { user: User }) => <p>{user.age}</p>;
+```
+
+opshot re-renders only what read the change. Wrap a child in `retrack` and it subscribes to the fields it reads. **Where the mutation happens doesn't matter** — here Parent writes, and only Child re-renders, because renders follow reads, not writes.
+
+```tsx
+const Parent = () => {
+	const user = useTrackedState<User>({ name: "Ada", age: 36 });
+
+	const birthday = () => user.mutate((mutable) => mutable.age++);
+
+	// A click re-renders only Child.
+	return (
+		<>
+			<button onClick={birthday}>+</button>
+			<Child user={user} />
+		</>
+	);
+};
+
+const Child = retrack<{ user: State<User> }>(({ user }) => <p>{user.age}</p>);
+```
+
+This is how you optimize re-rendering across your component tree: place `retrack` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useTrackedState` is a boundary itself.
+
+## Creating State
 
 ```tsx
 import { ref } from "opshot";
-import { useCreateState } from "opshot/react";
+import { useTrackedState } from "opshot/react";
 
 const Player = () => {
-	const player = useCreateState((mutate, get) => ({
+	const player = useTrackedState((mutate, get) => ({
 		position: 0,
 
 		// ref() keeps a value out of reactivity and ops.
@@ -47,7 +94,7 @@ const Player = () => {
 		seek: (position: number) => {
 			get().element.currentTime = position;
 
-			mutate((proxy) => (proxy.position = position));
+			mutate((mutable) => (mutable.position = position));
 		},
 	}));
 
@@ -55,16 +102,16 @@ const Player = () => {
 };
 ```
 
-## state.op
+## Tracked State
 
-Everything opshot attaches lives under one reserved key, `op`.
+Everything opshot attaches lives under two reserved keys, `mutate` and `op`.
 
 ```ts
 // The write path. An optional second argument is passed to every subscriber.
-counter.op.mutate((proxy) => {}, { transactionKey: "drag" });
+counter.mutate((mutable) => mutable.count++, { transactionKey: "drag" });
 
 // Hears every op this state emits; returns an unsubscribe.
-const unsubscribe = counter.op.subscribe((state, ops, options) => {
+const unsubscribe = counter.op.subscribe((state, ops, meta) => {
 	// ...
 });
 
@@ -78,13 +125,13 @@ counter.op.isMutating;
 counter.op.unwrap();
 
 // The underlying valtio proxy, typed object: an escape hatch.
-counter.op.proxy;
+counter.op.unsafeMutable;
 ```
 
 ## Ops
 
 ```ts
-const unsubscribe = counter.op.subscribe((state, ops, options) => {
+const unsubscribe = counter.op.subscribe((state, ops, meta) => {
 	// state: the snapshot these ops produced
 	// ops: [{
 	//   do:   { op: "replace", path: "/count", value: 1 },
@@ -99,25 +146,66 @@ A subscriber must not write to the state it subscribes to; writing to a differen
 
 Ops cost nothing until someone listens: a state with no subscribers, on itself or its group, skips computing them entirely.
 
+## Meta
+
+`mutate`'s optional second argument is delivered to every subscriber alongside the ops.
+
+To type it, declare a meta token once and pass it in.
+
+```tsx
+import { useEffect } from "react";
+import { createMeta } from "opshot";
+import { useTrackedState } from "opshot/react";
+
+interface DocumentMeta {
+	replay?: boolean;
+}
+
+// Declared once, at module scope.
+const documentMeta = createMeta<DocumentMeta>();
+
+const Editor = () => {
+	const doc = useTrackedState({ title: "Untitled" }, documentMeta);
+
+	// A history replaying an undone op marks the write, so recorders can tell it apart.
+	// The meta argument is typed DocumentMeta.
+	const undo = () => doc.mutate((mutable) => (mutable.title = "Untitled"), { replay: true });
+
+	useEffect(
+		() =>
+			// The subscriber's meta parameter is typed DocumentMeta.
+			doc.op.subscribe((state, ops, meta) => {
+				// A recorder skips its own replays.
+				if (meta.replay) return;
+
+				// ...
+			}),
+		[doc.op],
+	);
+
+	// ...
+};
+```
+
 ## Groups
 
 A group creates states and hears every op from the states it created: one stream for history, sync, and persistence.
 
 ```tsx
 import { useEffect } from "react";
-import { useCreateGroup, useCreateState } from "opshot/react";
+import { useGroup, useTrackedState } from "opshot/react";
 
 const Editor = () => {
 	// A lifetime-stable group.
-	const group = useCreateGroup();
+	const group = useGroup();
 
 	// Created through the group, so its ops reach the group's subscribers.
-	const doc = useCreateState({ items: new Array<string>() }, group);
+	const doc = useTrackedState({ items: new Array<string>() }, group);
 
 	useEffect(
 		() =>
 			// Fires for doc and every other state the group created.
-			group.subscribe((state, ops, options) => {
+			group.subscribe((state, ops, meta) => {
 				// ...
 			}),
 		[group],
@@ -126,48 +214,3 @@ const Editor = () => {
 	// ...
 };
 ```
-
-## resnapshot
-
-A component re-renders when a property it read changes. Reads belong to the nearest subscribed component above them: `useCreateState` subscribes the component that created the state, and `resnapshot` subscribes the component it wraps.
-
-This is a lever for bounding re-renders. Here `CounterButton` is plain, so its `count` read belongs to `App`, and every click re-renders `App` and everything under it:
-
-```tsx
-import type { State } from "opshot";
-import { useCreateState } from "opshot/react";
-
-interface Counter {
-	title: string;
-	count: number;
-}
-
-// Every click re-renders App and its whole subtree.
-const App = () => {
-	const counter = useCreateState<Counter>({ title: "Hits", count: 0 });
-
-	return (
-		<>
-			<h1>{counter.title}</h1>
-			<CounterButton counter={counter} />
-		</>
-	);
-};
-
-const CounterButton = ({ counter }: { counter: State<Counter> }) => (
-	<button onClick={() => counter.op.mutate((proxy) => proxy.count++)}>{counter.count}</button>
-);
-```
-
-Wrapping `CounterButton` in `resnapshot` subscribes it, so its `count` read becomes its own. A click now re-renders `CounterButton` alone:
-
-```tsx
-import { resnapshot } from "opshot/react";
-
-// A click re-renders only CounterButton. A title change would still re-render App.
-const CounterButton = resnapshot<{ counter: State<Counter> }>(({ counter }) => (
-	<button onClick={() => counter.op.mutate((proxy) => proxy.count++)}>{counter.count}</button>
-));
-```
-
-Subscribed components re-render independently: had `App` also read `count`, both would re-render.
