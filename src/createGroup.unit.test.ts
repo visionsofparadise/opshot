@@ -1,8 +1,10 @@
 import { createGroup } from "./createGroup";
-import { createMeta, createState, type State } from "./createState";
-import { diffSnapshots, type Op } from "./diff";
+import { createMeta } from "./createMeta";
+import { createState, type State } from "./createState";
+import { diffSnapshots } from "./ops/diff";
+import { type Op } from "./ops/operation";
 
-vi.mock(import("./diff"), { spy: true });
+vi.mock(import("./ops/diff"), { spy: true });
 
 interface Counter {
   count: number;

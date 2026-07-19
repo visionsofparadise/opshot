@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import { act, render, screen } from "@testing-library/react";
-import { applyPatch } from "fast-json-patch";
 import { useState, type FC, type ReactNode } from "react";
 import { subscribe as valtioSubscribe } from "valtio/vanilla";
 
-import { createState, isState, type State } from "./createState";
-import { type Op } from "./diff";
-import { retrack } from "./react";
+import { createState, type Emission, type State } from "../createState";
+import { isState } from "../isState";
+import { applyOps } from "../ops/applyOps";
+import { type Op } from "../ops/operation";
+import { retrack } from "./retrack";
 
 vi.mock("valtio/vanilla", async (importOriginal) => {
   const actual = await importOriginal<typeof import("valtio/vanilla")>();
@@ -201,7 +202,7 @@ describe("retrack", () => {
     const counter = createCounter();
     const recorded: Array<Op> = [];
 
-    counter.op.subscribe((_state, ops, emission) => {
+    counter.op.subscribe((_state, ops, emission: Emission<{ replay?: boolean }>) => {
       if (!emission.isSideEffect && emission.meta.replay !== true) recorded.push(...ops);
     });
 
@@ -218,32 +219,10 @@ describe("retrack", () => {
     expect(screen.getByTestId("count").textContent).toBe("1");
 
     await act(async () => {
-      counter.mutate((mutable) => {
-        applyPatch(mutable, [...recorded].reverse().map((op) => op.undo));
-      }, { replay: true });
+      applyOps(counter, [...recorded].reverse().map((op) => op.undo), { replay: true });
     });
 
     expect(screen.getByTestId("count").textContent).toBe("0");
-  });
-
-  it("substitutes a state found inside a Map prop", async () => {
-    const counter = createCounter();
-    const bag = new Map<string, State<Counter>>([["counter", counter]]);
-
-    const View = retrack<{ bag: Map<string, State<Counter>> }>(({ bag: fresh }) => (
-      <span data-testid="value">{fresh.get("counter")?.count}</span>
-    ));
-
-    render(<View bag={bag} />);
-
-    expect(screen.getByTestId("value").textContent).toBe("0");
-
-    await act(async () => {
-      counter.increment();
-    });
-
-    expect(screen.getByTestId("value").textContent).toBe("1");
-    expect(bag.get("counter")).toBe(counter);
   });
 
   it("substitutes a state found inside a class-instance prop, preserving the prototype", async () => {
@@ -290,51 +269,6 @@ describe("retrack", () => {
     expect(screen.getByTestId("value").textContent).toBe("1");
   });
 
-  it("skips cycles and finds a state reachable through a cyclic prop", async () => {
-    interface Cyclic {
-      label: string;
-      state: State<Counter>;
-      self?: Cyclic;
-    }
-
-    const counter = createCounter();
-    const cyclic: Cyclic = { label: "loop", state: counter };
-
-    cyclic.self = cyclic;
-
-    const View = retrack<{ data: Cyclic }>(({ data }) => <span data-testid="value">{data.state.count}</span>);
-
-    expect(() => {
-      render(<View data={cyclic} />);
-    }).not.toThrow();
-
-    expect(screen.getByTestId("value").textContent).toBe("0");
-
-    await act(async () => {
-      counter.increment();
-    });
-
-    expect(screen.getByTestId("value").textContent).toBe("1");
-  });
-
-  it("does not traverse React elements: a state planted behind $$typeof stays undiscovered", async () => {
-    const counter = createCounter();
-    const decoy = { $$typeof: Symbol.for("react.element"), state: counter };
-
-    const View = retrack<{ decoy: typeof decoy }>(({ decoy: fresh }) => (
-      <span data-testid="value">{fresh.state.count}</span>
-    ));
-
-    render(<View decoy={decoy} />);
-
-    await act(async () => {
-      counter.increment();
-    });
-
-    // Pinned as intended: $$typeof positively identifies a React element and the walk leaves it whole.
-    expect(screen.getByTestId("value").textContent).toBe("0");
-  });
-
   it("passes a React element child through untouched while substituting a sibling state", async () => {
     interface ProbeProps {
       counter: State<Counter>;
@@ -359,9 +293,7 @@ describe("retrack", () => {
   });
 
   it("does not descend a DOM element's __react-prefixed expando keys", async () => {
-    // React stamps fiber references onto host DOM nodes as __reactFiber$-style expandos; the walk
-    // skips those keys, since descending one would pull the application's entire fiber graph (and
-    // any state reachable through it) into discovery. A state planted there stays stale.
+    // React stamps fiber refs onto DOM nodes as __reactFiber$-style expandos; the walk skips them, since descending one would pull the fiber graph into discovery.
     const counter = createCounter();
     const element = Object.assign(document.createElement("div"), { "__reactFiber$test": { state: counter } });
 
@@ -664,7 +596,6 @@ describe("retrack", () => {
   });
 
   it("finds a state nested within the default depth and misses one nested deeper unless maxDepth is raised", async () => {
-    // A state keyCount segments under props: the prop key plus keyCount - 1 object layers.
     const nestState = (state: State<Counter>, keyCount: number): Record<string, unknown> => {
       let value: unknown = state;
 

@@ -1,12 +1,30 @@
-import { toPointer, type Op, type PatchOperation } from "./diff";
+import {
+	createDateSetOperation,
+	createMapDeleteOperation,
+	createMapEntriesOperation,
+	createMapSetOperation,
+	createSetAddOperation,
+	createSetDeleteOperation,
+	createSetEntriesOperation,
+	type Op,
+	type Operation,
+} from "../ops/operation";
+import { toPointer } from "../ops/pointer";
 
 export const trackedBrand: unique symbol = Symbol.for("opshot.tracked");
 
-export type WrapperPatch = { readonly op: "add" | "replace"; readonly value: unknown } | { readonly op: "remove" };
+export type WrapperOperation =
+	| { readonly kind: "mapSet"; readonly key: unknown; readonly value: unknown }
+	| { readonly kind: "mapDelete"; readonly key: unknown }
+	| { readonly kind: "mapEntries"; readonly entries: ReadonlyArray<readonly [unknown, unknown]> }
+	| { readonly kind: "setAdd"; readonly member: unknown }
+	| { readonly kind: "setDelete"; readonly member: unknown }
+	| { readonly kind: "setEntries"; readonly members: ReadonlyArray<unknown> }
+	| { readonly kind: "dateSet"; readonly epoch: number };
 
 export interface WrapperPayload {
-	readonly do: WrapperPatch;
-	readonly undo: WrapperPatch;
+	readonly do: WrapperOperation;
+	readonly undo: WrapperOperation;
 }
 
 export interface WrapperCommand {
@@ -20,8 +38,6 @@ export interface WrapperAttachment {
 
 const attachments = new WeakMap<object, Set<WrapperAttachment>>();
 
-// Non-enumerable and on the prototype, so {...wrapper} never copies the brand; isTrackedWrapper
-// reads through the prototype chain via Reflect.get.
 export const brandTrackedPrototype = (prototype: object): void => {
 	Object.defineProperty(prototype, trackedBrand, { value: true, enumerable: false, configurable: false, writable: false });
 };
@@ -51,16 +67,18 @@ export const notifyAttachments = (set: Set<WrapperAttachment>, command: WrapperC
 
 export const wrapperOpTag = "opshot-wrapper";
 
-const isWrapperPatch = (value: unknown): value is WrapperPatch => {
+const wrapperOperationKinds: ReadonlySet<string> = new Set(["mapSet", "mapDelete", "mapEntries", "setAdd", "setDelete", "setEntries", "dateSet"]);
+
+const isWrapperOperation = (value: unknown): value is WrapperOperation => {
 	if (typeof value !== "object" || value === null) return false;
 
-	const op: unknown = Reflect.get(value, "op");
+	const kind: unknown = Reflect.get(value, "kind");
 
-	return op === "add" || op === "replace" || op === "remove";
+	return typeof kind === "string" && wrapperOperationKinds.has(kind);
 };
 
 const isWrapperPayload = (value: unknown): value is WrapperPayload =>
-	typeof value === "object" && value !== null && isWrapperPatch(Reflect.get(value, "do")) && isWrapperPatch(Reflect.get(value, "undo"));
+	typeof value === "object" && value !== null && isWrapperOperation(Reflect.get(value, "do")) && isWrapperOperation(Reflect.get(value, "undo"));
 
 export const isWrapperCommand = (value: unknown): value is WrapperCommand => {
 	if (typeof value !== "object" || value === null) return false;
@@ -72,7 +90,24 @@ export const isWrapperCommand = (value: unknown): value is WrapperCommand => {
 	return isWrapperPayload(Reflect.get(value, "payload"));
 };
 
-const withPointer = (patch: WrapperPatch, path: string): PatchOperation => (patch.op === "remove" ? { op: "remove", path } : { op: patch.op, path, value: patch.value });
+const withPointer = (operation: WrapperOperation, path: string): Operation => {
+	switch (operation.kind) {
+		case "mapSet":
+			return createMapSetOperation(path, operation.key, operation.value);
+		case "mapDelete":
+			return createMapDeleteOperation(path, operation.key);
+		case "mapEntries":
+			return createMapEntriesOperation(path, operation.entries);
+		case "setAdd":
+			return createSetAddOperation(path, operation.member);
+		case "setDelete":
+			return createSetDeleteOperation(path, operation.member);
+		case "setEntries":
+			return createSetEntriesOperation(path, operation.members);
+		case "dateSet":
+			return createDateSetOperation(path, operation.epoch);
+	}
+};
 
 export interface WrapperNotification {
 	readonly payload: WrapperPayload;

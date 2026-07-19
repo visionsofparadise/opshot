@@ -1,12 +1,14 @@
 import { createGroup } from "./createGroup";
-import { augmentSideEffectCycleError, createMeta, createState, isMeta, isState, type Emission, type OpshotHandle, type State } from "./createState";
-import { diffSnapshots, type Op } from "./diff";
+import { createMeta } from "./createMeta";
+import { augmentSideEffectCycleError, createState, type Emission, type OpshotHandle, type State } from "./createState";
+import { isState } from "./isState";
+import { diffSnapshots } from "./ops/diff";
+import { type Op } from "./ops/operation";
 import { ignore } from "./ignore";
 
-vi.mock(import("./diff"), { spy: true });
+vi.mock(import("./ops/diff"), { spy: true });
 
-// The package carries no @types/node; this declares exactly the process surface the
-// unhandled-rejection capture uses.
+// The package carries no @types/node; this declares just the process surface the rejection capture uses.
 declare const process: {
   listeners: (event: "unhandledRejection") => Array<(reason: unknown) => void>;
   on: (event: "unhandledRejection", listener: (reason: unknown) => void) => void;
@@ -235,6 +237,61 @@ describe("createState", () => {
     expect(emissions[1]?.meta).toEqual({});
   });
 
+  it("merges defaults under the caller's meta for a defaulted token, caller winning", () => {
+    const token = createMeta<{ replay: boolean; transactionKey?: string }>({ replay: false });
+    const state = createState({ count: 0 }, token);
+    const heard = new Array<{ replay: boolean; transactionKey?: string }>();
+
+    state.op.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
+    });
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    }, {});
+
+    state.mutate((mutable) => {
+      mutable.count = 2;
+    }, { replay: true, transactionKey: "drag" });
+
+    expect(heard).toEqual([{ replay: false }, { replay: true, transactionKey: "drag" }]);
+  });
+
+  it("delivers exactly the caller's meta through a bare token, and requires it for required fields", () => {
+    const token = createMeta<{ actor: string }>();
+    const state = createState({ count: 0 }, token);
+    const heard = new Array<{ actor: string }>();
+
+    state.op.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
+    });
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    }, { actor: "matt" });
+
+    // @ts-expect-error a required meta field makes the meta argument required
+    state.mutate((mutable) => {
+      mutable.count = 2;
+    });
+
+    expect(heard).toEqual([{ actor: "matt" }, {}]);
+  });
+
+  it("skips the diff and the merge while nothing listens on a token state", () => {
+    const token = createMeta<{ replay: boolean }>({ replay: false });
+    const state = createState({ count: 0 }, token);
+
+    vi.mocked(diffSnapshots).mockClear();
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    });
+
+    expect(diffSnapshots).not.toHaveBeenCalled();
+    expect(state.op.unwrap().count).toBe(1);
+  });
+
   it("emits no ops for a getter, which snapshots keep live", () => {
     const state = createState<DerivedCounter>((mutate) => ({
       count: 0,
@@ -366,32 +423,6 @@ describe("createState", () => {
     increment();
 
     expect(state.op.unwrap().count).toBe(2);
-  });
-
-  it("recognizes states and rejects other values", () => {
-    expect(isState(createCounter())).toBe(true);
-    expect(isState({ count: 1 })).toBe(false);
-    expect(isState({ op: { unsafeMutable: 1 } })).toBe(false);
-    expect(isState(null)).toBe(false);
-    expect(isState(undefined)).toBe(false);
-    expect(isState("state")).toBe(false);
-  });
-
-  it("rejects a foreign object shaped like a state, which the old duck-check accepted", () => {
-    expect(isState({ op: { unsafeMutable: {} } })).toBe(false);
-  });
-
-  it("keeps isState true on the fresh generation a subscriber receives after a mutation", () => {
-    const { state, emissions } = createTrackedCounter();
-
-    state.increment();
-
-    const current = emissions[0];
-
-    if (!current) throw new Error("the group heard no emission");
-
-    expect(current).not.toBe(state);
-    expect(isState(current)).toBe(true);
   });
 
   it("carries an ignore() field through without producing ops for its internals", () => {
@@ -581,69 +612,6 @@ describe("createState", () => {
     expect(state.op.unwrap().count).toBe(5);
   });
 
-  it("merges defaults under the caller's meta for a defaulted token, caller winning", () => {
-    const token = createMeta<{ replay: boolean; transactionKey?: string }>({ replay: false });
-    const state = createState({ count: 0 }, token);
-    const heard = new Array<{ replay: boolean; transactionKey?: string }>();
-
-    state.op.subscribe((_state, _ops, emission) => {
-      if (!emission.isSideEffect) heard.push(emission.meta);
-    });
-
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    }, {});
-
-    state.mutate((mutable) => {
-      mutable.count = 2;
-    }, { replay: true, transactionKey: "drag" });
-
-    expect(heard).toEqual([{ replay: false }, { replay: true, transactionKey: "drag" }]);
-  });
-
-  it("delivers exactly the caller's meta through a bare token, and requires it for required fields", () => {
-    const token = createMeta<{ actor: string }>();
-    const state = createState({ count: 0 }, token);
-    const heard = new Array<{ actor: string }>();
-
-    state.op.subscribe((_state, _ops, emission) => {
-      if (!emission.isSideEffect) heard.push(emission.meta);
-    });
-
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    }, { actor: "matt" });
-
-    // @ts-expect-error a required meta field makes the meta argument required
-    state.mutate((mutable) => {
-      mutable.count = 2;
-    });
-
-    expect(heard).toEqual([{ actor: "matt" }, {}]);
-  });
-
-  it("skips the diff and the merge while nothing listens on a token state", () => {
-    const token = createMeta<{ replay: boolean }>({ replay: false });
-    const state = createState({ count: 0 }, token);
-
-    vi.mocked(diffSnapshots).mockClear();
-
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    });
-
-    expect(diffSnapshots).not.toHaveBeenCalled();
-    expect(state.op.unwrap().count).toBe(1);
-  });
-
-  it("brands tokens: a forged defaults object is not a token, and a token state is still a state", () => {
-    const token = createMeta<{ replay: boolean }>({ replay: false });
-
-    expect(isMeta(token)).toBe(true);
-    expect(isMeta({ defaults: {} })).toBe(false);
-    expect(isMeta(undefined)).toBe(false);
-    expect(isState(createState({ count: 0 }, token))).toBe(true);
-  });
 });
 
 describe("watchdog", () => {
@@ -796,8 +764,6 @@ describe("watchdog", () => {
     process.on("unhandledRejection", capture);
 
     try {
-      // Creating the cycle emits a lazy-valued add op; the diff only walks the cyclic region (and
-      // throws) on the next side-effect write inside it, one flush later.
       mutableRoot.node["self"] = mutableRoot.node;
 
       await new Promise((resolve) => setTimeout(resolve, 0));

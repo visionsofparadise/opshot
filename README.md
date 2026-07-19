@@ -129,7 +129,7 @@ state.mutate((mutable) => (mutable.job = new UploadJob()));
 // Options: ignore(value) to store it by reference, untracked.
 ```
 
-The throw is synchronous at the assigning line (or at `createState` when the define literal carries the value), and the message carries the fix: `Map`/`Set`/`Date` name their tracked equivalents, classes and array subclasses name `ignore()`. There is no silent lane — nothing is stored raw to misbehave later, far from the cause.
+The throw is synchronous at the assigning line (or at `createState` when the initializer carries the value), and the message carries the fix: `Map`/`Set`/`Date` name their tracked equivalents, classes and array subclasses name `ignore()`. There is no silent lane — nothing is stored raw to misbehave later, far from the cause.
 
 | Lane | Values | Treatment |
 | --- | --- | --- |
@@ -201,22 +201,13 @@ import { createState, TrackedMap } from "opshot";
 const state = createState({ index: new TrackedMap<string, number>() });
 
 state.mutate((mutable) => mutable.index.set("a", 1));
-// ops: [{ isPatch: true, do: { op: "add", path: "/index/a", value: 1 }, undo: { op: "remove", path: "/index/a" } }]
+// ops: [{ isPatch: true, do: { op: "mapSet", path: "/index", key: "a", value: 1 }, undo: { op: "mapDelete", path: "/index", key: "a" } }]
 ```
 
 - The wrapper is identity-stable across generations: every snapshot hands back the same live object, so reads are always current.
 - A call inside `mutate` joins that mutate's emission, meta included. A call outside `mutate` — including through code that received the wrapper as a plain `Map` — arrives on the next microtask as a side effect (below).
-- A string-keyed `Map` emits per-key pairs at the key's own pointer. `Set` members and non-string `Map` keys have no pointer representation, so those emit whole-representation pairs (the members or entries array), and `TrackedDate` emits its epoch as a scalar replace.
-- Wrapper ops are records for history, not `applyPatch` targets — a Map is not plain data. Replay them through the wrapper's own methods; a per-key patch's key is its last pointer segment, RFC 6901-unescaped:
-
-```ts
-const applyToIndex = (index: TrackedMap<string, number>, patch: PatchOperation): void => {
-	const key = patch.path.slice("/index/".length).replaceAll("~1", "/").replaceAll("~0", "~");
-
-	if (patch.op === "remove") index.delete(key);
-	else index.set(key, patch.value as number);
-};
-```
+- Every key type gets fine per-key ops: the path names the wrapper and the key or member rides the op by identity, so an object-keyed `Map` or an object-membered `Set` inverts as cleanly as string keys. `clear` is the one whole-representation shape — a `mapEntries`/`setEntries` pair whose undo carries the prior entries — and `TrackedDate` emits its epoch as a `dateSet` pair.
+- Replay is `applyOps`'s job: it resolves the op's path to the wrapper and calls the method the op names, so collection ops go through the same call as everything else (below).
 
 ## Tracked State
 
@@ -257,7 +248,11 @@ const unsubscribe = counter.op.subscribe((state, ops, emission) => {
 });
 ```
 
-An op is a pair of [RFC 6902](https://datatracker.ietf.org/doc/html/rfc6902) patch operations, each half carrying its own value, so any JSON Patch tool applies and inverts them. `isPatch` is `true` on every op today; a marker variant joins the union, discriminated on it, when the watched regime ships.
+An op is an invertible pair of `Operation` halves. Plain data emits `add`/`replace`/`remove` at an [RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901) pointer, each half carrying its own value; tracked collections emit their method vocabulary — `mapSet`/`mapDelete`/`mapEntries`, `setAdd`/`setDelete`/`setEntries`, `dateSet` — with the path naming the wrapper and the method's arguments riding the op. `isPatch` is `true` on every op today; a marker variant joins the union, discriminated on it, when the watched regime ships.
+
+`applyOps(state, operations, meta?)` is the whole replay surface: it applies one direction's halves — already selected and ordered by you — in a single `mutate`, forwarding `meta` to the emission, routing each op to plain-data application or the wrapper method it names.
+
+Ops are live objects, not JSON: each value rides behind a per-read accessor, so every application gets a fresh copy and nothing can rewrite a recorded half. Copy an op — spread it, JSON round-trip it, `structuredClone` it — and the copy loses its value along with its brand, so `applyOps` throws naming the cause and the fix. (A `structuredClone` of an op carrying a function payload doesn't even get that far — it throws its own `DataCloneError`.) Apply the op objects the listener delivered; never copy them.
 
 Arrays are dense by contract: holes read as `undefined`, and a presence change at unchanged length — `delete arr[1]`, or a hole becoming a stored `undefined` — escalates to one whole-array `replace`, as a length change already does. Dense same-length changes emit per-index ops.
 
@@ -329,6 +324,8 @@ const Editor = () => {
 };
 ```
 
+A subscriber outside the token's reach types the emission itself: annotate the parameter — `(state, ops, emission: Emission<DocumentMeta>) => ...` — and `emission.meta` is fully typed. An explicit value type composes with either binding: `useTrackedState<Doc>(initializer, group)` and `useTrackedState<Doc>(initializer, documentMeta)` both compile.
+
 ## Groups
 
 A group creates states and hears every op from the states it created: one stream for history, sync, and persistence.
@@ -359,11 +356,10 @@ const Editor = () => {
 
 ## History
 
-A history is a subscriber: record what you hear, replay through `mutate`.
+A history is a subscriber: record the ops you hear, replay them with `applyOps`.
 
 ```ts
-import { applyPatch } from "fast-json-patch";
-import { type Op, type State } from "opshot";
+import { applyOps, type Emission, type Op, type State } from "opshot";
 
 interface HistoryEntry {
 	state: State<object>;
@@ -373,7 +369,7 @@ interface HistoryEntry {
 const stack: Array<HistoryEntry> = [];
 let index = -1;
 
-group.subscribe((state, ops, emission) => {
+group.subscribe((state, ops, emission: Emission<{ replay?: boolean }>) => {
 	// Record owned changes only: skip side effects and our own replays.
 	if (emission.isSideEffect || emission.meta.replay === true) return;
 
@@ -387,18 +383,10 @@ const undo = () => {
 
 	if (!entry) return;
 
-	entry.state.mutate(
-		(mutable) => {
-			applyPatch(
-				mutable,
-				[...entry.ops].reverse().map((op) => op.undo),
-			);
-		},
-		{ replay: true },
-	);
+	applyOps(entry.state, [...entry.ops].reverse().map((op) => op.undo), { replay: true });
 
 	index -= 1;
 };
 ```
 
-Redo is the mirror: apply `stack[index + 1]`'s `do` halves and advance. Coalescing a drag into one entry is yours — `transactionKey`, or any meta key you declare, arrives with the ops for you to merge on. Ops from a tracked collection replay through the collection's methods, not `applyPatch` (above).
+Redo is the mirror: apply `stack[index + 1]`'s `do` halves in order and advance. One recipe covers everything — plain data and tracked collections replay through the same call. Coalescing a drag into one entry is yours — `transactionKey`, or any meta key you declare, arrives with the ops for you to merge on.

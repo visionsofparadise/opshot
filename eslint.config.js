@@ -240,7 +240,7 @@ export default tseslint.config(
   },
 
   {
-    files: ["**/src/index.ts", "**/src/index.tsx"],
+    files: ["**/src/index.ts", "**/src/index.tsx", "**/src/react/index.ts"],
     rules: {
       "barrel-files/avoid-barrel-files": "off",
       "barrel-files/avoid-re-export-all": "off",

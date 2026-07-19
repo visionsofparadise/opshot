@@ -1,7 +1,7 @@
 import { markToTrack } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction, type INTERNAL_Op } from "valtio/vanilla";
 
-import { attach, isTrackedWrapper, isWrapperCommand, wrapperOpTag } from "./trackedWrapper";
+import { attach, isTrackedWrapper, isWrapperCommand, wrapperOpTag } from "../tracked/trackedWrapper";
 
 // refSet is the only runtime marker ref() leaves on a value; valtio exposes it nowhere else.
 const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
@@ -85,12 +85,7 @@ const rejectionError = (value: object, kind: "arraySubclass" | "cleanClass" | "p
 	}
 };
 
-// Reimplements valtio's createSnapshotDefault (vanilla.mjs) with one added branch: own accessor
-// descriptors copy as live getters/setters instead of materializing via Reflect.get. Everything
-// else is kept faithful -- snapCache seeding BEFORE the property walk (snapshot identity and
-// structural sharing depend on it), markToTrack, refSet handling, configurable-true non-writable
-// data descriptors, and child-snapshot recursion, which must call THIS function by name since the
-// default recurses by its own name and would otherwise rebuild children without the accessor branch.
+// snapCache must seed BEFORE the property walk (snapshot identity depends on it), and child recursion must call THIS function by name -- the default recurses by its own name and would rebuild children without the added accessor branch.
 const createSnapshotPreservingAccessors = <T extends object>(target: T, version: number): T => {
 	const cached = snapCache.get(target);
 
@@ -140,9 +135,7 @@ const createSnapshotPreservingAccessors = <T extends object>(target: T, version:
 
 type NotifyUpdate = (op: INTERNAL_Op | undefined) => void;
 
-// Which (notifyUpdate, key) bindings a wrapper already holds a notifier for: valtio's notifyUpdate is
-// minted once per proxy, so the pair identifies a parent-proxy/key binding, and re-assigning the same
-// wrapper there (including delete-then-reassign) must not attach a second, double-emitting notifier.
+// valtio mints notifyUpdate once per proxy, so a (notifyUpdate, key) pair identifies one parent-proxy/key binding; tracked so reassigning the same wrapper never attaches a second, double-emitting notifier.
 const wrapperNotifierKeys = new WeakMap<object, WeakMap<NotifyUpdate, Set<string>>>();
 
 const attachWrapperNotifier = (wrapper: object, key: string, notifyUpdate: NotifyUpdate): void => {
@@ -168,9 +161,7 @@ const attachWrapperNotifier = (wrapper: object, key: string, notifyUpdate: Notif
 		notify: (commandOp) => {
 			if (!isWrapperCommand(commandOp)) throw new Error("opshot: malformed tracked-wrapper command");
 
-			// Probe 1.4 pins that valtio's notification chain path-prefixes and propagates any op-shaped
-			// array; INTERNAL_Op's union just doesn't name the custom shape, so the widening is the seam's
-			// runtime contract, not a workaround.
+			// valtio's notification chain path-prefixes and propagates any op-shaped array; INTERNAL_Op's union just doesn't name this custom shape, so the widening is the seam's runtime contract, not a workaround.
 			notifyUpdate([wrapperOpTag, [key, ...commandOp.path], commandOp.payload] as unknown as INTERNAL_Op);
 		},
 	});
@@ -178,10 +169,7 @@ const attachWrapperNotifier = (wrapper: object, key: string, notifyUpdate: Notif
 
 let installed = false;
 
-// Reentrancy counter, not a boolean: valtio's set trap ends in Reflect.set(target, prop, value,
-// receiver=proxy), which per ECMAScript routes every ordinary write through the proxy's own
-// [[DefineOwnProperty]] (OrdinarySetWithOwnDescriptor) -- a boolean guard would be reset mid-write
-// by a nested child-proxy-creating set. See plan-value-model.md Phase 1 action 1.2's Deviation.
+// Counter, not a boolean: valtio's set trap ends in Reflect.set(target, prop, value, receiver=proxy), which per ECMAScript routes every ordinary write through the proxy's own defineProperty trap; a boolean would be reset mid-write by a nested child-proxy-creating set.
 let setDepth = 0;
 
 export function installBoundary(): void {
@@ -214,9 +202,7 @@ export function installBoundary(): void {
 			return {
 				...handler,
 				set(target, prop, value, receiver) {
-					// Symbol keys are the ride-along (not-data) channel and an ignore()d wrapper is fully
-					// outside the system, so neither binding gets a notifier. ProxyHandler types value as
-					// any; the unknown local restores narrowing.
+					// ProxyHandler types value as any; the unknown local restores narrowing.
 					const assigned: unknown = value;
 
 					if (typeof prop === "string" && isTrackedWrapper(assigned) && !refSet.has(assigned)) attachWrapperNotifier(assigned, prop, notifyUpdate);

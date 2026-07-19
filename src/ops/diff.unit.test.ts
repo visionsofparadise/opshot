@@ -1,10 +1,24 @@
-import { applyPatch } from "fast-json-patch";
 import { proxy, snapshot } from "valtio/vanilla";
 
-import { diffSnapshots, type PatchOperation } from "./diff";
-import { ignore } from "./ignore";
+import { createState } from "../createState";
+import { ignore } from "../ignore";
+import { applyOps } from "./applyOps";
+import { diffSnapshots } from "./diff";
+import { type Op, type Operation } from "./operation";
 
-const readValue = (half: PatchOperation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
+const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
+
+const expectReplacePair = (op: Op | undefined, path: string, doValue: unknown, undoValue: unknown): void => {
+  if (!op) throw new Error("the op was not produced");
+
+  expect(op.isPatch).toBe(true);
+  expect(op.do.op).toBe("replace");
+  expect(op.do.path).toBe(path);
+  expect(readValue(op.do)).toEqual(doValue);
+  expect(op.undo.op).toBe("replace");
+  expect(op.undo.path).toBe(path);
+  expect(readValue(op.undo)).toEqual(undoValue);
+};
 
 describe("diffSnapshots", () => {
   it("reports a changed primitive as one replace pair at its path", () => {
@@ -104,12 +118,15 @@ describe("diffSnapshots", () => {
   });
 
   it("reports a length change as one whole-array replace", () => {
-    expect(diffSnapshots({ list: [1, 2] }, { list: [1, 2, 3] })).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/list", value: [1, 2, 3] }, undo: { op: "replace", path: "/list", value: [1, 2] } },
-    ]);
-    expect(diffSnapshots({ list: [1, 2, 3] }, { list: [1, 3] })).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/list", value: [1, 3] }, undo: { op: "replace", path: "/list", value: [1, 2, 3] } },
-    ]);
+    const grown = diffSnapshots({ list: [1, 2] }, { list: [1, 2, 3] });
+
+    expect(grown).toHaveLength(1);
+    expectReplacePair(grown[0], "/list", [1, 2, 3], [1, 2]);
+
+    const shrunk = diffSnapshots({ list: [1, 2, 3] }, { list: [1, 3] });
+
+    expect(shrunk).toHaveLength(1);
+    expectReplacePair(shrunk[0], "/list", [1, 3], [1, 2, 3]);
   });
 
   it("identity-compares function fields", () => {
@@ -125,17 +142,15 @@ describe("diffSnapshots", () => {
   it("replaces a leaf when the types mismatch", () => {
     const ops = diffSnapshots({ value: { nested: 1 } }, { value: 1 });
 
-    expect(ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/value", value: 1 }, undo: { op: "replace", path: "/value", value: { nested: 1 } } },
-    ]);
+    expect(ops).toHaveLength(1);
+    expectReplacePair(ops[0], "/value", 1, { nested: 1 });
   });
 
   it("emits an empty pointer for a change at the root", () => {
     const ops = diffSnapshots({ count: 1 }, 5);
 
-    expect(ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "", value: 5 }, undo: { op: "replace", path: "", value: { count: 1 } } },
-    ]);
+    expect(ops).toHaveLength(1);
+    expectReplacePair(ops[0], "", 5, { count: 1 });
   });
 
   it("escapes ~ before / in pointer segments", () => {
@@ -246,24 +261,17 @@ describe("diffSnapshots", () => {
 
     const second = snapshot(state);
 
-    expect(diffSnapshots(first, second)).toEqual([
-      {
-        isPatch: true,
-        do: { op: "replace", path: "/document/tags", value: ["a", "b"] },
-        undo: { op: "replace", path: "/document/tags", value: ["a"] },
-      },
-    ]);
+    const firstOps = diffSnapshots(first, second);
+
+    expect(firstOps).toHaveLength(1);
+    expectReplacePair(firstOps[0], "/document/tags", ["a", "b"], ["a"]);
     state.document.tags.push("c");
 
     const third = snapshot(state);
+    const secondOps = diffSnapshots(second, third);
 
-    expect(diffSnapshots(second, third)).toEqual([
-      {
-        isPatch: true,
-        do: { op: "replace", path: "/document/tags", value: ["a", "b", "c"] },
-        undo: { op: "replace", path: "/document/tags", value: ["a", "b"] },
-      },
-    ]);
+    expect(secondOps).toHaveLength(1);
+    expectReplacePair(secondOps[0], "/document/tags", ["a", "b", "c"], ["a", "b"]);
     expect(third.document.tags).toEqual(["a", "b", "c"]);
     expect(second.document.tags).toEqual(["a", "b"]);
 
@@ -320,9 +328,8 @@ describe("diffSnapshots", () => {
 
       const ops = diffSnapshots({ list: withHole }, { list: withUndefined });
 
-      expect(ops).toEqual([
-        { isPatch: true, do: { op: "replace", path: "/list", value: [1, undefined, 3] }, undo: { op: "replace", path: "/list", value: withHole } },
-      ]);
+      expect(ops).toHaveLength(1);
+      expectReplacePair(ops[0], "/list", [1, undefined, 3], withHole);
       expect(Object.hasOwn(readValue(ops[0]?.do) as Array<unknown>, 1)).toBe(true);
       expect(Object.hasOwn(readValue(ops[0]?.undo) as Array<unknown>, 1)).toBe(false);
     });
@@ -339,17 +346,17 @@ describe("diffSnapshots", () => {
       expect(ops).toHaveLength(1);
       expect(ops[0]?.do.path).toBe("/arr");
 
-      const forward: { arr: Array<number | undefined> } = { arr: [1, 2, 3] };
+      const forward = createState<{ arr: Array<number | undefined> }>({ arr: [1, 2, 3] });
 
-      applyPatch(forward, [ops[0]!.do]);
-      expect(Object.hasOwn(forward.arr, 1)).toBe(false);
-      expect(forward.arr).toEqual([1, undefined, 3]);
+      applyOps(forward, [ops[0]!.do]);
+      expect(Object.hasOwn(forward.op.unwrap().arr, 1)).toBe(false);
+      expect(forward.op.unwrap().arr).toEqual([1, undefined, 3]);
 
-      const backward: { arr: Array<number | undefined> } = { arr: [] };
+      const backward = createState<{ arr: Array<number | undefined> }>({ arr: [] });
 
-      applyPatch(backward, [ops[0]!.undo]);
-      expect(Object.hasOwn(backward.arr, 1)).toBe(true);
-      expect(backward.arr[1]).toBe(2);
+      applyOps(backward, [ops[0]!.undo]);
+      expect(Object.hasOwn(backward.op.unwrap().arr, 1)).toBe(true);
+      expect(backward.op.unwrap().arr[1]).toBe(2);
     });
 
     it("keeps per-index ops for a dense array of the same length", () => {

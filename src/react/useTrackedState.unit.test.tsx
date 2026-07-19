@@ -3,17 +3,19 @@
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { type FC } from "react";
 
-import { createGroup } from "./createGroup";
-import { createMeta, type State } from "./createState";
-import { type Op } from "./diff";
-import { retrack, useGroup, useTrackedState } from "./react";
+import { createMeta } from "../createMeta";
+import { createGroup } from "../createGroup";
+import { type State } from "../createState";
+import { type Op } from "../ops/operation";
+import { retrack } from "./retrack";
+import { useTrackedState } from "./useTrackedState";
 
 interface Counter {
   count: number;
   increment: () => void;
 }
 
-const counterDefine = (mutate: (callback: (mutable: Counter) => void) => void): Counter => ({
+const counterInitializer = (mutate: (callback: (mutable: Counter) => void) => void): Counter => ({
   count: 0,
   increment: () => {
     mutate((mutable) => {
@@ -24,7 +26,7 @@ const counterDefine = (mutate: (callback: (mutable: Counter) => void) => void): 
 
 describe("useTrackedState", () => {
   it("returns the same state instance across re-renders", () => {
-    const { result, rerender } = renderHook(() => useTrackedState<Counter>(counterDefine));
+    const { result, rerender } = renderHook(() => useTrackedState<Counter>(counterInitializer));
 
     const first = result.current;
 
@@ -50,7 +52,7 @@ describe("useTrackedState", () => {
     let held: State<Counter> | undefined;
 
     const CounterView: FC = () => {
-      const counter = useTrackedState<Counter>(counterDefine);
+      const counter = useTrackedState<Counter>(counterInitializer);
 
       held = counter;
 
@@ -82,7 +84,7 @@ describe("useTrackedState", () => {
     const App: FC = () => {
       renders.app += 1;
 
-      const counter = useTrackedState<Counter>(counterDefine);
+      const counter = useTrackedState<Counter>(counterInitializer);
 
       held = counter;
 
@@ -115,7 +117,7 @@ describe("useTrackedState", () => {
     const App: FC = () => {
       renders.app += 1;
 
-      const counter = useTrackedState<Counter>(counterDefine);
+      const counter = useTrackedState<Counter>(counterInitializer);
 
       held = counter;
 
@@ -207,7 +209,7 @@ describe("useTrackedState", () => {
       heard.push(ops);
     });
 
-    const { result } = renderHook(() => useTrackedState(counterDefine, group));
+    const { result } = renderHook(() => useTrackedState(counterInitializer, group));
 
     act(() => {
       result.current.increment();
@@ -235,38 +237,5 @@ describe("useTrackedState", () => {
 
     expect(heard).toEqual([{ replay: false }]);
     expect(result.current.op.unwrap().count).toBe(1);
-  });
-});
-
-describe("useGroup", () => {
-  it("returns the same group instance across re-renders", () => {
-    const { result, rerender } = renderHook(() => useGroup());
-
-    const first = result.current;
-
-    rerender();
-
-    expect(result.current).toBe(first);
-  });
-
-  it("delivers merged meta through a group created with a token", () => {
-    const token = createMeta<{ replay: boolean }>({ replay: false });
-    const heard = new Array<{ replay: boolean }>();
-
-    const { result } = renderHook(() => useGroup(token));
-
-    result.current.subscribe((_state, _ops, emission) => {
-      if (!emission.isSideEffect) heard.push(emission.meta);
-    });
-
-    const state = result.current.createState({ count: 0 });
-
-    act(() => {
-      state.mutate((mutable) => {
-        mutable.count += 1;
-      });
-    });
-
-    expect(heard).toEqual([{ replay: false }]);
   });
 });

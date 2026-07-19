@@ -33,6 +33,7 @@
     "lint:verbose": "eslint .",
     "lint:fix": "eslint . --fix",
     "unit": "vitest run unit",
+    "integration": "vitest run integration",
     "build": "tsup --config tsup.config.ts"
   },
   "peerDependencies": {
@@ -44,6 +45,7 @@
     }
   },
   "dependencies": {
+    "fast-json-patch": "^3.1.1",
     "proxy-compare": "^3.0.1",
     "valtio": "2.3.2"
   },
@@ -59,7 +61,6 @@
     "eslint-plugin-import-x": "^4.17.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "fast-json-patch": "^3.1.1",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
     "react": "^19.2.7",

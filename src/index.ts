@@ -1,8 +1,12 @@
 export { type Snapshot } from "valtio/vanilla";
 export { createGroup, type Group } from "./createGroup";
-export { createMeta, createState, isState, type Define, type DefineCallback, type Emission, type Meta, type MetaRecord, type Mutate, type OpshotHandle, type State, type StateListener } from "./createState";
-export { diffSnapshots, type Op, type PatchOperation } from "./diff";
+export { createMeta, type Meta } from "./createMeta";
+export { createState, type Emission, type InitialProperties, type Initializer, type Mutate, type OpshotHandle, type State, type StateListener } from "./createState";
+export { isState } from "./isState";
+export { applyOps } from "./ops/applyOps";
+export { diffSnapshots } from "./ops/diff";
+export { type Op, type Operation } from "./ops/operation";
 export { ignore, type Ignored } from "./ignore";
-export { TrackedDate } from "./trackedDate";
-export { TrackedMap } from "./trackedMap";
-export { TrackedSet } from "./trackedSet";
+export { TrackedDate } from "./tracked/trackedDate";
+export { TrackedMap } from "./tracked/trackedMap";
+export { TrackedSet } from "./tracked/trackedSet";

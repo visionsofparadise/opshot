@@ -329,7 +329,6 @@ describe("valtio assumptions", () => {
 
     expect(internals.refSet).toBeInstanceOf(WeakSet);
 
-    // diff.ts destructures refSet once at module load, so every later ref() must land in that same set.
     expect(unstable_getInternalStates().refSet).toBe(internals.refSet);
 
     const { refSet } = internals;
@@ -390,9 +389,7 @@ describe("valtio assumptions", () => {
   });
 
   it("proxies and snapshots a cyclic graph, producing a cyclic snapshot", () => {
-    // snapCache seeds before the property walk, so cyclic proxies are legal input: opshot's cycle
-    // design (diff and clone getter throw; retrack skips) assumes valtio itself never hangs or
-    // throws on a cycle. Graduated from scratch/spike-graphs.test.ts.
+    // snapCache seeds before the property walk, so cyclic proxies are legal input to snapshot().
     const state = proxy<{ node: { x: number; self?: unknown } }>({ node: { x: 1 } });
 
     state.node.self = state.node;
@@ -478,13 +475,7 @@ describe("canProxy seam restored", () => {
   });
 });
 
-// Phase 1.2 reference implementation for the Phase 3 permanent install in boundary.ts.
-// The reentrancy counter is what makes a throwing defineProperty trap viable: valtio's set trap
-// ends in Reflect.set(target, prop, value, receiver=proxy), and per ECMAScript
-// OrdinarySetWithOwnDescriptor completes every such write via receiver.[[DefineOwnProperty]] — the
-// proxy's defineProperty trap. Without the guard the trap would throw on every ordinary write. A
-// counter (not a boolean) survives nested set activity: child-proxy creation during a write nests
-// set calls, and only the outermost's exit returns the guard to zero.
+// valtio's set trap ends in Reflect.set(target, prop, value, receiver=proxy), so per ECMAScript every ordinary write completes via the proxy's own defineProperty trap; a counter (not a boolean) survives nested child-proxy-creating sets so only the outermost exit returns the guard to zero.
 describe("createHandler seam: throwing defineProperty/setPrototypeOf traps", () => {
   let defaultCreateHandler: CreateHandler;
   let setDepth = 0;
@@ -568,10 +559,7 @@ describe("createHandler seam: throwing defineProperty/setPrototypeOf traps", () 
   });
 });
 
-// Phase 1.3 reference implementation for the Phase 6 createSnapshot install in boundary.ts.
-// Reimplements createSnapshotDefault (vanilla.mjs) with one added branch: an own accessor
-// descriptor copies as a live getter/setter instead of materializing via Reflect.get. The
-// replacement must self-recurse, since the default recurses to child snapshots by its own name.
+// Reimplements valtio's createSnapshotDefault with one added branch (an own accessor copies as a live getter/setter); the replacement must self-recurse, since the default recurses to child snapshots by its own name.
 describe("createSnapshot seam: accessor preservation", () => {
   const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
 
@@ -695,20 +683,17 @@ describe("createSnapshot seam: accessor preservation", () => {
 
     expect(wrapped.fahrenheit).toBe(68);
 
-    // proxy-compare's get trap reads via Reflect.get(target, key) with no receiver, so the getter's
-    // inner `this.celsius` runs against the raw snapshot and never records. Only the getter key lands.
+    // proxy-compare's get trap reads via Reflect.get(target, key) with no receiver, so the getter's inner `this.celsius` runs against the raw snapshot and never records -- only the getter key lands.
     expect(affectedToPathList(first, affected)).toEqual([["fahrenheit"]]);
 
-    // Gating compares each later generation against the recorded snapshot (retrack's `prev` is the
-    // wrapped generation). An unrelated-field change leaves the getter's value equal, so it gates closed.
+    // An unrelated-field change leaves the getter's recomputed value equal, so isChanged gates closed.
     state.other.n = 2;
 
     const afterUnrelated = snapshot(state);
 
     expect(isChanged(first, afterUnrelated, affected, new WeakMap())).toBe(false);
 
-    // A change to the data the getter derives from moves its recomputed value, so it gates open — even
-    // though only the getter key recorded, gating is value-based (per-generation recompute), not dependency-based.
+    // A change to the getter's source data moves its recomputed value, so it gates open -- gating is value-based (per-generation recompute), not dependency-based, though only the getter key recorded.
     state.celsius = 100;
 
     const afterData = snapshot(state);
@@ -803,8 +788,7 @@ describe("createHandler seam: custom-op propagation and sync subscription", () =
 
       child.x = 7;
 
-      // The sync callback fires synchronously inside the write. Ordinary writes carry an empty ops
-      // array in valtio 2.3.2 — createOp stays undefined unless unstable_enableOp(true) is called.
+      // Ordinary writes carry an empty ops array in valtio 2.3.2 -- createOp stays undefined unless unstable_enableOp(true) is called.
       expect(syncCalls).toBe(1);
       expect(syncOps).toEqual([]);
 
@@ -819,11 +803,6 @@ describe("createHandler seam: custom-op propagation and sync subscription", () =
   });
 });
 
-// Phase 1.5: the frozen-plain-object seed gate under raw valtio (no seam installed). Object.freeze
-// is shallow, so there is no single "dead region + stale" case: a write to the frozen object's own
-// prop throws, while a write to its mutable child lands and shows through the shared reference. The
-// Phase 2 boundary supersedes both — canProxy returns false for a frozen object, so it stores by
-// reference untracked. See design-architecture.md, "Loud boundary" (frozen auto-ignore).
 describe("frozen-object seed gate", () => {
   it("throws on a write to the frozen object's own prop, leaving the snapshot stale", () => {
     const state = proxy<{ frozen: { inner: { x: number } } }>({ frozen: { inner: { x: 0 } } });
@@ -834,9 +813,7 @@ describe("frozen-object seed gate", () => {
       state.frozen.inner = { x: 99 };
     }).toThrow(TypeError);
 
-    // The set trap returns true and calls notifyUpdate before the engine enforces the proxy
-    // non-writable invariant and throws, so the version bumps — but the write never landed, so the
-    // fresh snapshot carries the stale value.
+    // valtio's set trap returns true and calls notifyUpdate before the engine enforces the non-writable invariant and throws, so the version bumps though the write never landed -- the fresh snapshot carries the stale value.
     expect(snapshot(state).frozen).toEqual({ inner: { x: 1 } });
   });
 

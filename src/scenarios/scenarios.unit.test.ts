@@ -1,8 +1,9 @@
-import { applyPatch } from "fast-json-patch";
+import { createGroup, type Group } from "../createGroup";
+import { createState, type Emission, type State } from "../createState";
+import { applyOps } from "../ops/applyOps";
+import { type Op, type Operation } from "../ops/operation";
 
-import { createGroup, type Group } from "./createGroup";
-import { createState, type Emission, type State } from "./createState";
-import { type Op } from "./diff";
+const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
 
 interface HistoryEntry {
   state: State<object>;
@@ -27,12 +28,7 @@ const createRecorder = (group: Group): Recorder => {
 
       if (!entry) return;
 
-      entry.state.mutate((mutable) => {
-        applyPatch(
-          mutable,
-          [...entry.ops].reverse().map((op) => op.undo),
-        );
-      }, { replay: true });
+      applyOps(entry.state, [...entry.ops].reverse().map((op) => op.undo), { replay: true });
 
       recorder.index -= 1;
     },
@@ -41,18 +37,13 @@ const createRecorder = (group: Group): Recorder => {
 
       if (!entry) return;
 
-      entry.state.mutate((mutable) => {
-        applyPatch(
-          mutable,
-          entry.ops.map((op) => op.do),
-        );
-      }, { replay: true });
+      applyOps(entry.state, entry.ops.map((op) => op.do), { replay: true });
 
       recorder.index += 1;
     },
   };
 
-  group.subscribe((state, ops, emission) => {
+  group.subscribe((state, ops, emission: Emission<{ replay?: boolean }>) => {
     if (emission.isSideEffect || emission.meta.replay === true) return;
 
     stack.length = recorder.index + 1;
@@ -331,14 +322,22 @@ describe("scenarios", () => {
 
     expect(aHeard).toHaveLength(1);
     expect(aHeard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
-    expect(aHeard[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/items", value: [] }, undo: { op: "replace", path: "/items", value: [{ id: "x", gain: 1 }] } },
-    ]);
+    expect(aHeard[0]?.ops).toHaveLength(1);
+    expect(aHeard[0]?.ops[0]?.do.op).toBe("replace");
+    expect(aHeard[0]?.ops[0]?.do.path).toBe("/items");
+    expect(readValue(aHeard[0]?.ops[0]?.do)).toEqual([]);
+    expect(aHeard[0]?.ops[0]?.undo.op).toBe("replace");
+    expect(aHeard[0]?.ops[0]?.undo.path).toBe("/items");
+    expect(readValue(aHeard[0]?.ops[0]?.undo)).toEqual([{ id: "x", gain: 1 }]);
     expect(bHeard).toHaveLength(1);
     expect(bHeard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
-    expect(bHeard[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/items", value: [{ id: "x", gain: 1 }] }, undo: { op: "replace", path: "/items", value: [] } },
-    ]);
+    expect(bHeard[0]?.ops).toHaveLength(1);
+    expect(bHeard[0]?.ops[0]?.do.op).toBe("replace");
+    expect(bHeard[0]?.ops[0]?.do.path).toBe("/items");
+    expect(readValue(bHeard[0]?.ops[0]?.do)).toEqual([{ id: "x", gain: 1 }]);
+    expect(bHeard[0]?.ops[0]?.undo.op).toBe("replace");
+    expect(bHeard[0]?.ops[0]?.undo.path).toBe("/items");
+    expect(readValue(bHeard[0]?.ops[0]?.undo)).toEqual([]);
 
     await Promise.resolve();
 

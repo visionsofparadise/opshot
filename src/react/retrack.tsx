@@ -1,9 +1,7 @@
-import { createProxy, isChanged } from "proxy-compare";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FC } from "react";
-import { snapshot as valtioSnapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
-import { classifyValue, constructorName } from "./boundary";
-import { createGroup, type Group } from "./createGroup";
-import { createGroupState, isMeta, isState, type Define, type Meta, type State } from "./createState";
+import { memo, useMemo, type FC } from "react";
+import { isState } from "../isState";
+import { classifyValue, constructorName } from "../valtio/boundary";
+import { useRetrackAll } from "./tracking";
 
 type PropPath = Array<string | number | { readonly map: unknown } | { readonly set: number }>;
 
@@ -16,10 +14,6 @@ const isPlainPrototype = (value: object): boolean => {
 	return prototype === Object.prototype || prototype === null;
 };
 
-// Substituting a state clones each container along its path; Object.create + descriptors cannot carry
-// #private fields or internal slots, and an array subclass rebuilds to a plain array, so the state's
-// container would come back broken far from here. A clean class clones faithfully enough (the walk's
-// "dumb and thorough" ruling), so it is allowed through.
 const assertSubstitutableContainer = (container: object): void => {
 	if (isPlainPrototype(container)) return;
 
@@ -73,8 +67,7 @@ function findStatePaths(value: unknown, maxDepth: number, path: PropPath = [], p
 		const foundCount = paths.length;
 
 		for (const [key, propertyValue] of Object.entries(value)) {
-			// React stamps fiber references onto host DOM nodes under __react-prefixed expando keys;
-			// descending one would drag the application's fiber graph into the walk.
+			// React stamps fiber refs onto DOM nodes under __react-prefixed keys; descending one would drag the fiber graph into the walk.
 			if (key.startsWith("__react")) continue;
 
 			findStatePaths(propertyValue, maxDepth, [...path, key], paths, ancestors);
@@ -174,86 +167,6 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 	return clone as T;
 }
 
-interface Tracking {
-	affected: WeakMap<object, unknown>;
-	proxyCache: WeakMap<object, unknown>;
-}
-
-const targetCache = new WeakMap<object, unknown>();
-
-function useRetrackAll(states: Array<{ readonly op: { readonly unsafeMutable: object } }>): Array<object> {
-	const lastRendered = useRef<Array<object>>([]);
-	const lastReturned = useRef<Array<object>>([]);
-
-	const nextProxies = states.map((state) => state.op.unsafeMutable);
-	const [proxies, setProxies] = useState(nextProxies);
-
-	const isStale = proxies.length !== nextProxies.length || proxies.some((proxied, index) => proxied !== nextProxies[index]);
-
-	if (isStale) setProxies(nextProxies);
-
-	const trackings = useMemo(() => proxies.map((): Tracking => ({ affected: new WeakMap(), proxyCache: new WeakMap() })), [proxies]);
-
-	const getSnapshot = useCallback((): Array<object> => {
-		const next = proxies.map((proxied) => valtioSnapshot(proxied));
-		const last = lastReturned.current;
-
-		if (last.length === next.length && last.every((snap, index) => snap === next[index])) return last;
-
-		lastReturned.current = next;
-
-		return next;
-	}, [proxies]);
-
-	const subscribe = useCallback(
-		(callback: () => void) => {
-			const unsubscribes = proxies.map((proxied, index) =>
-				valtioSubscribe(proxied, () => {
-					const prev = lastRendered.current[index];
-					const tracking = trackings[index];
-
-					if (prev && tracking && prev !== valtioSnapshot(proxied)) {
-						if (!tracking.affected.has(prev)) return;
-
-						try {
-							if (!isChanged(prev, valtioSnapshot(proxied), tracking.affected, new WeakMap())) return;
-						} catch {
-							// isChanged over exotic values falls back to notifying
-						}
-					}
-
-					callback();
-				}),
-			);
-
-			return () => {
-				for (const unsubscribe of unsubscribes) unsubscribe();
-			};
-		},
-		[proxies, trackings],
-	);
-
-	const freshStates = useSyncExternalStore(subscribe, getSnapshot);
-
-	useLayoutEffect(() => {
-		lastRendered.current = freshStates;
-	});
-
-	const trackedSnapshots = useMemo(
-		() =>
-			freshStates.map((snap, index) => {
-				const tracking = trackings[index];
-
-				if (!tracking) return snap;
-
-				return createProxy(snap, tracking.affected, tracking.proxyCache, targetCache);
-			}),
-		[freshStates, trackings],
-	);
-
-	return isStale ? states : trackedSnapshots;
-}
-
 export interface RetrackOptions {
 	readonly maxDepth?: number;
 }
@@ -279,23 +192,4 @@ export function retrack<P extends object>(component: FC<P>, options?: RetrackOpt
 	Retracked.displayName = `retrack(${componentName === "" ? "Anonymous" : componentName})`;
 
 	return memo(Retracked);
-}
-
-export function useGroup(): Group;
-export function useGroup<In extends object, Out extends object>(meta: Meta<In, Out>): Group<In, Out>;
-export function useGroup<In extends object, Out extends object>(meta?: Meta<In, Out>): Group<In, Out> {
-	return useState(() => (meta === undefined ? createGroup() : createGroup(meta)) as Group<In, Out>)[0];
-}
-
-export function useTrackedState<T extends object>(define: Define<T>): State<T>;
-export function useTrackedState<T extends object, In extends object, Out extends object>(define: Define<T, In, Out>, groupOrMeta: Group<In, Out> | Meta<In, Out>): State<T, In, Out>;
-export function useTrackedState<T extends object, In extends object, Out extends object>(define: Define<T, In, Out>, groupOrMeta?: Group<In, Out> | Meta<In, Out>): State<T, In, Out> {
-	const created = useState(() => {
-		if (groupOrMeta !== undefined && !isMeta(groupOrMeta)) return (groupOrMeta as Group<In, Out>).createState(define);
-
-		return createGroupState(define, undefined, groupOrMeta as Meta<In, Out> | undefined);
-	})[0];
-	const [fresh] = useRetrackAll([created]);
-
-	return fresh as State<T, In, Out>;
 }

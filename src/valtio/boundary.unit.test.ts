@@ -1,9 +1,9 @@
 import { snapshot } from "valtio/vanilla";
 
 import { installBoundary } from "./boundary";
-import { createState, type State } from "./createState";
-import { type Op } from "./diff";
-import { ignore } from "./ignore";
+import { createState, type State } from "../createState";
+import { type Op } from "../ops/operation";
+import { ignore } from "../ignore";
 
 const recordEmissions = <T extends object>(state: State<T>): Array<{ state: State<T>; ops: Array<Op> }> => {
   const emissions = new Array<{ state: State<T>; ops: Array<Op> }>();
