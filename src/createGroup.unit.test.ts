@@ -21,8 +21,8 @@ describe("createGroup", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, meta) => {
-      emissions.push({ state, ops, meta });
+    group.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
     });
 
     const first = group.createState<Counter>(defineCounter);
@@ -40,7 +40,7 @@ describe("createGroup", () => {
     expect(first.op.isSameState(emissions[0]?.state)).toBe(true);
     expect(second.op.isSameState(emissions[0]?.state)).toBe(false);
     expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
     expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
     expect(second.op.isSameState(emissions[1]?.state)).toBe(true);
@@ -51,8 +51,8 @@ describe("createGroup", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, meta) => {
-      emissions.push({ state, ops, meta });
+    group.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
     });
 
     const state = group.createState<Counter>(defineCounter);
@@ -78,8 +78,8 @@ describe("createGroup", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, meta) => {
-      emissions.push({ state, ops, meta });
+    group.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
     });
 
     const state = group.createState<Counter>(defineCounter);
@@ -101,12 +101,12 @@ describe("createGroup", () => {
 
     expect(emissions).toHaveLength(2);
     expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
     expect(emissions[0]?.state).toEqual(expect.objectContaining({ count: 1 }));
 
     expect(emissions[1]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 99 }, undo: { op: "replace", path: "/count", value: 1 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 99 }, undo: { op: "replace", path: "/count", value: 1 } },
     ]);
     expect(emissions[1]?.state).toEqual(expect.objectContaining({ count: 99 }));
     expect(state.op.unwrap().count).toBe(99);
@@ -116,8 +116,8 @@ describe("createGroup", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
 
-    group.subscribe((state, ops, meta) => {
-      emissions.push({ state, ops, meta });
+    group.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
     });
 
     const standalone = createState<Counter>(defineCounter);
@@ -141,11 +141,11 @@ describe("createGroup", () => {
     const firstEmissions = new Array<Emission>();
     const secondEmissions = new Array<Emission>();
 
-    first.subscribe((state, ops, meta) => {
-      firstEmissions.push({ state, ops, meta });
+    first.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) firstEmissions.push({ state, ops, meta: emission.meta });
     });
-    second.subscribe((state, ops, meta) => {
-      secondEmissions.push({ state, ops, meta });
+    second.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) secondEmissions.push({ state, ops, meta: emission.meta });
     });
 
     const state = first.createState<Counter>(defineCounter);
@@ -161,8 +161,8 @@ describe("createGroup", () => {
   it("stops calling a listener after its remover runs", () => {
     const group = createGroup();
     const emissions = new Array<Emission>();
-    const remove = group.subscribe((state, ops, meta) => {
-      emissions.push({ state, ops, meta });
+    const remove = group.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
     });
     const state = group.createState<Counter>(defineCounter);
 
@@ -188,8 +188,8 @@ describe("createGroup", () => {
     expect(diffSnapshots).not.toHaveBeenCalled();
 
     const emissions = new Array<Emission>();
-    const remove = group.subscribe((state, ops, meta) => {
-      emissions.push({ state, ops, meta });
+    const remove = group.subscribe((state, ops, emission) => {
+      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
     });
 
     first.mutate((mutable) => {
@@ -235,8 +235,8 @@ describe("createGroup", () => {
     const group = createGroup(token);
     const heard = new Array<{ replay: boolean; transactionKey?: string }>();
 
-    group.subscribe((_state, _ops, meta) => {
-      heard.push(meta);
+    group.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
     });
 
     const state = group.createState({ count: 0 });

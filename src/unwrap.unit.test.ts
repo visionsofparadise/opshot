@@ -1,7 +1,6 @@
-import { ref } from "valtio/vanilla";
-
 import { createGroup } from "./createGroup";
 import { createState, type State } from "./createState";
+import { ignore } from "./ignore";
 
 interface Counter {
   count: number;
@@ -136,19 +135,45 @@ describe("unwrap", () => {
     expect(state.op.unwrap().doubled).toBe(2);
   });
 
-  it("keeps a ref() field mutable through the unwrapped copy", () => {
-    const entries = ref(new Array<string>());
+  it("materializes own enumerable getters into data values, while the state generation keeps them live", () => {
+    const state = createState<DerivedCounter>((mutate) => ({
+      count: 0,
+      label: "hits",
+      get doubled() {
+        return this.count * 2;
+      },
+      increment: () => {
+        mutate((mutable) => {
+          mutable.count += 1;
+        });
+      },
+    }));
+
+    state.increment();
+
+    const data = state.op.unwrap();
+    const descriptor = Object.getOwnPropertyDescriptor(data, "doubled");
+
+    expect(descriptor?.get).toBeUndefined();
+    expect(descriptor?.value).toBe(2);
+    expect(Object.getOwnPropertyDescriptor(state, "doubled")?.get).toBeTypeOf("function");
+  });
+
+  it("carries an ignore() field by reference through the unwrapped copy, mutable via the held handle", () => {
+    const entries = ignore(new Array<string>());
 
     interface Log {
       index: number;
-      entries: typeof entries;
+      entries: Array<string>;
     }
 
     const state = createState<Log>(() => ({ index: 0, entries }));
 
-    state.op.unwrap().entries.push("one");
+    expect(state.op.unwrap().entries).toBe(entries);
 
-    expect(entries).toEqual(["one"]);
+    entries.push("one");
+
+    expect(state.op.unwrap().entries).toEqual(["one"]);
   });
 
   it("round-trips a data-only state through JSON", () => {

@@ -223,8 +223,8 @@ describe("useTrackedState", () => {
 
     const { result } = renderHook(() => useTrackedState({ count: 0 }, token));
 
-    result.current.op.subscribe((_state, _ops, meta) => {
-      heard.push(meta);
+    result.current.op.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
     });
 
     act(() => {
@@ -255,8 +255,8 @@ describe("useGroup", () => {
 
     const { result } = renderHook(() => useGroup(token));
 
-    result.current.subscribe((_state, _ops, meta) => {
-      heard.push(meta);
+    result.current.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
     });
 
     const state = result.current.createState({ count: 0 });

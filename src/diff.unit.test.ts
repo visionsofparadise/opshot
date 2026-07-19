@@ -1,6 +1,8 @@
-import { proxy, ref, snapshot } from "valtio/vanilla";
+import { applyPatch } from "fast-json-patch";
+import { proxy, snapshot } from "valtio/vanilla";
 
 import { diffSnapshots, type PatchOperation } from "./diff";
+import { ignore } from "./ignore";
 
 const readValue = (half: PatchOperation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
 
@@ -9,7 +11,7 @@ describe("diffSnapshots", () => {
     const ops = diffSnapshots({ count: 1 }, { count: 2 });
 
     expect(ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } },
     ]);
   });
 
@@ -22,6 +24,7 @@ describe("diffSnapshots", () => {
 
     expect(ops).toEqual([
       {
+        isPatch: true,
         do: { op: "replace", path: "/document/item/value", value: 2 },
         undo: { op: "replace", path: "/document/item/value", value: 1 },
       },
@@ -38,23 +41,23 @@ describe("diffSnapshots", () => {
     const ops = diffSnapshots(before, snapshot(state));
 
     expect(ops).toEqual([
-      { do: { op: "replace", path: "/left/value", value: 10 }, undo: { op: "replace", path: "/left/value", value: 1 } },
+      { isPatch: true, do: { op: "replace", path: "/left/value", value: 10 }, undo: { op: "replace", path: "/left/value", value: 1 } },
     ]);
   });
 
   it("compares leaves with Object.is", () => {
     expect(diffSnapshots({ value: NaN }, { value: NaN })).toEqual([]);
     expect(diffSnapshots({ value: NaN }, { value: 1 })).toEqual([
-      { do: { op: "replace", path: "/value", value: 1 }, undo: { op: "replace", path: "/value", value: NaN } },
+      { isPatch: true, do: { op: "replace", path: "/value", value: 1 }, undo: { op: "replace", path: "/value", value: NaN } },
     ]);
   });
 
   it("reports an added key as an add/remove pair and a removed key as a remove/add pair", () => {
     expect(diffSnapshots({}, { count: 1 })).toEqual([
-      { do: { op: "add", path: "/count", value: 1 }, undo: { op: "remove", path: "/count" } },
+      { isPatch: true, do: { op: "add", path: "/count", value: 1 }, undo: { op: "remove", path: "/count" } },
     ]);
     expect(diffSnapshots({ count: 1 }, {})).toEqual([
-      { do: { op: "remove", path: "/count" }, undo: { op: "add", path: "/count", value: 1 } },
+      { isPatch: true, do: { op: "remove", path: "/count" }, undo: { op: "add", path: "/count", value: 1 } },
     ]);
   });
 
@@ -70,10 +73,10 @@ describe("diffSnapshots", () => {
 
   it("treats a key present with value undefined as present", () => {
     expect(diffSnapshots({ count: 1 }, { count: undefined })).toEqual([
-      { do: { op: "replace", path: "/count", value: undefined }, undo: { op: "replace", path: "/count", value: 1 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: undefined }, undo: { op: "replace", path: "/count", value: 1 } },
     ]);
     expect(diffSnapshots({ count: undefined }, { count: 1 })).toEqual([
-      { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: undefined } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: undefined } },
     ]);
 
     const [removed] = diffSnapshots({ count: undefined }, {});
@@ -88,16 +91,24 @@ describe("diffSnapshots", () => {
     const ops = diffSnapshots({ list: [1, 2, 3] }, { list: [1, 9, 3] });
 
     expect(ops).toEqual([
-      { do: { op: "replace", path: "/list/1", value: 9 }, undo: { op: "replace", path: "/list/1", value: 2 } },
+      { isPatch: true, do: { op: "replace", path: "/list/1", value: 9 }, undo: { op: "replace", path: "/list/1", value: 2 } },
+    ]);
+  });
+
+  it("keeps per-index ops when an index holds a present undefined on both sides", () => {
+    const ops = diffSnapshots({ list: [1, undefined, 3] }, { list: [1, undefined, 9] });
+
+    expect(ops).toEqual([
+      { isPatch: true, do: { op: "replace", path: "/list/2", value: 9 }, undo: { op: "replace", path: "/list/2", value: 3 } },
     ]);
   });
 
   it("reports a length change as one whole-array replace", () => {
     expect(diffSnapshots({ list: [1, 2] }, { list: [1, 2, 3] })).toEqual([
-      { do: { op: "replace", path: "/list", value: [1, 2, 3] }, undo: { op: "replace", path: "/list", value: [1, 2] } },
+      { isPatch: true, do: { op: "replace", path: "/list", value: [1, 2, 3] }, undo: { op: "replace", path: "/list", value: [1, 2] } },
     ]);
     expect(diffSnapshots({ list: [1, 2, 3] }, { list: [1, 3] })).toEqual([
-      { do: { op: "replace", path: "/list", value: [1, 3] }, undo: { op: "replace", path: "/list", value: [1, 2, 3] } },
+      { isPatch: true, do: { op: "replace", path: "/list", value: [1, 3] }, undo: { op: "replace", path: "/list", value: [1, 2, 3] } },
     ]);
   });
 
@@ -107,7 +118,7 @@ describe("diffSnapshots", () => {
 
     expect(diffSnapshots({ run: first }, { run: first })).toEqual([]);
     expect(diffSnapshots({ run: first }, { run: second })).toEqual([
-      { do: { op: "replace", path: "/run", value: second }, undo: { op: "replace", path: "/run", value: first } },
+      { isPatch: true, do: { op: "replace", path: "/run", value: second }, undo: { op: "replace", path: "/run", value: first } },
     ]);
   });
 
@@ -115,7 +126,7 @@ describe("diffSnapshots", () => {
     const ops = diffSnapshots({ value: { nested: 1 } }, { value: 1 });
 
     expect(ops).toEqual([
-      { do: { op: "replace", path: "/value", value: 1 }, undo: { op: "replace", path: "/value", value: { nested: 1 } } },
+      { isPatch: true, do: { op: "replace", path: "/value", value: 1 }, undo: { op: "replace", path: "/value", value: { nested: 1 } } },
     ]);
   });
 
@@ -123,19 +134,19 @@ describe("diffSnapshots", () => {
     const ops = diffSnapshots({ count: 1 }, 5);
 
     expect(ops).toEqual([
-      { do: { op: "replace", path: "", value: 5 }, undo: { op: "replace", path: "", value: { count: 1 } } },
+      { isPatch: true, do: { op: "replace", path: "", value: 5 }, undo: { op: "replace", path: "", value: { count: 1 } } },
     ]);
   });
 
   it("escapes ~ before / in pointer segments", () => {
     expect(diffSnapshots({}, { "a/b": 1 })).toEqual([
-      { do: { op: "add", path: "/a~1b", value: 1 }, undo: { op: "remove", path: "/a~1b" } },
+      { isPatch: true, do: { op: "add", path: "/a~1b", value: 1 }, undo: { op: "remove", path: "/a~1b" } },
     ]);
     expect(diffSnapshots({}, { "a~b": 1 })).toEqual([
-      { do: { op: "add", path: "/a~0b", value: 1 }, undo: { op: "remove", path: "/a~0b" } },
+      { isPatch: true, do: { op: "add", path: "/a~0b", value: 1 }, undo: { op: "remove", path: "/a~0b" } },
     ]);
     expect(diffSnapshots({}, { "a~/b": 1 })).toEqual([
-      { do: { op: "add", path: "/a~0~1b", value: 1 }, undo: { op: "remove", path: "/a~0~1b" } },
+      { isPatch: true, do: { op: "add", path: "/a~0~1b", value: 1 }, undo: { op: "remove", path: "/a~0~1b" } },
     ]);
   });
 
@@ -172,8 +183,8 @@ describe("diffSnapshots", () => {
     expect(readValue(op?.do)).toEqual({ item: { value: 3 }, tags: ["a"] });
   });
 
-  it("leaves ref() values inside op values mutable", () => {
-    const bookkeeping = ref({ entries: new Array<string>() });
+  it("leaves ignore() values inside op values mutable", () => {
+    const bookkeeping = ignore({ entries: new Array<string>() });
     const document = { bookkeeping };
     const [op] = diffSnapshots({}, { document });
 
@@ -183,9 +194,9 @@ describe("diffSnapshots", () => {
     expect(readValue(op?.do)).toEqual({ bookkeeping: { entries: ["one"] } });
   });
 
-  it("treats a ref() value as an identity leaf", () => {
-    const first = ref({ entries: [1] });
-    const second = ref({ entries: [2] });
+  it("treats an ignore() value as an identity leaf", () => {
+    const first = ignore({ entries: [1] });
+    const second = ignore({ entries: [2] });
     const [op] = diffSnapshots({ bookkeeping: first }, { bookkeeping: second });
 
     expect(op?.do).toEqual({ op: "replace", path: "/bookkeeping", value: second });
@@ -212,7 +223,7 @@ describe("diffSnapshots", () => {
       public count = 0;
     }
 
-    const bookkeeping = ref({ entries: new Array<string>() });
+    const bookkeeping = ignore({ entries: new Array<string>() });
     const emitter = new Emitter();
     const run = () => "a";
     const [op] = diffSnapshots({}, { document: { bookkeeping, emitter, run } });
@@ -237,6 +248,7 @@ describe("diffSnapshots", () => {
 
     expect(diffSnapshots(first, second)).toEqual([
       {
+        isPatch: true,
         do: { op: "replace", path: "/document/tags", value: ["a", "b"] },
         undo: { op: "replace", path: "/document/tags", value: ["a"] },
       },
@@ -247,6 +259,7 @@ describe("diffSnapshots", () => {
 
     expect(diffSnapshots(second, third)).toEqual([
       {
+        isPatch: true,
         do: { op: "replace", path: "/document/tags", value: ["a", "b", "c"] },
         undo: { op: "replace", path: "/document/tags", value: ["a", "b"] },
       },
@@ -260,10 +273,169 @@ describe("diffSnapshots", () => {
 
     expect(diffSnapshots(third, fourth)).toEqual([
       {
+        isPatch: true,
         do: { op: "replace", path: "/document/item/value", value: 2 },
         undo: { op: "replace", path: "/document/item/value", value: 1 },
       },
     ]);
     expect(fourth.document.tags).toBe(third.document.tags);
+  });
+
+  describe("accessors", () => {
+    it("skips getter keys without invoking them while data keys still diff", () => {
+      const makeSide = (count: number): object => ({
+        count,
+        get derived(): never {
+          throw new Error("the diff invoked a getter");
+        },
+      });
+
+      const ops = diffSnapshots(makeSide(1), makeSide(2));
+
+      expect(ops).toEqual([
+        { isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } },
+      ]);
+    });
+
+    it("skips a key carrying a getter on either side alone, including presence changes", () => {
+      const withGetter = {
+        count: 1,
+        get derived(): never {
+          throw new Error("the diff invoked a getter");
+        },
+      };
+
+      expect(diffSnapshots(withGetter, { count: 1, derived: 5 })).toEqual([]);
+      expect(diffSnapshots({ count: 1, derived: 5 }, withGetter)).toEqual([]);
+      expect(diffSnapshots({ count: 1 }, withGetter)).toEqual([]);
+      expect(diffSnapshots(withGetter, { count: 1 })).toEqual([]);
+    });
+  });
+
+  describe("dense-array presence escalation", () => {
+    it("escalates a hole-to-stored-undefined change at fixed length to a whole-array replace", () => {
+      // eslint-disable-next-line no-sparse-arrays
+      const withHole = [1, , 3];
+      const withUndefined = [1, undefined, 3];
+
+      const ops = diffSnapshots({ list: withHole }, { list: withUndefined });
+
+      expect(ops).toEqual([
+        { isPatch: true, do: { op: "replace", path: "/list", value: [1, undefined, 3] }, undo: { op: "replace", path: "/list", value: withHole } },
+      ]);
+      expect(Object.hasOwn(readValue(ops[0]?.do) as Array<unknown>, 1)).toBe(true);
+      expect(Object.hasOwn(readValue(ops[0]?.undo) as Array<unknown>, 1)).toBe(false);
+    });
+
+    it("escalates delete m.arr[1] to a whole-array replace whose halves round-trip hole-ness exactly", () => {
+      const state = proxy<{ arr: Array<number | undefined> }>({ arr: [1, 2, 3] });
+      const before = snapshot(state);
+
+      delete state.arr[1];
+
+      const after = snapshot(state);
+      const ops = diffSnapshots(before, after);
+
+      expect(ops).toHaveLength(1);
+      expect(ops[0]?.do.path).toBe("/arr");
+
+      const forward: { arr: Array<number | undefined> } = { arr: [1, 2, 3] };
+
+      applyPatch(forward, [ops[0]!.do]);
+      expect(Object.hasOwn(forward.arr, 1)).toBe(false);
+      expect(forward.arr).toEqual([1, undefined, 3]);
+
+      const backward: { arr: Array<number | undefined> } = { arr: [] };
+
+      applyPatch(backward, [ops[0]!.undo]);
+      expect(Object.hasOwn(backward.arr, 1)).toBe(true);
+      expect(backward.arr[1]).toBe(2);
+    });
+
+    it("keeps per-index ops for a dense array of the same length", () => {
+      const ops = diffSnapshots({ list: [1, 2, 3] }, { list: [1, 9, 3] });
+
+      expect(ops).toEqual([
+        { isPatch: true, do: { op: "replace", path: "/list/1", value: 9 }, undo: { op: "replace", path: "/list/1", value: 2 } },
+      ]);
+    });
+  });
+
+  describe("cycles", () => {
+    it("throws a named cyclic error carrying the pointer, promptly, for cyclic before/after inputs", () => {
+      const beforeCycle: { self?: unknown } = {};
+      beforeCycle.self = beforeCycle;
+      const afterCycle: { self?: unknown } = {};
+      afterCycle.self = afterCycle;
+
+      const start = performance.now();
+
+      expect(() => diffSnapshots({ node: beforeCycle }, { node: afterCycle })).toThrow(
+        "opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids",
+      );
+      expect(performance.now() - start).toBeLessThan(1000);
+    });
+
+    it("throws when reading a newly created cycle's op value, at emission", () => {
+      const state = proxy<{ node: { self?: unknown } }>({ node: {} });
+      const before = snapshot(state);
+
+      state.node.self = state.node;
+
+      const after = snapshot(state);
+      const ops = diffSnapshots(before, after);
+
+      expect(ops).toHaveLength(1);
+      expect(() => readValue(ops[0]?.do)).toThrow(
+        "opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids",
+      );
+    });
+
+    it("treats an ignore()d cycle as a safe leaf, walked past unharmed", () => {
+      const cyclicBefore: { self?: unknown } = {};
+      cyclicBefore.self = cyclicBefore;
+      const wrappedBefore = ignore(cyclicBefore);
+
+      const cyclicAfter: { self?: unknown } = {};
+      cyclicAfter.self = cyclicAfter;
+      const wrappedAfter = ignore(cyclicAfter);
+
+      const ops = diffSnapshots({ node: wrappedBefore }, { node: wrappedAfter });
+
+      expect(ops).toEqual([
+        { isPatch: true, do: { op: "replace", path: "/node", value: wrappedAfter }, undo: { op: "replace", path: "/node", value: wrappedBefore } },
+      ]);
+    });
+
+    it("clones an op value with within-value aliasing preserved: left === right for a shared subtree", () => {
+      const shared = { value: 1 };
+      const [op] = diffSnapshots({}, { document: { left: shared, right: shared } });
+
+      const clone = readValue(op?.do) as { left: { value: number }; right: { value: number } };
+
+      expect(clone.left).toBe(clone.right);
+      expect(clone.left).toEqual({ value: 1 });
+    });
+
+    it("does not false-trip a legitimate before-side DAG compared against genuine after-side cycles", () => {
+      const shared = { tag: "shared" };
+
+      const makeCyclic = (): { tag: string; self?: unknown } => {
+        const node: { tag: string; self?: unknown } = { tag: "cyclic" };
+
+        node.self = node;
+
+        return node;
+      };
+
+      const ops = diffSnapshots({ a: shared, b: shared }, { a: makeCyclic(), b: makeCyclic() });
+
+      expect(ops.map((op) => [op.do.op, op.do.path])).toEqual([
+        ["replace", "/a/tag"],
+        ["add", "/a/self"],
+        ["replace", "/b/tag"],
+        ["add", "/b/self"],
+      ]);
+    });
   });
 });

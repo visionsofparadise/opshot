@@ -1,10 +1,18 @@
-import { ref } from "valtio/vanilla";
-
 import { createGroup } from "./createGroup";
-import { createMeta, createState, isMeta, isState, type OpshotHandle, type State } from "./createState";
+import { augmentSideEffectCycleError, createMeta, createState, isMeta, isState, type Emission, type OpshotHandle, type State } from "./createState";
 import { diffSnapshots, type Op } from "./diff";
+import { ignore } from "./ignore";
 
 vi.mock(import("./diff"), { spy: true });
+
+// The package carries no @types/node; this declares exactly the process surface the
+// unhandled-rejection capture uses.
+declare const process: {
+  listeners: (event: "unhandledRejection") => Array<(reason: unknown) => void>;
+  on: (event: "unhandledRejection", listener: (reason: unknown) => void) => void;
+  removeListener: (event: "unhandledRejection", listener: (reason: unknown) => void) => void;
+  removeAllListeners: (event: "unhandledRejection") => void;
+};
 
 interface Counter {
   count: number;
@@ -48,8 +56,8 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
 const recordEmissions = (state: State<object>): Array<{ ops: Array<Op>; meta: Record<string, unknown> }> => {
   const emissions = new Array<{ ops: Array<Op>; meta: Record<string, unknown> }>();
 
-  state.op.subscribe((_state, ops, meta) => {
-    emissions.push({ ops, meta });
+  state.op.subscribe((_state, ops, emission) => {
+    if (!emission.isSideEffect) emissions.push({ ops, meta: emission.meta });
   });
 
   return emissions;
@@ -215,7 +223,7 @@ describe("createState", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
     expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
@@ -227,7 +235,7 @@ describe("createState", () => {
     expect(emissions[1]?.meta).toEqual({});
   });
 
-  it("emits ops for a getter, which snapshots carry as data", () => {
+  it("emits no ops for a getter, which snapshots keep live", () => {
     const state = createState<DerivedCounter>((mutate) => ({
       count: 0,
       get doubled() {
@@ -240,13 +248,25 @@ describe("createState", () => {
       },
     }));
     const emissions = recordEmissions(state);
+    const generations = new Array<State<DerivedCounter>>();
+
+    state.op.subscribe((emitted) => {
+      generations.push(emitted);
+    });
 
     state.increment();
 
     expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
-      { do: { op: "replace", path: "/doubled", value: 2 }, undo: { op: "replace", path: "/doubled", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
+
+    const second = generations[0];
+
+    if (!second) throw new Error("the subscriber heard no emission");
+
+    expect(Object.getOwnPropertyDescriptor(second, "doubled")?.get).toBeTypeOf("function");
+    expect(second.doubled).toBe(2);
+    expect(state.doubled).toBe(0);
   });
 
   it("emits nothing for an empty mutation", () => {
@@ -320,7 +340,7 @@ describe("createState", () => {
     expect(firstEmissions).toHaveLength(1);
     expect(secondEmissions).toHaveLength(1);
     expect(secondEmissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 7 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 7 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
     expect(second.op.unwrap().count).toBe(7);
   });
@@ -374,7 +394,7 @@ describe("createState", () => {
     expect(isState(current)).toBe(true);
   });
 
-  it("carries a ref() field through without producing ops for its internals", () => {
+  it("carries an ignore() field through without producing ops for its internals", () => {
     interface Log {
       index: number;
       readonly entries: Array<string>;
@@ -383,7 +403,7 @@ describe("createState", () => {
 
     const state = createState<Log>((mutate) => ({
       index: 0,
-      entries: ref(new Array<string>()),
+      entries: ignore(new Array<string>()),
       append: (entry) => {
         mutate((mutable) => {
           mutable.entries.push(entry);
@@ -398,7 +418,7 @@ describe("createState", () => {
     expect(state.op.unwrap().entries).toEqual(["one"]);
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/index", value: 1 }, undo: { op: "replace", path: "/index", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/index", value: 1 }, undo: { op: "replace", path: "/index", value: 0 } },
     ]);
   });
 
@@ -442,7 +462,7 @@ describe("createState", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: "/count", value: 3 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: "/count", value: 3 }, undo: { op: "replace", path: "/count", value: 0 } },
     ]);
     expect(state.op.unwrap().count).toBe(3);
     expect(state.count).toBe(0);
@@ -530,7 +550,7 @@ describe("createState", () => {
 
     expect(diffSnapshots).toHaveBeenCalledTimes(1);
     expect(heard).toEqual([
-      [{ do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+      [{ isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
     ]);
 
     unsubscribe();
@@ -566,8 +586,8 @@ describe("createState", () => {
     const state = createState({ count: 0 }, token);
     const heard = new Array<{ replay: boolean; transactionKey?: string }>();
 
-    state.op.subscribe((_state, _ops, meta) => {
-      heard.push(meta);
+    state.op.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
     });
 
     state.mutate((mutable) => {
@@ -586,8 +606,8 @@ describe("createState", () => {
     const state = createState({ count: 0 }, token);
     const heard = new Array<{ actor: string }>();
 
-    state.op.subscribe((_state, _ops, meta) => {
-      heard.push(meta);
+    state.op.subscribe((_state, _ops, emission) => {
+      if (!emission.isSideEffect) heard.push(emission.meta);
     });
 
     state.mutate((mutable) => {
@@ -623,5 +643,194 @@ describe("createState", () => {
     expect(isMeta({ defaults: {} })).toBe(false);
     expect(isMeta(undefined)).toBe(false);
     expect(isState(createState({ count: 0 }, token))).toBe(true);
+  });
+});
+
+describe("watchdog", () => {
+  const recordAll = (state: State<object>): Array<{ ops: Array<Op>; emission: Emission }> => {
+    const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+
+    state.op.subscribe((_state, ops, emission) => {
+      heard.push({ ops, emission });
+    });
+
+    return heard;
+  };
+
+  it("reports an unsafeMutable write as faithful side-effect ops on the microtask flush", async () => {
+    const state = createState({ count: 0 });
+    const heard = recordAll(state);
+
+    (state.op.unsafeMutable as { count: number }).count = 5;
+
+    expect(heard).toHaveLength(0);
+
+    await Promise.resolve();
+
+    expect(heard).toEqual([
+      {
+        ops: [{ isPatch: true, do: { op: "replace", path: "/count", value: 5 }, undo: { op: "replace", path: "/count", value: 0 } }],
+        emission: { isSideEffect: true },
+      },
+    ]);
+    expect(state.op.unwrap().count).toBe(5);
+  });
+
+  it("emits exactly once for an owned mutate, with no watchdog echo on the flush", async () => {
+    const state = createState({ count: 0 });
+    const heard = recordAll(state);
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    });
+
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
+
+    await Promise.resolve();
+
+    expect(heard).toHaveLength(1);
+  });
+
+  it("reports only the unowned remainder when a mutate and an unsafeMutable write share a tick", async () => {
+    const state = createState({ count: 0, flag: false });
+    const heard = recordAll(state);
+
+    state.mutate((mutable) => {
+      mutable.count = 1;
+    });
+    (state.op.unsafeMutable as { flag: boolean }).flag = true;
+
+    await Promise.resolve();
+
+    expect(heard).toHaveLength(2);
+    expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
+    expect(heard[0]?.ops).toEqual([
+      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+    ]);
+    expect(heard[1]?.emission).toEqual({ isSideEffect: true });
+    expect(heard[1]?.ops).toEqual([
+      { isPatch: true, do: { op: "replace", path: "/flag", value: true }, undo: { op: "replace", path: "/flag", value: false } },
+    ]);
+  });
+
+  it("pays no diff for a side-effect write while nothing listens, and never retro-reports it", async () => {
+    const group = createGroup();
+    const state = group.createState({ count: 0 });
+
+    vi.mocked(diffSnapshots).mockClear();
+
+    (state.op.unsafeMutable as { count: number }).count = 1;
+
+    await Promise.resolve();
+
+    expect(diffSnapshots).not.toHaveBeenCalled();
+    expect(state.op.unwrap().count).toBe(1);
+
+    const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+
+    group.subscribe((_state, ops, emission) => {
+      heard.push({ ops, emission });
+    });
+
+    (state.op.unsafeMutable as { count: number }).count = 2;
+
+    await Promise.resolve();
+
+    expect(heard).toEqual([
+      {
+        ops: [{ isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+        emission: { isSideEffect: true },
+      },
+    ]);
+  });
+
+  it("disarms with the last unsubscribe and re-arms fresh on the next subscribe", async () => {
+    const state = createState({ count: 0 });
+    const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+    const unsubscribe = state.op.subscribe((_state, ops, emission) => {
+      heard.push({ ops, emission });
+    });
+
+    unsubscribe();
+
+    vi.mocked(diffSnapshots).mockClear();
+
+    (state.op.unsafeMutable as { count: number }).count = 1;
+
+    await Promise.resolve();
+
+    expect(diffSnapshots).not.toHaveBeenCalled();
+    expect(heard).toHaveLength(0);
+
+    state.op.subscribe((_state, ops, emission) => {
+      heard.push({ ops, emission });
+    });
+
+    (state.op.unsafeMutable as { count: number }).count = 2;
+
+    await Promise.resolve();
+
+    expect(heard).toEqual([
+      {
+        ops: [{ isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+        emission: { isSideEffect: true },
+      },
+    ]);
+  });
+
+  it("surfaces a side-effect cycle as an unhandled rejection carrying the augmented error", async () => {
+    const state = createState<{ node: Record<string, unknown> }>(() => ({ node: {} }));
+
+    state.op.subscribe(() => {});
+
+    const mutableRoot = state.op.unsafeMutable as { node: Record<string, unknown> };
+
+    const priorListeners = process.listeners("unhandledRejection");
+    const captured = new Array<unknown>();
+    const capture = (reason: unknown): void => {
+      captured.push(reason);
+    };
+
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", capture);
+
+    try {
+      // Creating the cycle emits a lazy-valued add op; the diff only walks the cyclic region (and
+      // throws) on the next side-effect write inside it, one flush later.
+      mutableRoot.node["self"] = mutableRoot.node;
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      mutableRoot.node["value"] = 1;
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.removeListener("unhandledRejection", capture);
+
+      for (const listener of priorListeners) process.on("unhandledRejection", listener);
+    }
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toBeInstanceOf(Error);
+    expect((captured[0] as Error).message).toBe(
+      "opshot: a side-effect write created a cyclic value at /node/self. Cycles cannot be tracked. This surfaced asynchronously because the write bypassed mutate (an unsafeMutable write, or a shared/entangled state). Use ignore() for back-linked structures, or ids.",
+    );
+  });
+});
+
+describe("augmentSideEffectCycleError", () => {
+  it("rewraps the diff's cycle error, preserving the pointer", () => {
+    const augmented = augmentSideEffectCycleError(new Error("opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids"));
+
+    expect(augmented).toBeInstanceOf(Error);
+    expect(augmented?.message).toBe(
+      "opshot: a side-effect write created a cyclic value at /node/self. Cycles cannot be tracked. This surfaced asynchronously because the write bypassed mutate (an unsafeMutable write, or a shared/entangled state). Use ignore() for back-linked structures, or ids.",
+    );
+  });
+
+  it("leaves every other error alone", () => {
+    expect(augmentSideEffectCycleError(new Error("opshot: nested mutate on the same state"))).toBeUndefined();
+    expect(augmentSideEffectCycleError("not an error")).toBeUndefined();
   });
 });
