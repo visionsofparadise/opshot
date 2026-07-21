@@ -8,6 +8,9 @@ import { createState, type Emission, type State } from "../createState";
 import { isState } from "../isState";
 import { applyOps } from "../ops/applyOps";
 import { type Op } from "../ops/operation";
+import { getTrackedMapData, TrackedMap } from "../tracked/trackedMap";
+import { getTrackedSetData, TrackedSet } from "../tracked/trackedSet";
+import { isTrackedWrapper } from "../tracked/trackedWrapper";
 import { retrack } from "./retrack";
 
 vi.mock("valtio/vanilla", async (importOriginal) => {
@@ -225,6 +228,88 @@ describe("retrack", () => {
     expect(screen.getByTestId("count").textContent).toBe("0");
   });
 
+  it("substitutes facade slots immutably while preserving facade identity metadata", async () => {
+    const counter = createCounter();
+    const map = new TrackedMap<string, object>([["counter", counter.op.unsafeMutable]]);
+    const set = new TrackedSet<object>([counter.op.unsafeMutable]);
+    const originalMapData = getTrackedMapData(map);
+    const originalSetData = getTrackedSetData(set);
+
+    let receivedMap: TrackedMap<string, object> | undefined;
+    let receivedSet: TrackedSet<object> | undefined;
+
+    const readCount = (value: unknown): number => {
+      if (value === null || typeof value !== "object" || !("count" in value) || typeof value.count !== "number") {
+        throw new Error("expected a counter state");
+      }
+
+      return value.count;
+    };
+
+    const View = retrack<{ map: TrackedMap<string, object>; set: TrackedSet<object> }>((props) => {
+      receivedMap = props.map;
+      receivedSet = props.set;
+
+      return (
+        <span data-testid="facade-slots">
+          {readCount(props.map.get("counter"))},{readCount([...props.set][0])}
+        </span>
+      );
+    });
+
+    render(<View map={map} set={set} />);
+
+    if (receivedMap === undefined || receivedSet === undefined) throw new Error("expected substituted facades");
+
+    expect(screen.getByTestId("facade-slots").textContent).toBe("0,0");
+    expect(receivedMap).not.toBe(map);
+    expect(receivedSet).not.toBe(set);
+    expect(Reflect.getPrototypeOf(receivedMap)).toBe(Reflect.getPrototypeOf(map));
+    expect(Reflect.getPrototypeOf(receivedSet)).toBe(Reflect.getPrototypeOf(set));
+    expect(isTrackedWrapper(receivedMap)).toBe(true);
+    expect(isTrackedWrapper(receivedSet)).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(receivedMap, "epoch")).toEqual(Object.getOwnPropertyDescriptor(map, "epoch"));
+    expect(Object.getOwnPropertyDescriptor(receivedSet, "epoch")).toEqual(Object.getOwnPropertyDescriptor(set, "epoch"));
+
+    const mapDataDescriptor = Object.getOwnPropertyDescriptor(map, "data");
+    const receivedMapDataDescriptor = Object.getOwnPropertyDescriptor(receivedMap, "data");
+    const setDataDescriptor = Object.getOwnPropertyDescriptor(set, "data");
+    const receivedSetDataDescriptor = Object.getOwnPropertyDescriptor(receivedSet, "data");
+
+    expect(receivedMapDataDescriptor?.enumerable).toBe(mapDataDescriptor?.enumerable);
+    expect(receivedMapDataDescriptor?.configurable).toBe(mapDataDescriptor?.configurable);
+    expect(receivedMapDataDescriptor?.writable).toBe(mapDataDescriptor?.writable);
+    expect(receivedSetDataDescriptor?.enumerable).toBe(setDataDescriptor?.enumerable);
+    expect(receivedSetDataDescriptor?.configurable).toBe(setDataDescriptor?.configurable);
+    expect(receivedSetDataDescriptor?.writable).toBe(setDataDescriptor?.writable);
+    expect(getTrackedMapData(receivedMap)).not.toBe(originalMapData);
+    expect(getTrackedSetData(receivedSet)).not.toBe(originalSetData);
+    expect(getTrackedMapData(map)).toBe(originalMapData);
+    expect(getTrackedSetData(set)).toBe(originalSetData);
+
+    const originalMapPair = originalMapData[0];
+    const receivedMapPair = getTrackedMapData(receivedMap)[0];
+    const originalSetPair = originalSetData[0];
+    const receivedSetPair = getTrackedSetData(receivedSet)[0];
+
+    if (originalMapPair === null || originalMapPair === undefined || receivedMapPair === null || receivedMapPair === undefined) throw new Error("expected live map slots");
+    if (originalSetPair === null || originalSetPair === undefined || receivedSetPair === null || receivedSetPair === undefined) throw new Error("expected live set slots");
+
+    expect(receivedMapPair).not.toBe(originalMapPair);
+    expect(receivedMapPair[0]).toBe(originalMapPair[0]);
+    expect(receivedMapPair[1]).not.toBe(originalMapPair[1]);
+    expect(isState(receivedMapPair[1])).toBe(true);
+    expect(receivedSetPair).not.toBe(originalSetPair);
+    expect(receivedSetPair[0]).not.toBe(originalSetPair[0]);
+    expect(isState(receivedSetPair[0])).toBe(true);
+
+    await act(async () => {
+      counter.increment();
+    });
+
+    expect(screen.getByTestId("facade-slots").textContent).toBe("1,1");
+  });
+
   it("substitutes a state found inside a class-instance prop, preserving the prototype", async () => {
     const counter = createCounter();
     const emitter = new Emitter(counter);
@@ -429,6 +514,98 @@ describe("retrack", () => {
     rerender(<Probe label="two" />);
 
     expect(screen.getByTestId("label").textContent).toBe("two");
+  });
+
+  it("tracks facade readers independently while gating unrelated readers", async () => {
+    interface CollectionState {
+      map: TrackedMap<string, { label: string }>;
+      unrelated: string;
+    }
+
+    const state = createState<CollectionState>({ map: new TrackedMap([["a", { label: "one" }]]), unrelated: "steady" });
+    const renders = { size: 0, get: 0, iteration: 0, unrelated: 0 };
+
+    const SizeView = retrack<{ state: State<CollectionState> }>(({ state: snap }) => {
+      renders.size += 1;
+
+      return <span data-testid="tracked-size">{snap.map.size}</span>;
+    });
+    const GetView = retrack<{ state: State<CollectionState> }>(({ state: snap }) => {
+      renders.get += 1;
+
+      return <span data-testid="tracked-get">{snap.map.get("a")?.label ?? "-"}</span>;
+    });
+    const IterationView = retrack<{ state: State<CollectionState> }>(({ state: snap }) => {
+      renders.iteration += 1;
+
+      return <span data-testid="tracked-iteration">{[...snap.map].map(([key, value]) => `${key}:${value.label}`).join(",")}</span>;
+    });
+    const UnrelatedView = retrack<{ state: State<CollectionState> }>(({ state: snap }) => {
+      renders.unrelated += 1;
+
+      return <span data-testid="tracked-unrelated">{snap.unrelated}</span>;
+    });
+
+    render(
+      <>
+        <SizeView state={state} />
+        <GetView state={state} />
+        <IterationView state={state} />
+        <UnrelatedView state={state} />
+      </>,
+    );
+
+    expect(screen.getByTestId("tracked-size").textContent).toBe("1");
+    expect(screen.getByTestId("tracked-get").textContent).toBe("one");
+    expect(screen.getByTestId("tracked-iteration").textContent).toBe("a:one");
+    expect(renders).toEqual({ size: 1, get: 1, iteration: 1, unrelated: 1 });
+
+    await act(async () => {
+      state.mutate((mutable) => {
+        mutable.map.set("b", { label: "bee" });
+      });
+    });
+
+    expect(screen.getByTestId("tracked-size").textContent).toBe("2");
+    expect(screen.getByTestId("tracked-get").textContent).toBe("one");
+    expect(screen.getByTestId("tracked-iteration").textContent).toBe("a:one,b:bee");
+    expect(renders).toEqual({ size: 2, get: 2, iteration: 2, unrelated: 1 });
+
+    await act(async () => {
+      state.mutate((mutable) => {
+        const value = mutable.map.get("a");
+
+        if (value !== undefined) value.label = "two";
+      });
+    });
+
+    expect(screen.getByTestId("tracked-size").textContent).toBe("2");
+    expect(screen.getByTestId("tracked-get").textContent).toBe("two");
+    expect(screen.getByTestId("tracked-iteration").textContent).toBe("a:two,b:bee");
+    expect(renders).toEqual({ size: 2, get: 3, iteration: 3, unrelated: 1 });
+
+    await act(async () => {
+      state.mutate((mutable) => {
+        mutable.map.delete("a");
+      });
+    });
+
+    expect(screen.getByTestId("tracked-size").textContent).toBe("1");
+    expect(screen.getByTestId("tracked-get").textContent).toBe("-");
+    expect(screen.getByTestId("tracked-iteration").textContent).toBe("b:bee");
+    expect(renders).toEqual({ size: 3, get: 4, iteration: 4, unrelated: 1 });
+
+    await act(async () => {
+      state.mutate((mutable) => {
+        mutable.map.clear();
+      });
+    });
+
+    expect(screen.getByTestId("tracked-size").textContent).toBe("0");
+    expect(screen.getByTestId("tracked-get").textContent).toBe("-");
+    expect(screen.getByTestId("tracked-iteration").textContent).toBe("");
+    expect(screen.getByTestId("tracked-unrelated").textContent).toBe("steady");
+    expect(renders).toEqual({ size: 4, get: 5, iteration: 5, unrelated: 1 });
   });
 
   it("re-renders only the components whose read fields changed", async () => {

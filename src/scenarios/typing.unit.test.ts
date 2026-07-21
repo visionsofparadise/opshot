@@ -1,6 +1,16 @@
 import { createGroup } from "../createGroup";
 import { createMeta } from "../createMeta";
 import { createState, type Emission, type State } from "../createState";
+import {
+	TrackedDate,
+	TrackedMap,
+	TrackedSet,
+	type AddOperation,
+	type Operation,
+	type OperationPath,
+	type RemoveOperation,
+	type ReplaceOperation,
+} from "../index";
 import { useTrackedState } from "../react/useTrackedState";
 
 interface Doc {
@@ -27,6 +37,38 @@ const requiredGroup = createGroup(requiredMeta);
 // checks every line via `npm run check`, and an unused @ts-expect-error is itself a tsc error, so the
 // pins are self-verifying. The final block is the one runtime assertion.
 describe("typing", () => {
+	it("exports the frozen-path three-verb operation surface from the package root", () => {
+		expectTypeOf<Operation>().toEqualTypeOf<AddOperation | ReplaceOperation | RemoveOperation>();
+		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<unknown>>();
+	});
+
+	it("types address components entirely inside flat paths", () => {
+		const key = { id: 1 };
+		const operation: Operation = { op: "replace", path: ["map", key, "id"], value: 2 };
+
+		if (operation.op !== "replace") throw new Error("expected a replace operation");
+
+		expectTypeOf(operation.path).toEqualTypeOf<OperationPath>();
+		expect(operation.path).toEqual(["map", key, "id"]);
+	});
+
+	it("hides facade backing from package-root class types while retaining runtime data properties", () => {
+		const map = new TrackedMap<string, number>();
+		const set = new TrackedSet<number>();
+		const date = new TrackedDate(0);
+
+		// @ts-expect-error TrackedMap backing is source-private
+		void map.data;
+		// @ts-expect-error TrackedSet backing is source-private
+		void set.data;
+		// @ts-expect-error TrackedDate backing is source-private
+		void date.epochMs;
+
+		expect(Object.keys(map)).toEqual(["data"]);
+		expect(Object.keys(set)).toEqual(["data"]);
+		expect(Object.keys(date)).toEqual(["epochMs"]);
+	});
+
 	it("pins explicit <T> to the {} meta defaults, not the token's types", () => {
 		const withToken = createState<Doc>(makeDoc, docMeta);
 

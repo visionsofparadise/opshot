@@ -1,6 +1,7 @@
+import { createProxy } from "proxy-compare";
 import { snapshot } from "valtio/vanilla";
 
-import { installBoundary } from "./boundary";
+import { installBoundary, unregisterTrackedRoot } from "./boundary";
 import { createState, type State } from "../createState";
 import { type Op } from "../ops/operation";
 import { ignore } from "../ignore";
@@ -29,8 +30,8 @@ describe("boundary: tracked lane", () => {
     });
 
     expect(emissions.map((emission) => emission.ops)).toEqual([
-      [{ isPatch: true, do: { op: "replace", path: "/document/title", value: "b" }, undo: { op: "replace", path: "/document/title", value: "a" } }],
-      [{ isPatch: true, do: { op: "replace", path: "/document/tags/1", value: "z" }, undo: { op: "replace", path: "/document/tags/1", value: "y" } }],
+      [{ isPatch: true, do: { op: "replace", path: ["document", "title"], value: "b" }, undo: { op: "replace", path: ["document", "title"], value: "a" } }],
+      [{ isPatch: true, do: { op: "replace", path: ["document", "tags", 1], value: "z" }, undo: { op: "replace", path: ["document", "tags", 1], value: "y" } }],
     ]);
   });
 
@@ -53,13 +54,390 @@ describe("boundary: tracked lane", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/collection/count", value: 1 }, undo: { op: "replace", path: "/collection/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["collection", "count"], value: 1 }, undo: { op: "replace", path: ["collection", "count"], value: 0 } },
     ]);
     expect(state.op.unwrap().collection.count).toBe(1);
   });
 });
 
+describe("boundary: sparse-array snapshots", () => {
+	it("restores a trailing-hole length after a proxied length write", () => {
+		const state = createState({ values: [1, 2, 3] });
+
+		state.mutate((mutable) => {
+			mutable.values.length = 5;
+		});
+
+		const values = state.op.unwrap().values;
+
+		expect(values).toHaveLength(5);
+		expect(Object.hasOwn(values, 3)).toBe(false);
+		expect(Object.hasOwn(values, 4)).toBe(false);
+	});
+
+	it("preserves mixed interior and trailing holes", () => {
+		const state = createState({ values: [1, 2, 3] });
+
+		state.mutate((mutable) => {
+			delete mutable.values[1];
+			mutable.values.length = 6;
+		});
+
+		const values = state.op.unwrap().values;
+
+		expect(values).toHaveLength(6);
+		expect(values[0]).toBe(1);
+		expect(values[2]).toBe(3);
+		expect([1, 3, 4, 5].map((index) => Object.hasOwn(values, index))).toEqual([false, false, false, false]);
+	});
+
+	it("leaves dense-array snapshots unchanged", () => {
+		const values = createState({ values: [1, 2, 3] }).op.unwrap().values;
+
+		expect(values).toEqual([1, 2, 3]);
+		expect(Reflect.ownKeys(values)).toEqual(["0", "1", "2", "length"]);
+	});
+});
+
+describe("boundary: snapshot donation", () => {
+	it("throws at the assigned key before a snapshot copy creates a dead region", () => {
+		const source = createState({ item: { value: 1 } });
+		const destination = createState<{ box: unknown }>({ box: null });
+
+		expect(() => {
+			destination.mutate((mutable) => {
+				mutable.box = source.item;
+			});
+		}).toThrow(
+			'opshot: cannot assign a snapshot generation at "box": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOps.',
+		);
+		expect(destination.op.unwrap().box).toBe(null);
+	});
+
+	it("unwraps a tracking wrapper before rejecting its registered snapshot copy", () => {
+		const source = createState({ item: { value: 1 } });
+		const wrapped = createProxy(source.item, new WeakMap(), new WeakMap(), new WeakMap());
+		const destination = createState<{ box: unknown }>({ box: null });
+
+		expect(() => {
+			destination.mutate((mutable) => {
+				mutable.box = wrapped;
+			});
+		}).toThrow("Clone the value, or replay through applyOps");
+		expect(destination.op.unwrap().box).toBe(null);
+	});
+
+	it("admits a raw object target", () => {
+		const raw = { value: 1 };
+		const state = createState<{ box: { value: number } | null }>({ box: null });
+
+		state.mutate((mutable) => {
+			mutable.box = raw;
+		});
+
+		expect(state.op.unwrap().box).toEqual({ value: 1 });
+	});
+
+	it("admits a popped proxy when the same target is reattached", () => {
+		interface Item {
+			value: number;
+		}
+
+		const target = { value: 1 };
+		const state = createState<{ items: Array<Item> }>({ items: [target] });
+		let popped: Item | undefined;
+
+		state.mutate((mutable) => {
+			popped = mutable.items.pop();
+		});
+		state.mutate((mutable) => {
+			if (popped) mutable.items.push(popped);
+		});
+
+		expect(state.op.unwrap().items).toEqual([{ value: 1 }]);
+
+		state.mutate((mutable) => {
+			const item = mutable.items[0];
+
+			if (item) item.value = 9;
+		});
+
+		expect(target.value).toBe(9);
+	});
+});
+
 describe("boundary: throws at entry", () => {
+	it("rejects reserved data paths during creation and mutation", () => {
+		const protoData = {};
+		const aliasedPrototype = { prototype: { polluted: true } };
+
+		Object.defineProperty(protoData, "__proto__", { value: { polluted: true }, enumerable: true });
+
+		expect(() => createState(protoData)).toThrow("reserved data path /__proto__");
+		expect(() => createState({ constructor: { prototype: { polluted: true } } })).toThrow("reserved data path /constructor/prototype");
+		expect(() => createState({ safe: aliasedPrototype, constructor: aliasedPrototype })).toThrow("reserved data path /constructor/prototype");
+
+		const state = createState<{ value: unknown }>({ value: null });
+
+		expect(() => {
+			state.mutate((mutable) => {
+				mutable.value = { constructor: { prototype: { polluted: true } } };
+			});
+		}).toThrow("reserved data path /value/constructor/prototype");
+		expect(state.op.unwrap().value).toBeNull();
+
+		const staged = createState<{ constructor: { prototype?: object; safe: boolean } }>({ constructor: { safe: true } });
+
+		expect(() => {
+			staged.mutate((mutable) => {
+				mutable.constructor.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+		expect(staged.op.unwrap().constructor).toEqual({ safe: true });
+	});
+
+	it("rejects a prototype write through an alias after a dynamic constructor link", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		interface AliasedConstructor {
+			alias: ConstructorTarget;
+			constructor: ConstructorTarget | undefined;
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const state = createState<AliasedConstructor>({ alias: target, constructor: undefined });
+
+		state.mutate((mutable) => {
+			mutable.constructor = mutable.alias;
+		});
+
+		expect(() => {
+			state.mutate((mutable) => {
+				mutable.alias.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+	});
+
+	it("keeps a constructor target reserved until its final concurrent link is deleted", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		interface Parent {
+			constructor?: ConstructorTarget;
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const state = createState({ first: { constructor: target } as Parent, second: { constructor: target } as Parent, alias: target });
+
+		state.mutate((mutable) => {
+			delete mutable.first.constructor;
+		});
+
+		expect(() => {
+			state.mutate((mutable) => {
+				mutable.alias.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+
+		state.mutate((mutable) => {
+			delete mutable.second.constructor;
+			mutable.alias.prototype = { safe: true };
+		});
+
+		expect(state.op.unwrap().alias.prototype).toEqual({ safe: true });
+	});
+
+	it("moves the reserved association when a constructor link is replaced", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		const first: ConstructorTarget = { safe: true };
+		const second: ConstructorTarget = { safe: true };
+		const state = createState({ constructor: first, first, second });
+
+		state.mutate((mutable) => {
+			mutable.constructor = mutable.second;
+			mutable.first.prototype = { safe: true };
+		});
+
+		expect(state.op.unwrap().first.prototype).toEqual({ safe: true });
+		expect(() => {
+			state.mutate((mutable) => {
+				mutable.second.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+	});
+
+	it("releases constructor links when their containing subtree is detached", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		interface Root {
+			alias: ConstructorTarget;
+			branch?: { constructor: ConstructorTarget };
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const state = createState<Root>({ alias: target, branch: { constructor: target } });
+
+		state.mutate((mutable) => {
+			delete mutable.branch;
+			mutable.alias.prototype = { safe: true };
+		});
+
+		expect(state.op.unwrap().alias.prototype).toEqual({ safe: true });
+	});
+
+	it("releases a cyclic subtree and restores its reservation when reattached", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		interface Branch {
+			constructor: ConstructorTarget;
+			next?: Branch;
+		}
+
+		interface Root {
+			alias: ConstructorTarget;
+			branch?: Branch;
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const branch: Branch = { constructor: target };
+
+		branch.next = branch;
+
+		const state = createState<Root>({ alias: target, branch });
+		let detached: Branch | undefined;
+
+		state.mutate((mutable) => {
+			detached = mutable.branch;
+			delete mutable.branch;
+		});
+		state.mutate((mutable) => {
+			mutable.alias.prototype = { safe: true };
+			delete mutable.alias.prototype;
+		});
+		state.mutate((mutable) => {
+			if (detached) mutable.branch = detached;
+		});
+
+		expect(() => {
+			state.mutate((mutable) => {
+				mutable.alias.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+	});
+
+	it("keeps a shared cyclic subtree reserved until its final root detaches", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		interface Branch {
+			constructor: ConstructorTarget;
+			next?: Branch;
+		}
+
+		interface Root {
+			alias: ConstructorTarget;
+			branch?: Branch;
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const branch: Branch = { constructor: target };
+
+		branch.next = branch;
+
+		const first = createState<Root>({ alias: target, branch });
+		const second = createState<Root>({ alias: target, branch });
+
+		first.mutate((mutable) => {
+			delete mutable.branch;
+		});
+
+		expect(() => {
+			first.mutate((mutable) => {
+				mutable.alias.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+
+		second.mutate((mutable) => {
+			delete mutable.branch;
+		});
+		first.mutate((mutable) => {
+			mutable.alias.prototype = { safe: true };
+		});
+
+		expect(first.op.unwrap().alias.prototype).toEqual({ safe: true });
+	});
+
+	it("releases each root's constructor edges through the idempotent finalization path", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const first = createState({ alias: target, constructor: target });
+		const second = createState({ alias: target, constructor: target });
+
+		unregisterTrackedRoot(first.op.unsafeMutable);
+		unregisterTrackedRoot(first.op.unsafeMutable);
+
+		expect(() => {
+			second.mutate((mutable) => {
+				mutable.alias.prototype = { polluted: true };
+			});
+		}).toThrow("reserved data path /constructor/prototype");
+
+		unregisterTrackedRoot(second.op.unsafeMutable);
+
+		first.mutate((mutable) => {
+			mutable.alias.prototype = { safe: true };
+		});
+
+		expect(first.op.unwrap().alias.prototype).toEqual({ safe: true });
+	});
+
+	it("releases a cyclic subtree removed by array length truncation", () => {
+		interface ConstructorTarget {
+			prototype?: object;
+			safe: boolean;
+		}
+
+		interface Branch {
+			constructor: ConstructorTarget;
+			next?: Branch;
+		}
+
+		const target: ConstructorTarget = { safe: true };
+		const branch: Branch = { constructor: target };
+
+		branch.next = branch;
+
+		const state = createState({ alias: target, branches: [branch] });
+
+		state.mutate((mutable) => {
+			mutable.branches.length = 0;
+			mutable.alias.prototype = { safe: true };
+		});
+
+		expect(state.op.unwrap().alias.prototype).toEqual({ safe: true });
+	});
+
   it("throws for a Map in the define literal, naming TrackedMap and ignore", () => {
     expect(() => createState({ lookup: new Map<string, number>() })).toThrow(
       "opshot: Map cannot be tracked (its state lives in internal slots). Options: use TrackedMap for a tracked equivalent; ignore(value) to store it by reference, untracked.",
@@ -156,7 +534,7 @@ describe("boundary: admitted by rule", () => {
     });
 
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: "/tick", value: 1 }, undo: { op: "replace", path: "/tick", value: 0 } }]);
+    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: ["tick"], value: 1 }, undo: { op: "replace", path: ["tick"], value: 0 } }]);
     expect(state.op.unwrap().box).toBe(frozen);
 
     expect(() => {
@@ -213,7 +591,7 @@ describe("boundary: admitted by rule", () => {
     });
 
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } }]);
+    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }]);
 
     const emitted = emissions[0]?.state;
 
@@ -234,7 +612,7 @@ describe("boundary: admitted by rule", () => {
     });
 
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: "/run", value: second }, undo: { op: "replace", path: "/run", value: first } }]);
+    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: ["run"], value: second }, undo: { op: "replace", path: ["run"], value: first } }]);
     expect(state.op.unwrap().run).toBe(second);
   });
 });
@@ -343,6 +721,25 @@ describe("boundary: meta-mutation trap gates", () => {
     const state = createState({ count: 0 });
 
     expect(() => Object.setPrototypeOf(state.op.unsafeMutable, null)).toThrow("opshot: setPrototypeOf is not supported on tracked state");
+  });
+
+  it("keeps defineProperty rejection local to each proxy handler", () => {
+    const second = createState({ count: 0 });
+    const first = createState({
+      get trigger(): number {
+        return 0;
+      },
+      set trigger(value: number) {
+        Object.defineProperty(second.op.unsafeMutable, "injected", { value });
+      },
+    });
+
+    expect(() => {
+      first.mutate((mutable) => {
+        mutable.trigger = 1;
+      });
+    }).toThrow("opshot: defineProperty is not supported on tracked state");
+    expect(Object.hasOwn(second.op.unsafeMutable, "injected")).toBe(false);
   });
 
   it("leaves ordinary set, delete, and nested writes through mutate unaffected", () => {

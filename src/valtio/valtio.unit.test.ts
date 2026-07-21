@@ -1,16 +1,12 @@
-import { affectedToPathList, createProxy, isChanged, markToTrack } from "proxy-compare";
-import { proxy, ref, snapshot, subscribe, unstable_getInternalStates, unstable_replaceInternalFunction, type INTERNAL_Op } from "valtio/vanilla";
+import { affectedToPathList, createProxy, getUntracked, isChanged, markToTrack } from "proxy-compare";
+import { getVersion, proxy, ref, snapshot, subscribe, unstable_getInternalStates, unstable_replaceInternalFunction, type INTERNAL_Op } from "valtio/vanilla";
 
 // Local aliases for valtio's internal seam signatures, which the package's public types do not export.
-type ValtioOp = INTERNAL_Op;
-type NotifyUpdate = (op: ValtioOp | undefined) => void;
-type ValtioListener = (op: ValtioOp | undefined, nextVersion: number) => void;
-type AddListener = (listener: ValtioListener) => () => void;
 type CreateHandler = <T extends object>(
 	isInitializing: () => boolean,
 	addPropListener: (prop: string | symbol, propValue: unknown) => void,
 	removePropListener: (prop: string | symbol) => void,
-	notifyUpdate: NotifyUpdate,
+	notifyUpdate: (op: INTERNAL_Op | undefined) => void,
 ) => ProxyHandler<T>;
 type CreateSnapshot = <T extends object>(target: T, version: number) => T;
 
@@ -289,39 +285,6 @@ describe("valtio assumptions", () => {
     written.doc.value = 7;
 
     expect(target.value).toBe(7);
-  });
-
-  it("makes an assigned snapshot subtree a dead region: writes drop unfrozen, throw frozen", () => {
-    const live = proxy({ doc: { item: { value: 0 } } });
-
-    expect(Object.getOwnPropertyDescriptor(live.doc.item, "value")).toMatchObject({ writable: true });
-
-    const unfrozenSource = proxy({ item: { value: 1 } });
-    const unfrozenSnapshot = snapshot(unfrozenSource);
-    const unfrozen = proxy({ doc: { item: { value: 0 } } });
-
-    unfrozen.doc.item = unfrozenSnapshot.item as { value: number };
-
-    expect(Object.getOwnPropertyDescriptor(unfrozen.doc.item, "value")).toMatchObject({ writable: false });
-
-    unfrozen.doc.item.value = 5;
-
-    expect(snapshot(unfrozen).doc).toEqual({ item: { value: 1 } });
-
-    const frozenSource = proxy({ item: { value: 1 } });
-    const frozenSnapshot = snapshot(frozenSource);
-
-    Object.freeze(frozenSnapshot.item);
-
-    const frozen = proxy({ doc: { item: { value: 0 } } });
-
-    frozen.doc.item = frozenSnapshot.item as { value: number };
-
-    expect(() => {
-      frozen.doc.item.value = 5;
-    }).toThrow(TypeError);
-
-    expect(snapshot(frozen).doc).toEqual({ item: { value: 1 } });
   });
 
   it("identifies ref() values through unstable_getInternalStates().refSet, including values reached through snapshots", () => {
@@ -702,107 +665,6 @@ describe("createSnapshot seam: accessor preservation", () => {
   });
 });
 
-// Phase 1.4: the wrapper notification channel (Phase 7 rides it) and the temporary synchronous
-// subscription that lets a wrapper call inside mutate join that mutate's owned emission window.
-describe("createHandler seam: custom-op propagation and sync subscription", () => {
-  const { proxyStateMap } = unstable_getInternalStates();
-
-  it("propagates a captured notifyUpdate's custom op array to a root subscribe, path-prefixed", () => {
-    const notifiers = new WeakMap<object, NotifyUpdate>();
-
-    let defaultCreateHandler: CreateHandler;
-
-    unstable_replaceInternalFunction("createHandler", (current) => {
-      defaultCreateHandler = current;
-
-      const replacement: CreateHandler = (isInitializing, addPropListener, removePropListener, notifyUpdate) => {
-        const handler = current(isInitializing, addPropListener, removePropListener, notifyUpdate);
-
-        return {
-          ...handler,
-          get(target, prop, receiver) {
-            notifiers.set(target, notifyUpdate);
-
-            return Reflect.get(target, prop, receiver);
-          },
-        };
-      };
-
-      return replacement;
-    });
-
-    try {
-      const root = proxy({ child: { wrapper: 1 } });
-
-      void root.child.wrapper;
-
-      const childTarget = proxyStateMap.get(root.child)![0];
-      const notify = notifiers.get(childTarget);
-
-      expect(notify).toBeTypeOf("function");
-
-      const received: Array<unknown> = [];
-      const unsubscribe = subscribe(root, (ops) => received.push(...ops), true);
-
-      notify!(["opshot-wrapper", ["wrapper"], { payload: 42 }] as unknown as ValtioOp);
-
-      expect(received).toEqual([["opshot-wrapper", ["child", "wrapper"], { payload: 42 }]]);
-
-      unsubscribe();
-    } finally {
-      unstable_replaceInternalFunction("createHandler", () => defaultCreateHandler);
-    }
-  });
-
-  it("adds a sync subscriber without paying the 0->1 cascade when a persistent listener already holds it", () => {
-    const child = proxy({ x: 0 });
-    const parent = proxy({ child });
-    const childState = proxyStateMap.get(child)! as unknown as [object, unknown, AddListener];
-    const realAddListener = childState[2];
-
-    let cascadeCount = 0;
-
-    childState[2] = (listener) => {
-      cascadeCount += 1;
-
-      return realAddListener(listener);
-    };
-
-    try {
-      const unsubscribePersistent = subscribe(parent, () => {}, false);
-
-      expect(cascadeCount).toBe(1);
-
-      let syncCalls = 0;
-      const syncOps: Array<unknown> = [];
-      const unsubscribeSync = subscribe(
-        parent,
-        (ops) => {
-          syncCalls += 1;
-          syncOps.push(...ops);
-        },
-        true,
-      );
-
-      expect(cascadeCount).toBe(1);
-
-      child.x = 7;
-
-      // Ordinary writes carry an empty ops array in valtio 2.3.2 -- createOp stays undefined unless unstable_enableOp(true) is called.
-      expect(syncCalls).toBe(1);
-      expect(syncOps).toEqual([]);
-
-      unsubscribeSync();
-
-      expect(cascadeCount).toBe(1);
-
-      unsubscribePersistent();
-    } finally {
-      childState[2] = realAddListener;
-    }
-  });
-});
-
 describe("frozen-object seed gate", () => {
   it("throws on a write to the frozen object's own prop, leaving the snapshot stale", () => {
     const state = proxy<{ frozen: { inner: { x: number } } }>({ frozen: { inner: { x: 0 } } });
@@ -825,5 +687,302 @@ describe("frozen-object seed gate", () => {
     state.frozen.inner.x = 2;
 
     expect(snapshot(state).frozen.inner.x).toBe(2);
+  });
+});
+
+describe("facade and identity probes", () => {
+  it("binds prototype methods to a proxied facade and preserves its branded prototype in snapshots", () => {
+    interface FacadeProbe {
+      count: number;
+      increment(): void;
+    }
+
+    const brand = Symbol.for("opshot.probe.facade");
+    const facadePrototype = {
+      increment(this: FacadeProbe) {
+        this.count += 1;
+      },
+    };
+
+    Object.defineProperty(facadePrototype, brand, { value: true });
+
+    const target = Object.assign(Object.create(facadePrototype) as FacadeProbe, { count: 0 });
+    const facade = proxy(target);
+    const before = snapshot(facade);
+    const versionBefore = getVersion(facade);
+
+    if (versionBefore === undefined) throw new Error("facade probe: proxy has no valtio version");
+
+    expect(Object.hasOwn(facade, "increment")).toBe(false);
+    expect(Reflect.getPrototypeOf(facade)).toBe(facadePrototype);
+    expect(Reflect.getPrototypeOf(before)).toBe(facadePrototype);
+    expect(Reflect.get(Reflect.getPrototypeOf(facade)!, brand)).toBe(true);
+    expect(Reflect.get(Reflect.getPrototypeOf(before)!, brand)).toBe(true);
+
+    facade.increment();
+
+    const after = snapshot(facade);
+
+    expect(getVersion(facade)).toBeGreaterThan(versionBefore);
+    expect(after).not.toBe(before);
+    expect(before.count).toBe(0);
+    expect(after.count).toBe(1);
+  });
+
+  it("carries a non-enumerable property through snapshots and tracks its changes", () => {
+    const target = { label: "probe" } as { label: string; epoch: number };
+
+    Object.defineProperty(target, "epoch", {
+      value: 0,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+
+    const state = proxy(target);
+    const before = snapshot(state);
+    const versionBefore = getVersion(state);
+
+    if (versionBefore === undefined) throw new Error("ride-along probe: proxy has no valtio version");
+
+    expect(Reflect.ownKeys(before)).toContain("epoch");
+    expect(Object.getOwnPropertyDescriptor(before, "epoch")?.enumerable).toBe(false);
+
+    const affected = new WeakMap<object, unknown>();
+    const wrapped = createProxy(before, affected, new WeakMap(), new WeakMap());
+
+    expect(wrapped.epoch).toBe(0);
+    expect(affectedToPathList(before, affected)).toContainEqual(["epoch"]);
+
+    state.epoch = 1;
+
+    const after = snapshot(state);
+
+    expect(getVersion(state)).toBeGreaterThan(versionBefore);
+    expect(Reflect.ownKeys(after)).toContain("epoch");
+    expect(after.epoch).toBe(1);
+    expect(isChanged(before, after, affected, new WeakMap())).toBe(true);
+  });
+
+  it("binds prototype method calls to tracking wrappers so reads through this are recorded", () => {
+    interface FacadeProbe {
+      data: Array<number>;
+      first(): number;
+    }
+
+    const facadePrototype = {
+      first(this: FacadeProbe) {
+        return this.data[0]!;
+      },
+    };
+    const target = Object.assign(Object.create(facadePrototype) as FacadeProbe, { data: [7, 8] });
+    const snap = snapshot(proxy(target));
+    const affected = new WeakMap<object, unknown>();
+    const wrapped = createProxy(snap, affected, new WeakMap(), new WeakMap());
+
+    expect(wrapped.first()).toBe(7);
+    expect(affectedToPathList(snap, affected)).toContainEqual(["data", "0"]);
+  });
+
+  it("unwraps a proxy-compare tracking wrapper to its exact snapshot copy", () => {
+    const snap = snapshot(proxy({ value: 1 }));
+    const wrapped = createProxy(snap, new WeakMap(), new WeakMap(), new WeakMap());
+
+    expect(getUntracked(wrapped)).toBe(snap);
+  });
+
+  it("seeds a copy registry for every nested snapshot copy during the snapshot walk", () => {
+    const { refSet, proxyStateMap } = unstable_getInternalStates();
+    const copyRegistry = new WeakMap<object, object>();
+    const copyCache = new WeakMap<object, [number, object]>();
+
+    const createRegisteredSnapshot = <T extends object>(target: T, version: number): T => {
+      const cached = copyCache.get(target);
+
+      if (cached?.[0] === version) return cached[1] as T;
+
+      const copy: object = Array.isArray(target) ? [] : Object.create(Reflect.getPrototypeOf(target) as object | null);
+
+      markToTrack(copy, true);
+      copyCache.set(target, [version, copy]);
+      copyRegistry.set(copy, target);
+
+      for (const key of Reflect.ownKeys(target)) {
+        if (Object.getOwnPropertyDescriptor(copy, key)) continue;
+
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+
+        if (!descriptor) continue;
+
+        if (descriptor.get || descriptor.set) {
+          Object.defineProperty(copy, key, {
+            get: descriptor.get,
+            set: descriptor.set,
+            enumerable: descriptor.enumerable,
+            configurable: true,
+          });
+
+          continue;
+        }
+
+        const value: unknown = Reflect.get(target, key);
+        const copyDescriptor: PropertyDescriptor = { value, enumerable: descriptor.enumerable, configurable: true };
+
+        if (typeof value === "object" && value !== null) {
+          if (refSet.has(value)) {
+            markToTrack(value, false);
+          } else {
+            const childState = proxyStateMap.get(value);
+
+            if (childState) copyDescriptor.value = createRegisteredSnapshot(childState[0], childState[1]());
+          }
+        }
+
+        Object.defineProperty(copy, key, copyDescriptor);
+      }
+
+      return copy as T;
+    };
+
+    const state = proxy({ outer: { inner: { value: 1 } } });
+    const rootState = proxyStateMap.get(state);
+    const outerState = proxyStateMap.get(state.outer);
+    const innerState = proxyStateMap.get(state.outer.inner);
+
+    if (!rootState || !outerState || !innerState) throw new Error("registry probe: expected proxy state at every level");
+
+    const registered = createRegisteredSnapshot(rootState[0], rootState[1]()) as {
+      outer: { inner: { value: number } };
+    };
+
+    expect(copyRegistry.get(registered)).toBe(rootState[0]);
+    expect(copyRegistry.get(registered.outer)).toBe(outerState[0]);
+    expect(copyRegistry.get(registered.outer.inner)).toBe(innerState[0]);
+  });
+
+  it("reuses a detached raw target's cached child proxy when the target is reattached", () => {
+    const target = { value: 1 };
+    const state = proxy<{ item?: { value: number } }>({ item: target });
+    const firstChildProxy = state.item;
+
+    delete state.item;
+
+    expect(snapshot(state).item).toBeUndefined();
+
+    state.item = target;
+
+    const reattached = state.item;
+
+    if (!firstChildProxy || !reattached) throw new Error("reattach probe: expected child proxy");
+
+    expect(reattached).toBe(firstChildProxy);
+
+    reattached.value = 9;
+
+    expect(target.value).toBe(9);
+    expect(snapshot(state).item?.value).toBe(9);
+  });
+
+  it("shares every existing array element across the snapshot generated by a tail push", () => {
+    const state = proxy({ items: [{ value: 1 }, { value: 2 }] });
+    const before = snapshot(state).items;
+
+    state.items.push({ value: 3 });
+
+    const after = snapshot(state).items;
+
+    expect(after).toHaveLength(before.length + 1);
+
+    for (const [index, item] of before.entries()) expect(Object.is(after[index], item)).toBe(true);
+  });
+});
+
+describe("opshot boundary dead-region guard", () => {
+  let targetRegistry: unknown;
+  let identityTokenRegistry: unknown;
+  let reusedPreInstallSnapshot = false;
+  let donatePreInstallSnapshot: (() => void) | undefined;
+  let restoreCanProxy: (() => void) | undefined;
+  let restoreCreateHandler: (() => void) | undefined;
+  let restoreCreateSnapshot: (() => void) | undefined;
+
+  beforeAll(async () => {
+    unstable_replaceInternalFunction("canProxy", (current) => {
+      restoreCanProxy = () => {
+        unstable_replaceInternalFunction("canProxy", () => current);
+      };
+
+      return current;
+    });
+    unstable_replaceInternalFunction("createHandler", (current) => {
+      restoreCreateHandler = () => {
+        unstable_replaceInternalFunction("createHandler", () => current);
+      };
+
+      return current;
+    });
+    unstable_replaceInternalFunction("createSnapshot", (current) => {
+      restoreCreateSnapshot = () => {
+        unstable_replaceInternalFunction("createSnapshot", () => current);
+      };
+
+      return current;
+    });
+
+    vi.resetModules();
+
+    class RejectingWeakMap extends WeakMap<object, object> {
+      override set(_key: object, _value: object): this {
+        throw new Error("registry subclass must not be used");
+      }
+    }
+
+    for (const key of [Symbol.for("opshot.targets"), Symbol.for("opshot.identityTokens")]) {
+      if (!Reflect.defineProperty(globalThis, key, { value: new RejectingWeakMap(), configurable: true })) {
+        throw new Error("identity registry test: could not seed the global registry key");
+      }
+    }
+
+    const { proxy: freshProxy, snapshot: freshSnapshot } = await import("valtio/vanilla");
+    const source = freshProxy({ value: 1 });
+    const preInstallSnapshot = freshSnapshot(source);
+    const { createState } = await import("../createState");
+    const reused = freshSnapshot(source);
+    const destination = createState<{ item: unknown }>({ item: null });
+
+    targetRegistry = Reflect.get(globalThis, Symbol.for("opshot.targets"));
+    identityTokenRegistry = Reflect.get(globalThis, Symbol.for("opshot.identityTokens"));
+    reusedPreInstallSnapshot = reused === preInstallSnapshot;
+    donatePreInstallSnapshot = () => {
+      destination.mutate((mutable) => {
+        mutable.item = preInstallSnapshot;
+      });
+    };
+  });
+
+  afterAll(() => {
+    restoreCreateSnapshot?.();
+    restoreCreateHandler?.();
+    restoreCanProxy?.();
+  });
+
+  it("rejects WeakMap subclasses and installs bare global registries", () => {
+    expect(targetRegistry).toBeInstanceOf(WeakMap);
+    expect(identityTokenRegistry).toBeInstanceOf(WeakMap);
+
+    if (!(targetRegistry instanceof WeakMap) || !(identityTokenRegistry instanceof WeakMap)) {
+      throw new Error("identity registry test: expected WeakMap registries");
+    }
+
+    expect(Object.getPrototypeOf(targetRegistry)).toBe(WeakMap.prototype);
+    expect(Object.getPrototypeOf(identityTokenRegistry)).toBe(WeakMap.prototype);
+  });
+
+  it("registers a reused pre-install snapshot before rejecting its donation", () => {
+    expect(reusedPreInstallSnapshot).toBe(true);
+
+    if (!donatePreInstallSnapshot) throw new Error("identity registry test: donation probe was not initialized");
+
+    expect(donatePreInstallSnapshot).toThrow("a snapshot generation is a read-view, and assigning it creates a dead region");
   });
 });

@@ -1,15 +1,20 @@
 import { createElement } from "react";
 
+import { createState } from "../createState";
 import { ignore } from "../ignore";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 
-export type Lane = "tracked" | "cyclic" | "throwsAtAttach" | "autoIgnored" | "ignored" | "wrapper" | "leaf";
+export type Lane = "tracked" | "cyclic" | "throwsAtAttach" | "registeredCopy" | "autoIgnored" | "ignored" | "leaf";
+export type OperationLane = "containerTranslation" | "collectionKeyInterior" | "sparseArray" | "equalContentReplacement" | "sameTargetInterior" | "none";
+export type ContentsLane = "ignored";
 
 export interface CatalogEntry {
 	readonly name: string;
 	readonly lane: Lane;
+	readonly operationLane?: OperationLane;
+	readonly contentsLane?: ContentsLane;
 	readonly create: () => unknown;
 }
 
@@ -51,6 +56,8 @@ const makeDeepCycle = (): unknown => {
 
 const makeReactElement = (): unknown => createElement("div", { id: "probe" }, "leaf");
 
+const makeRegisteredCopy = (): unknown => createState({ item: { value: 1 } }).item;
+
 export const catalog: ReadonlyArray<CatalogEntry> = [
 	{ name: "number", lane: "tracked", create: () => 42 },
 	{ name: "string", lane: "tracked", create: () => "hello" },
@@ -62,6 +69,8 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 	{ name: "bigintValue", lane: "tracked", create: () => 10n },
 	{ name: "symbolValue", lane: "tracked", create: () => Symbol("catalog") },
 	{ name: "plainObject", lane: "tracked", create: () => ({ a: 1, b: 2 }) },
+	{ name: "equalContentDifferentTarget", lane: "tracked", operationLane: "equalContentReplacement", create: () => ({ value: 1 }) },
+	{ name: "sameTargetInteriorMutation", lane: "tracked", operationLane: "sameTargetInterior", create: () => ({ value: 1 }) },
 	{ name: "nestedPlainObject", lane: "tracked", create: () => ({ a: { b: { c: 1 } } }) },
 	{ name: "plainArray", lane: "tracked", create: () => [1, 2, 3] },
 	{ name: "nestedArray", lane: "tracked", create: () => [[1], [2, 3]] },
@@ -82,6 +91,7 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 	{
 		name: "sparseArray",
 		lane: "tracked",
+		operationLane: "sparseArray",
 		create: () => {
 			const array = [1];
 
@@ -123,11 +133,24 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 	{ name: "ignoredMap", lane: "ignored", create: () => ignore(new Map([["a", 1]])) },
 	{ name: "ignoredClassInstance", lane: "ignored", create: () => ignore(new CleanPoint()) },
 	{ name: "ignoredCycle", lane: "ignored", create: () => ignore(makeSelfCycle() as object) },
-	{ name: "trackedMap", lane: "wrapper", create: () => new TrackedMap<string, number>([["a", 1]]) },
-	{ name: "trackedMapObjectKeys", lane: "wrapper", create: () => new TrackedMap<{ id: number }, string>([[{ id: 1 }, "one"]]) },
-	{ name: "trackedSet", lane: "wrapper", create: () => new TrackedSet<number>([1, 2]) },
-	{ name: "trackedDate", lane: "wrapper", create: () => new TrackedDate(0) },
+	{ name: "registeredCopyDonation", lane: "registeredCopy", operationLane: "none", create: makeRegisteredCopy },
+	{ name: "trackedMap", lane: "tracked", operationLane: "containerTranslation", create: () => new TrackedMap<string, number>([["a", 1]]) },
+	{
+		name: "trackedMapObjectKeys",
+		lane: "tracked",
+		operationLane: "collectionKeyInterior",
+		create: () => new TrackedMap<{ id: number }, string>([[{ id: 1 }, "one"]]),
+	},
+	{ name: "trackedSet", lane: "tracked", operationLane: "containerTranslation", create: () => new TrackedSet<number>([1, 2]) },
+	{
+		name: "trackedSetIgnoredMember",
+		lane: "tracked",
+		operationLane: "containerTranslation",
+		contentsLane: "ignored",
+		create: () => new TrackedSet([ignore(new CleanPoint())]),
+	},
+	{ name: "trackedDate", lane: "tracked", operationLane: "containerTranslation", create: () => new TrackedDate(0) },
 	{ name: "namedFunction", lane: "leaf", create: () => function named(): number { return 1; } },
 	{ name: "arrowFunction", lane: "leaf", create: () => () => 1 },
-	{ name: "reactElement", lane: "leaf", create: makeReactElement },
+	{ name: "reactElement", lane: "leaf", operationLane: "none", create: makeReactElement },
 ];

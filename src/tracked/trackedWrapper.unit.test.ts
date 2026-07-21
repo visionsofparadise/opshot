@@ -6,203 +6,158 @@ import { TrackedSet } from "./trackedSet";
 import { isTrackedWrapper, trackedBrand } from "./trackedWrapper";
 
 const recordAll = (state: State<object>): Array<{ ops: Array<Op>; emission: Emission }> => {
-  const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+	const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
 
-  state.op.subscribe((_state, ops, emission) => {
-    heard.push({ ops, emission });
-  });
+	state.op.subscribe((_state, ops, emission) => {
+		heard.push({ ops, emission });
+	});
 
-  return heard;
+	return heard;
 };
 
-// Per-field asserts: branded halves carry prototype getters whole-object toEqual cannot see.
-const expectMapSetAddPair = (op: Op | undefined, path: string, key: unknown, value: unknown): void => {
-  if (!op) throw new Error("the pair was not heard");
+describe("tracked facade brand", () => {
+	it("brands shared prototypes and preserves the brand through proxy snapshots", () => {
+		const map = new TrackedMap<string, number>([["a", 1]]);
+		const set = new TrackedSet<number>([1]);
+		const date = new TrackedDate(0);
 
-  expect(op.isPatch).toBe(true);
+		for (const facade of [map, set, date]) {
+			expect(Object.hasOwn(facade, trackedBrand)).toBe(false);
+			expect(Object.getOwnPropertySymbols({ ...facade })).not.toContain(trackedBrand);
+			expect(isTrackedWrapper(facade)).toBe(true);
+		}
 
-  if (op.do.op !== "mapSet" || op.undo.op !== "mapDelete") throw new Error(`expected a mapSet/mapDelete pair, heard ${op.do.op}/${op.undo.op}`);
+		const state = createState({ date, map, set });
+		const snapshot = state.op.unwrap();
 
-  expect(op.do.path).toBe(path);
-  expect(op.do.key).toBe(key);
-  expect(op.do.value).toBe(value);
-  expect(op.undo.path).toBe(path);
-  expect(op.undo.key).toBe(key);
-};
+		expect(isTrackedWrapper(snapshot.map)).toBe(true);
+		expect(isTrackedWrapper(snapshot.set)).toBe(true);
+		expect(isTrackedWrapper(snapshot.date)).toBe(true);
+		expect(Reflect.getPrototypeOf(snapshot.map)).toBe(TrackedMap.prototype);
+		expect(Reflect.getPrototypeOf(snapshot.set)).toBe(TrackedSet.prototype);
+		expect(Reflect.getPrototypeOf(snapshot.date)).toBe(TrackedDate.prototype);
+	});
 
-describe("tracked wrapper brand", () => {
-  it("keeps the brand off object-spread copies while isTrackedWrapper still reads it", () => {
-    const map = new TrackedMap<string, number>([["a", 1]]);
-    const set = new TrackedSet<number>([1]);
-    const date = new TrackedDate(0);
+	it("admits facades assigned after creation and tracks mutations through their prototype methods", () => {
+		const state = createState<{ map?: TrackedMap<string, number> }>({});
+		const beforeAttach = state.op.unwrap();
 
-    for (const wrapper of [map, set, date]) {
-      expect(Object.getOwnPropertySymbols({ ...wrapper })).not.toContain(trackedBrand);
-      expect(isTrackedWrapper(wrapper)).toBe(true);
-    }
+		state.mutate((mutable) => {
+			mutable.map = new TrackedMap();
+		});
 
-    expect(map).toBeInstanceOf(Map);
-    expect(set).toBeInstanceOf(Set);
-    expect(date).toBeInstanceOf(Date);
-  });
+		const afterAttach = state.op.unwrap();
+
+		state.mutate((mutable) => {
+			mutable.map?.set("a", 1);
+		});
+
+		const afterMutation = state.op.unwrap();
+
+		expect(afterAttach).not.toBe(beforeAttach);
+		expect(afterMutation).not.toBe(afterAttach);
+		expect(afterMutation.map?.get("a")).toBe(1);
+	});
 });
 
-describe("tracked wrapper attachment", () => {
-  it("pays no pair-building while unattached", () => {
-    const getSpy = vi.spyOn(Map.prototype, "get");
-    const hasSpy = vi.spyOn(Map.prototype, "has");
-    const entriesSpy = vi.spyOn(Map.prototype, "entries");
+describe("tracked facade semantic emission (Phase 5)", () => {
+	it("keeps an owned facade mutation in one meta-bearing emission with no watchdog echo", async () => {
+		const state = createState({ map: new TrackedMap<string, number>() });
+		const heard = recordAll(state);
 
-    try {
-      const map = new TrackedMap<string, number>([["seed", 0]]);
+		state.mutate(
+			(mutable) => {
+				mutable.map.set("a", 1);
+			},
+			{ reason: "facade" },
+		);
 
-      map.set("a", 1);
-      map.set("a", 2);
-      map.delete("a");
-      map.clear();
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: { reason: "facade" } });
+		expect(heard[0]?.ops).toHaveLength(1);
 
-      expect(getSpy).not.toHaveBeenCalled();
-      expect(hasSpy).not.toHaveBeenCalled();
-      expect(entriesSpy).not.toHaveBeenCalled();
-    } finally {
-      getSpy.mockRestore();
-      hasSpy.mockRestore();
-      entriesSpy.mockRestore();
-    }
-  });
-});
+		await Promise.resolve();
 
-describe("tracked wrapper emission routing", () => {
-  it("joins the owning mutate's emission with the caller's meta, and the flush adds nothing", async () => {
-    const state = createState({ map: new TrackedMap<string, number>() });
-    const heard = recordAll(state);
+		expect(heard).toHaveLength(1);
+	});
 
-    state.mutate(
-      (mutable) => {
-        mutable.map.set("a", 1);
-      },
-      { reason: "wrapper" },
-    );
+	it("emits a flat atomic add for an owned facade mutation", () => {
+		const state = createState({ map: new TrackedMap<string, number>() });
+		const heard = recordAll(state);
 
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: { reason: "wrapper" } });
-    expect(heard[0]?.ops).toHaveLength(1);
-    expectMapSetAddPair(heard[0]?.ops[0], "/map", "a", 1);
+		state.mutate((mutable) => {
+			mutable.map.set("a", 1);
+		});
 
-    await Promise.resolve();
+		expect(heard[0]?.ops[0]?.do).toMatchObject({ op: "add", path: ["map", "a"], slot: 0, value: 1 });
+	});
 
-    expect(heard).toHaveLength(1);
-  });
+	it("merges facade ops after the diff's ops in one owned emission", () => {
+		const state = createState({ count: 0, map: new TrackedMap<string, number>() });
+		const heard = recordAll(state);
 
-  it("merges wrapper ops after the diff's ops in one owned emission", () => {
-    const state = createState({ count: 0, map: new TrackedMap<string, number>() });
-    const heard = recordAll(state);
+		state.mutate((mutable) => {
+			mutable.count = 1;
+			mutable.map.set("b", 2);
+		});
 
-    state.mutate((mutable) => {
-      mutable.count = 1;
-      mutable.map.set("b", 2);
-    });
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.ops).toHaveLength(2);
+		expect(heard[0]?.ops.map((op) => op.do.op)).toEqual(["replace", "add"]);
+	});
 
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.ops).toHaveLength(2);
-    expect(heard[0]?.ops[0]).toEqual({ isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } });
-    expectMapSetAddPair(heard[0]?.ops[1], "/map", "b", 2);
-  });
+	it("prefixes a nested facade's flat path", () => {
+		const state = createState({ inner: { map: new TrackedMap<string, number>() } });
+		const heard = recordAll(state);
 
-  it("prefixes the wrapper's pointer through nested parents", () => {
-    const state = createState({ inner: { map: new TrackedMap<string, number>() } });
-    const heard = recordAll(state);
+		state.mutate((mutable) => {
+			mutable.inner.map.set("k", 5);
+		});
 
-    state.mutate((mutable) => {
-      mutable.inner.map.set("k", 5);
-    });
+		expect(heard[0]?.ops[0]?.do).toMatchObject({ op: "add", path: ["inner", "map", "k"], value: 5, slot: 0 });
+	});
 
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.ops).toHaveLength(1);
-    expectMapSetAddPair(heard[0]?.ops[0], "/inner/map", "k", 5);
-  });
+	it("reports a facade mutation outside mutate once as a side effect on the flush", async () => {
+		const state = createState({ map: new TrackedMap<string, number>() });
+		const heard = recordAll(state);
+		const mutable: unknown = Reflect.get(state.op.unsafeMutable, "map");
 
-  it("emits a mutation outside mutate as a side effect on the flush", async () => {
-    const state = createState({ map: new TrackedMap<string, number>() });
-    const heard = recordAll(state);
+		if (!(mutable instanceof TrackedMap)) throw new Error("the mutable facade was not found");
 
-    state.map.set("a", 1);
+		mutable.set("a", 1);
 
-    expect(heard).toHaveLength(0);
+		expect(heard).toHaveLength(0);
 
-    await Promise.resolve();
+		await Promise.resolve();
 
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.emission).toEqual({ isSideEffect: true });
-    expect(heard[0]?.ops).toHaveLength(1);
-    expectMapSetAddPair(heard[0]?.ops[0], "/map", "a", 1);
-  });
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.emission).toEqual({ isSideEffect: true });
+		expect(heard[0]?.ops).toHaveLength(1);
 
-  it("tracks external code mutating through a plain Map-typed reference", async () => {
-    const state = createState({ map: new TrackedMap<string, number>() });
-    const heard = recordAll(state);
-    const plain: Map<string, number> = state.map;
+		const pair = heard[0]?.ops[0];
 
-    plain.set("x", 9);
+		if (pair?.do.op !== "add" || pair.undo.op !== "remove") throw new Error("the facade side-effect pair was not heard");
+		if (!("value" in pair.do)) throw new Error("the map addition has no value");
 
-    await Promise.resolve();
+		expect(pair.do).toMatchObject({ path: ["map", "a"], slot: 0 });
+		expect(pair.do.value).toBe(1);
+		expect(pair.undo).toEqual({ op: "remove", path: ["map", "a"] });
+	});
 
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.emission).toEqual({ isSideEffect: true });
-    expect(heard[0]?.ops).toHaveLength(1);
-    expectMapSetAddPair(heard[0]?.ops[0], "/map", "x", 9);
-  });
+	it("emits semantic ops for a facade assigned after creation", () => {
+		const state = createState<{ slot?: TrackedMap<string, number> }>({});
+		const heard = recordAll(state);
 
-  it("leaves the generic-method bypass untracked", async () => {
-    const state = createState({ map: new TrackedMap<string, number>() });
-    const heard = recordAll(state);
+		state.mutate((mutable) => {
+			mutable.slot = new TrackedMap();
+		});
 
-    Map.prototype.set.call(state.map, "ghost", 1);
+		state.mutate((mutable) => {
+			mutable.slot?.set("k", 1);
+		});
 
-    await Promise.resolve();
-
-    expect(heard).toHaveLength(0);
-    expect(state.map.get("ghost")).toBe(1);
-  });
-
-  it("attaches once for a key: delete-then-reassign does not double-emit", async () => {
-    const held = new TrackedMap<string, number>();
-    const state = createState<{ map?: TrackedMap<string, number> }>({ map: held });
-    const heard = recordAll(state);
-
-    state.mutate((mutable) => {
-      delete mutable.map;
-      mutable.map = held;
-    });
-
-    state.mutate((mutable) => {
-      mutable.map?.set("z", 1);
-    });
-
-    await Promise.resolve();
-
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
-    expect(heard[0]?.ops).toHaveLength(1);
-    expectMapSetAddPair(heard[0]?.ops[0], "/map", "z", 1);
-  });
-
-  it("attaches a wrapper assigned after creation through the set trap", () => {
-    const state = createState<{ slot?: TrackedMap<string, number> }>({});
-    const heard = recordAll(state);
-    const map = new TrackedMap<string, number>();
-
-    state.mutate((mutable) => {
-      mutable.slot = map;
-    });
-
-    state.mutate((mutable) => {
-      mutable.slot?.set("k", 1);
-    });
-
-    expect(heard).toHaveLength(2);
-    expect(heard[0]?.ops).toEqual([{ isPatch: true, do: { op: "add", path: "/slot", value: map }, undo: { op: "remove", path: "/slot" } }]);
-    expect(heard[1]?.ops).toHaveLength(1);
-    expectMapSetAddPair(heard[1]?.ops[0], "/slot", "k", 1);
-  });
+		expect(heard).toHaveLength(2);
+		expect(heard[0]?.ops[0]?.do.op).toBe("add");
+		expect(heard[1]?.ops[0]?.do).toMatchObject({ op: "add", path: ["slot", "k"], value: 1, slot: 0 });
+	});
 });

@@ -1,9 +1,8 @@
 import { createGroup, type Group } from "../createGroup";
 import { createState, type Emission, type State } from "../createState";
+import { isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
-import { type Op, type Operation } from "../ops/operation";
-
-const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
+import { type Op } from "../ops/operation";
 
 interface HistoryEntry {
   state: State<object>;
@@ -141,13 +140,13 @@ describe("scenarios", () => {
     expect(received).toHaveLength(3);
     expect(received.every((emission) => emission.meta.transactionKey === "drag")).toBe(true);
     expect(received.map((emission) => emission.ops)).toEqual([
-      [{ isPatch: true, do: { op: "replace", path: "/exposure", value: 1 }, undo: { op: "replace", path: "/exposure", value: 0 } }],
-      [{ isPatch: true, do: { op: "replace", path: "/exposure", value: 2 }, undo: { op: "replace", path: "/exposure", value: 1 } }],
-      [{ isPatch: true, do: { op: "replace", path: "/exposure", value: 3 }, undo: { op: "replace", path: "/exposure", value: 2 } }],
+      [{ isPatch: true, do: { op: "replace", path: ["exposure"], value: 1 }, undo: { op: "replace", path: ["exposure"], value: 0 } }],
+      [{ isPatch: true, do: { op: "replace", path: ["exposure"], value: 2 }, undo: { op: "replace", path: ["exposure"], value: 1 } }],
+      [{ isPatch: true, do: { op: "replace", path: ["exposure"], value: 3 }, undo: { op: "replace", path: ["exposure"], value: 2 } }],
     ]);
   });
 
-  it("restores the whole document across push, splice, and a nested parameter write", () => {
+  it("Phase 6: restores the whole document across push, splice, and a nested parameter write", () => {
     const group = createGroup();
     const graph = createGraph(group);
     const recorder = createRecorder(group);
@@ -275,7 +274,7 @@ describe("scenarios", () => {
 
     expect(aHeard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: "/box/x", value: 2 }, undo: { op: "replace", path: "/box/x", value: 1 } }],
+        ops: [{ isPatch: true, do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
         emission: { isSideEffect: false, meta: {} },
       },
     ]);
@@ -286,7 +285,7 @@ describe("scenarios", () => {
     expect(aHeard).toHaveLength(1);
     expect(bHeard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: "/box/x", value: 2 }, undo: { op: "replace", path: "/box/x", value: 1 } }],
+        ops: [{ isPatch: true, do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -323,21 +322,25 @@ describe("scenarios", () => {
     expect(aHeard).toHaveLength(1);
     expect(aHeard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
     expect(aHeard[0]?.ops).toHaveLength(1);
-    expect(aHeard[0]?.ops[0]?.do.op).toBe("replace");
-    expect(aHeard[0]?.ops[0]?.do.path).toBe("/items");
-    expect(readValue(aHeard[0]?.ops[0]?.do)).toEqual([]);
-    expect(aHeard[0]?.ops[0]?.undo.op).toBe("replace");
-    expect(aHeard[0]?.ops[0]?.undo.path).toBe("/items");
-    expect(readValue(aHeard[0]?.ops[0]?.undo)).toEqual([{ id: "x", gain: 1 }]);
+    expect(aHeard[0]?.ops[0]?.do).toMatchObject({ op: "replace", path: ["items"] });
+    expect(aHeard[0]?.ops[0] && "value" in aHeard[0].ops[0].do ? aHeard[0].ops[0].do.value : undefined).toEqual([]);
+    const sourceOps = aHeard[0]?.ops;
+
+		if (!sourceOps) throw new Error("the source operations were not heard");
+
+		const sourceUndo = [...sourceOps].reverse().map((pair) => pair.undo);
+
+		expect(sourceUndo[0]).toMatchObject({ op: "replace", path: ["items"] });
+		expect(sourceUndo[0] && "value" in sourceUndo[0] ? sourceUndo[0].value : undefined).toEqual([{ id: "x", gain: 1 }]);
     expect(bHeard).toHaveLength(1);
     expect(bHeard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
-    expect(bHeard[0]?.ops).toHaveLength(1);
-    expect(bHeard[0]?.ops[0]?.do.op).toBe("replace");
-    expect(bHeard[0]?.ops[0]?.do.path).toBe("/items");
-    expect(readValue(bHeard[0]?.ops[0]?.do)).toEqual([{ id: "x", gain: 1 }]);
-    expect(bHeard[0]?.ops[0]?.undo.op).toBe("replace");
-    expect(bHeard[0]?.ops[0]?.undo.path).toBe("/items");
-    expect(readValue(bHeard[0]?.ops[0]?.undo)).toEqual([]);
+    const destinationOps = bHeard[0]?.ops;
+
+		if (!destinationOps) throw new Error("the destination operations were not heard");
+
+		expect(destinationOps).toHaveLength(1);
+		expect(destinationOps[0]?.do).toMatchObject({ op: "replace", path: ["items"] });
+		expect(destinationOps[0] && "value" in destinationOps[0].do ? destinationOps[0].do.value : undefined).toEqual([{ id: "x", gain: 1 }]);
 
     await Promise.resolve();
 
@@ -356,7 +359,7 @@ describe("scenarios", () => {
     expect(bHeard).toHaveLength(2);
     expect(bHeard[1]?.emission).toEqual({ isSideEffect: false, meta: {} });
     expect(bHeard[1]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/items/0/gain", value: 2 }, undo: { op: "replace", path: "/items/0/gain", value: 1 } },
+      { isPatch: true, do: { op: "replace", path: ["items", 0, "gain"], value: 2 }, undo: { op: "replace", path: ["items", 0, "gain"], value: 1 } },
     ]);
     expect(a.op.unwrap().items).toEqual([]);
     expect(b.op.unwrap().items).toEqual([{ id: "x", gain: 2 }]);
@@ -378,9 +381,13 @@ describe("scenarios", () => {
       mutable.exposure = 1;
     });
 
+    const entry = recorder.stack[0];
+
+    if (!entry) throw new Error("the recorder did not capture the grade mutation");
+
     expect(recorder.stack).toHaveLength(1);
-    expect(recorder.stack[0]?.state.op.isSameState(grade)).toBe(true);
-    expect(recorder.stack[0]?.state.op.isSameState(selection)).toBe(false);
+    expect(isSameIdentity(entry.state, grade)).toBe(true);
+    expect(isSameIdentity(entry.state, selection)).toBe(false);
   });
 });
 

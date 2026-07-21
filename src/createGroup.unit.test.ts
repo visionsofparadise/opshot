@@ -1,6 +1,7 @@
 import { createGroup } from "./createGroup";
 import { createMeta } from "./createMeta";
 import { createState, type State } from "./createState";
+import { isSameIdentity } from "./identity";
 import { diffSnapshots } from "./ops/diff";
 import { type Op } from "./ops/operation";
 
@@ -38,15 +39,20 @@ describe("createGroup", () => {
       mutable.count = 2;
     });
 
+    const firstEmission = emissions[0];
+    const secondEmission = emissions[1];
+
+    if (!firstEmission || !secondEmission) throw new Error("the group did not hear both emissions");
+
     expect(emissions).toHaveLength(2);
-    expect(first.op.isSameState(emissions[0]?.state)).toBe(true);
-    expect(second.op.isSameState(emissions[0]?.state)).toBe(false);
-    expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+    expect(isSameIdentity(first, firstEmission.state)).toBe(true);
+    expect(isSameIdentity(second, firstEmission.state)).toBe(false);
+    expect(firstEmission.ops).toEqual([
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
-    expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
-    expect(second.op.isSameState(emissions[1]?.state)).toBe(true);
-    expect(emissions[1]?.meta).toEqual({});
+    expect(firstEmission.meta).toEqual({ transactionKey: "drag" });
+    expect(isSameIdentity(second, secondEmission.state)).toBe(true);
+    expect(secondEmission.meta).toEqual({});
   });
 
   it("carries the latest snapshot to the listener, not the proxy", () => {
@@ -69,7 +75,7 @@ describe("createGroup", () => {
 
     expect(received).not.toBe(state.op.unsafeMutable);
     expect(received).not.toBe(state);
-    expect(state.op.isSameState(received)).toBe(true);
+    expect(isSameIdentity(state, received)).toBe(true);
     expect(received).toEqual(expect.objectContaining({ count: 1 }));
     expect(() => {
       Object.assign(received, { count: 9 });
@@ -103,12 +109,12 @@ describe("createGroup", () => {
 
     expect(emissions).toHaveLength(2);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(emissions[0]?.state).toEqual(expect.objectContaining({ count: 1 }));
 
     expect(emissions[1]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 99 }, undo: { op: "replace", path: "/count", value: 1 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 99 }, undo: { op: "replace", path: ["count"], value: 1 } },
     ]);
     expect(emissions[1]?.state).toEqual(expect.objectContaining({ count: 99 }));
     expect(state.op.unwrap().count).toBe(99);

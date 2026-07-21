@@ -1,11 +1,10 @@
 import { proxy, ref, snapshot, subscribe as valtioSubscribe, type Snapshot } from "valtio/vanilla";
 import type { Meta } from "./createMeta";
-import { getCyclicErrorPointer } from "./ops/cloneValue";
+import { getCyclicPath } from "./ops/cloneValue";
 import { diffSnapshots } from "./ops/diff";
 import type { Op } from "./ops/operation";
-import { parseWrapperNotification, type WrapperPayload } from "./tracked/trackedWrapper";
-import { hasOwn } from "./utils/hasOwn";
-import { installBoundary } from "./valtio/boundary";
+import { formatOperationPath } from "./ops/path";
+import { assertSafeDataPaths, installBoundary, registerTrackedRoot } from "./valtio/boundary";
 
 installBoundary();
 
@@ -18,7 +17,6 @@ export interface OpshotHandle<T extends object, In extends object = {}, Out exte
 	readonly unsafeMutable: object;
 	readonly isMutating: boolean;
 	readonly subscribe: (listener: StateListener<T, In, Out>) => () => void;
-	readonly isSameState: (other: unknown) => boolean;
 	readonly unwrap: () => Snapshot<T>;
 }
 
@@ -32,22 +30,27 @@ export type InitialProperties<T extends object> = T;
 
 export const stateBrand: unique symbol = Symbol.for("opshot.state");
 
+const requireObjectSnapshot = (value: unknown): object => {
+	if (value !== null && (typeof value === "object" || typeof value === "function")) return value;
+
+	throw new Error("opshot: state snapshots must have an object root");
+};
+
 interface MutableOpshotHandle<T extends object, In extends object, Out extends object> {
 	unsafeMutable: object;
 	isMutating: boolean;
 	readonly subscribe: (listener: StateListener<T, In, Out>) => () => void;
-	readonly isSameState: (other: unknown) => boolean;
 	readonly unwrap: () => Snapshot<T>;
 	readonly [stateBrand]: true;
 }
 
 export const augmentSideEffectCycleError = (error: unknown): Error | undefined => {
-	const pointer = getCyclicErrorPointer(error);
+	const path = getCyclicPath(error);
 
-	if (pointer === undefined) return undefined;
+	if (path === undefined) return undefined;
 
 	return new Error(
-		`opshot: a side-effect write created a cyclic value at ${pointer}. Cycles cannot be tracked. This surfaced asynchronously because the write bypassed mutate (an unsafeMutable write, or a shared/entangled state). Use ignore() for back-linked structures, or ids.`,
+		`opshot: a side-effect write created a cyclic value at ${formatOperationPath(path)}. Cycles cannot be tracked. This surfaced asynchronously because the write bypassed mutate (an unsafeMutable write, or a shared/entangled state). Use ignore() for back-linked structures, or ids.`,
 	);
 };
 
@@ -68,8 +71,6 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 	const listeners = new Set<StateListener<T, In, Out>>();
 	const created: { proxied?: T } = {};
 
-	const consumedWrapperPayloads = new WeakSet<WrapperPayload>();
-
 	let lastReported: Snapshot<T> | undefined;
 	let disarmWatchdog: (() => void) | undefined;
 
@@ -84,8 +85,8 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 	const armWatchdog = (proxied: T): void => {
 		lastReported = snapshot(proxied);
 
-		// valtio delivers empty op payloads without unstable_enableOp, so the watchdog diffs snapshots itself; the ops carry only tracked-wrapper entries.
-		disarmWatchdog = valtioSubscribe(proxied, (valtioOps) => {
+		// valtio delivers empty op payloads without unstable_enableOp, so the watchdog diffs snapshots itself.
+		disarmWatchdog = valtioSubscribe(proxied, () => {
 			const current = snapshot(proxied);
 
 			if (listeners.size === 0 && (groupListeners?.size ?? 0) === 0) {
@@ -95,23 +96,13 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 			}
 
 			try {
-				const ops: Array<Op> = [];
+				if (current === lastReported) return;
 
-				if (current !== lastReported) {
-					const previous = lastReported;
+				const previous = lastReported;
 
-					lastReported = current;
+				lastReported = current;
 
-					ops.push(...diffSnapshots(previous, current));
-				}
-
-				for (const entry of valtioOps) {
-					const parsed = parseWrapperNotification(entry);
-
-					if (!parsed || consumedWrapperPayloads.has(parsed.payload)) continue;
-
-					ops.push(parsed.op);
-				}
+				const ops = diffSnapshots(requireObjectSnapshot(previous), requireObjectSnapshot(current));
 
 				if (ops.length === 0) return;
 
@@ -136,31 +127,11 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 		handle.isMutating = true;
 
 		const before = snapshot(proxied);
-		const wrapperOps: Array<Op> = [];
-
-		const detachCollector =
-			listeners.size > 0 || (groupListeners?.size ?? 0) > 0
-				? valtioSubscribe(
-						proxied,
-						(valtioOps) => {
-							for (const entry of valtioOps) {
-								const parsed = parseWrapperNotification(entry);
-
-								if (!parsed) continue;
-
-								consumedWrapperPayloads.add(parsed.payload);
-								wrapperOps.push(parsed.op);
-							}
-						},
-						true,
-					)
-				: undefined;
 
 		try {
 			callback(proxied);
 		} finally {
 			handle.isMutating = false;
-			detachCollector?.();
 		}
 
 		const after = snapshot(proxied);
@@ -171,7 +142,7 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 
 		if (listeners.size === 0 && (groupListeners?.size ?? 0) === 0) return;
 
-		const ops = [...diffSnapshots(before, after), ...wrapperOps];
+		const ops = diffSnapshots(requireObjectSnapshot(before), requireObjectSnapshot(after));
 
 		if (ops.length === 0) return;
 
@@ -197,15 +168,11 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 		};
 	};
 
-	const isSameState = (other: unknown): boolean => typeof other === "object" && other !== null && hasOwn(other, "op") && other.op === handle;
-
-	const unwrap = (): Snapshot<T> => {
-		const { op, mutate, ...rest } = get();
-
-		return rest as Snapshot<T>;
-	};
+	const unwrap = (): Snapshot<T> => get();
 
 	const literal = callback(mutate, get);
+
+	assertSafeDataPaths(literal);
 
 	for (const key of ["op", "mutate"] as const) {
 		if (Object.hasOwn(literal, key)) throw new Error(`opshot: "${key}" is a reserved key on a state`);
@@ -215,12 +182,13 @@ export function createGroupState<T extends object, In extends object = {}, Out e
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(literal));
 
-	const handle: MutableOpshotHandle<T, In, Out> = { unsafeMutable: base, isMutating: false, subscribe, isSameState, unwrap, [stateBrand]: true };
+	const handle: MutableOpshotHandle<T, In, Out> = { unsafeMutable: base, isMutating: false, subscribe, unwrap, [stateBrand]: true };
 
-	Object.defineProperty(base, "op", { value: ref(handle), enumerable: true, writable: false, configurable: false });
-	Object.defineProperty(base, "mutate", { value: mutate, enumerable: true, writable: false, configurable: false });
+	Object.defineProperty(base, "op", { value: ref(handle), enumerable: false, writable: false, configurable: false });
+	Object.defineProperty(base, "mutate", { value: mutate, enumerable: false, writable: false, configurable: false });
 
 	created.proxied = proxy(base);
+	registerTrackedRoot(base);
 	handle.unsafeMutable = created.proxied;
 
 	if (groupListeners !== undefined) armWatchdog(created.proxied);

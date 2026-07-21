@@ -1,217 +1,167 @@
-import { createState, type Emission, type State } from "../createState";
+import { createState, type State } from "../createState";
+import { identify, isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
-import type { Op, Operation } from "../ops/operation";
+import type { Op } from "../ops/operation";
+import { getPathSelector } from "../ops/path";
+import { TrackedDate } from "./trackedDate";
 import { TrackedMap } from "./trackedMap";
 
-const readField = (half: Operation | undefined, field: "key" | "value" | "entries"): unknown => (half !== undefined && field in half ? Reflect.get(half, field) : undefined);
+const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
+	const heard = new Array<Array<Op>>();
 
-const recordAll = (state: State<object>): Array<{ ops: Array<Op>; emission: Emission }> => {
-  const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+	state.op.subscribe((_snapshot, ops) => heard.push(ops));
 
-  state.op.subscribe((_state, ops, emission) => {
-    heard.push({ ops, emission });
-  });
-
-  return heard;
+	return heard;
 };
 
-describe("tracked wrapper interface", () => {
-  it("keeps TrackedMap a real Map: instanceof, size, reads, iteration, spread", () => {
-    const map = new TrackedMap<string, number>([
-      ["a", 1],
-      ["b", 2],
-    ]);
+describe("TrackedMap", () => {
+	it("implements the Map surface with ordered insertion and overwrite semantics", () => {
+		const map = new TrackedMap<string, number>([["a", 1], ["b", 2]]);
 
-    expect(map).toBeInstanceOf(Map);
-    expect(map).toBeInstanceOf(TrackedMap);
-    expect(map.size).toBe(2);
-    expect(map.get("a")).toBe(1);
-    expect(map.has("b")).toBe(true);
-    expect([...map]).toEqual([
-      ["a", 1],
-      ["b", 2],
-    ]);
-    expect([...map.keys()]).toEqual(["a", "b"]);
-    expect([...map.values()]).toEqual([1, 2]);
-  });
-});
+		expect(map.size).toBe(2);
+		expect(map.has("a")).toBe(true);
+		expect(map.get("b")).toBe(2);
+		expect(map.set("a", 10)).toBe(map);
+		map.set("c", 3);
+		expect([...map]).toEqual([["a", 10], ["b", 2], ["c", 3]]);
+		expect(map.delete("b")).toBe(true);
+		expect(map.delete("missing")).toBe(false);
+		expect([...map.keys()]).toEqual(["a", "c"]);
+		expect([...map.values()]).toEqual([10, 3]);
+		map.clear();
+		expect(map.size).toBe(0);
+	});
 
-describe("tracked wrapper addressing", () => {
-  it("inverts per-key mapSet/mapDelete pairs through applyOps replay, unescaped keys included", () => {
-    const state = createState({ map: new TrackedMap<string, number>([["a/b", 1]]) });
-    const heard = recordAll(state);
+	it("normalizes raw, proxy, and snapshot key handles by storage identity", () => {
+		const key = { id: 1 };
+		const state = createState({ map: new TrackedMap([[key, "selected"]]) });
+		const snapshotKey = [...state.map.keys()][0];
 
-    state.mutate((mutable) => {
-      mutable.map.set("a/b", 2);
-    });
+		if (!snapshotKey) throw new Error("missing snapshot key");
 
-    const setPair = heard[0]?.ops[0];
+		state.mutate((mutable) => {
+			const proxyKey = [...mutable.map.keys()][0];
 
-    if (!setPair) throw new Error("the set pair was not heard");
+			if (!proxyKey) throw new Error("missing proxy key");
+			expect(mutable.map.get(key)).toBe("selected");
+			expect(mutable.map.get(snapshotKey)).toBe("selected");
+			expect(mutable.map.get(proxyKey)).toBe("selected");
+			mutable.map.set(snapshotKey, "updated");
+		});
 
-    expect(heard[0]?.ops).toHaveLength(1);
-    expect(setPair.isPatch).toBe(true);
-    expect(setPair.do.op).toBe("mapSet");
-    expect(setPair.do.path).toBe("/map");
-    expect(readField(setPair.do, "key")).toBe("a/b");
-    expect(readField(setPair.do, "value")).toBe(2);
-    expect(setPair.undo.op).toBe("mapSet");
-    expect(setPair.undo.path).toBe("/map");
-    expect(readField(setPair.undo, "key")).toBe("a/b");
-    expect(readField(setPair.undo, "value")).toBe(1);
+		expect(state.op.unwrap().map.size).toBe(1);
+		expect(state.op.unwrap().map.get(key)).toBe("updated");
+	});
 
-    applyOps(state, [setPair.undo]);
+	it("emits atomic insertion, replacement, and removal paths", () => {
+		const key = { id: 1 };
+		const state = createState({ map: new TrackedMap<typeof key, number>() });
+		const heard = record(state);
 
-    expect(state.op.unwrap().map.get("a/b")).toBe(1);
+		state.mutate((mutable) => mutable.map.set(key, 1));
+		state.mutate((mutable) => mutable.map.set(key, 2));
+		state.mutate((mutable) => mutable.map.delete(key));
 
-    state.mutate((mutable) => {
-      mutable.map.delete("a/b");
-    });
+		const insertion = heard[0]?.[0];
+		const replacement = heard[1]?.[0];
+		const removal = heard[2]?.[0];
 
-    const deletePair = heard[2]?.ops[0];
+		expect(insertion?.do.op).toBe("add");
+		expect(insertion?.do.path[0]).toBe("map");
+		expect(isSameIdentity(insertion?.do.path[1] as object, key)).toBe(true);
+		expect(insertion?.do.op === "add" && "slot" in insertion.do ? insertion.do.slot : undefined).toBe(0);
+		expect(replacement?.do).toMatchObject({ op: "replace", path: ["map", expect.any(Object)], value: 2 });
+		expect(removal?.do).toMatchObject({ op: "remove", path: ["map", expect.any(Object)] });
+		expect(removal?.undo).toMatchObject({ op: "add", path: ["map", expect.any(Object)], slot: 0, value: 2 });
+	});
 
-    if (!deletePair) throw new Error("the delete pair was not heard");
+	it("emits key interiors through keyOf and value interiors through the key", () => {
+		const key = { profile: { id: 1 } };
+		const value = { count: 1 };
+		// Heavy unchanged padding keeps two small interiors atomic so the keyOf path shape stays observable.
+		const pad = "x".repeat(5_000);
+		const state = createState({
+			map: new TrackedMap<object | string, object | string>([
+				[key, value],
+				["pad0", pad],
+				["pad1", pad],
+			]),
+		});
+		const heard = record(state);
 
-    expect(deletePair.do.op).toBe("mapDelete");
-    expect(deletePair.do.path).toBe("/map");
-    expect(readField(deletePair.do, "key")).toBe("a/b");
-    expect(deletePair.undo.op).toBe("mapSet");
-    expect(readField(deletePair.undo, "key")).toBe("a/b");
-    expect(readField(deletePair.undo, "value")).toBe(1);
+		state.mutate((mutable) => {
+			const mutableKey = [...mutable.map.keys()][0] as typeof key;
+			const mutableValue = mutable.map.get(key) as typeof value | undefined;
 
-    applyOps(state, [deletePair.undo]);
+			if (!mutableKey || !mutableValue) throw new Error("missing entry");
+			mutableKey.profile.id = 2;
+			mutableValue.count = 2;
+		});
 
-    expect(state.op.unwrap().map.get("a/b")).toBe(1);
-  });
+		const ops = heard[0] ?? [];
 
-  it("emits per-key mapSet pairs for object keys", () => {
-    const state = createState({ lookup: new TrackedMap<{ id: number }, string>() });
-    const heard = recordAll(state);
-    const key = { id: 1 };
+		expect(getPathSelector(ops[0]?.do.path[1])?.kind).toBe("keyOf");
+		expect(ops[0]?.do.path[2]).toBe("profile");
+		expect(isSameIdentity(ops[1]?.do.path[1] as object, key)).toBe(true);
+		expect(ops[1]?.do.path[2]).toBe("count");
+	});
 
-    state.mutate((mutable) => {
-      mutable.lookup.set(key, "one");
-    });
+	it("round-trips clear and delete-readd through one collapsed container replace", () => {
+		const state = createState({ map: new TrackedMap([["a", 1], ["b", 2]]) });
+		const heard = record(state);
 
-    const pair = heard[0]?.ops[0];
+		state.mutate((mutable) => {
+			mutable.map.clear();
+			mutable.map.set("b", 20);
+			mutable.map.set("a", 10);
+		});
 
-    if (!pair) throw new Error("the mapSet pair was not heard");
+		const ops = heard[0] ?? [];
 
-    expect(heard[0]?.ops).toHaveLength(1);
-    expect(pair.isPatch).toBe(true);
-    expect(pair.do.op).toBe("mapSet");
-    expect(pair.do.path).toBe("/lookup");
-    expect(readField(pair.do, "key")).toEqual({ id: 1 });
-    expect(readField(pair.do, "value")).toBe("one");
-    expect(pair.undo.op).toBe("mapDelete");
-    expect(pair.undo.path).toBe("/lookup");
-    expect(readField(pair.undo, "key")).toEqual({ id: 1 });
-  });
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
+		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		expect([...state.op.unwrap().map]).toEqual([["a", 1], ["b", 2]]);
+		applyOps(state, ops.map((pair) => pair.do));
+		expect([...state.op.unwrap().map]).toEqual([["b", 20], ["a", 10]]);
+	});
 
-  it("addresses object keys by identity on replay, so an undo restores the entry instead of duplicating it", () => {
-    const key = { id: 1 };
-    const state = createState({ lookup: new TrackedMap<{ id: number }, string>([[key, "one"]]) });
-    const heard = recordAll(state);
+	it("preserves object-key identity and aliased values through replay", () => {
+		const key = { id: 1 };
+		const shared = { count: 1 };
+		const state = createState({ map: new TrackedMap([[key, shared], [{ id: 2 }, shared]]) });
+		const selection = new Map([[identify(key), "selected"]]);
+		const heard = record(state);
 
-    state.mutate((mutable) => {
-      mutable.lookup.set(key, "two");
-    });
+		state.mutate((mutable) => mutable.map.clear());
+		const ops = heard[0] ?? [];
+		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
 
-    const undo = heard[0]?.ops[0]?.undo;
+		const entries = [...state.op.unwrap().map];
 
-    if (undo?.op !== "mapSet") throw new Error("the mapSet undo was not heard");
+		expect(entries[0]?.[0] && selection.get(identify(entries[0][0]))).toBe("selected");
+		expect(entries[0]?.[1]).toBe(entries[1]?.[1]);
+		expect(entries[0]?.[1] && isSameIdentity(entries[0][1], shared)).toBe(true);
+	});
 
-    expect(undo.key).toBe(key);
+	it("recurses through nested arrays and facades on stable map values", () => {
+		const state = createState({ map: new TrackedMap([["a", { items: ["x"], when: new TrackedDate(0) }]]) });
+		const heard = record(state);
 
-    applyOps(state, [undo]);
+		state.mutate((mutable) => {
+			const value = mutable.map.get("a");
 
-    expect(state.op.unwrap().lookup.size).toBe(1);
-    expect(state.op.unwrap().lookup.get(key)).toBe("one");
-  });
+			if (!value) throw new Error("missing value");
+			value.items.push("y");
+			value.when.setTime(1);
+		});
 
-  it("emits whole-representation mapEntries pairs only for clear", () => {
-    const state = createState({
-      map: new TrackedMap<string, number>([
-        ["a", 1],
-        ["b", 2],
-      ]),
-    });
-    const heard = recordAll(state);
-
-    state.mutate((mutable) => {
-      mutable.map.clear();
-    });
-
-    const pair = heard[0]?.ops[0];
-
-    if (!pair) throw new Error("the mapEntries pair was not heard");
-
-    expect(heard[0]?.ops).toHaveLength(1);
-    expect(pair.isPatch).toBe(true);
-    expect(pair.do.op).toBe("mapEntries");
-    expect(pair.do.path).toBe("/map");
-    expect(readField(pair.do, "entries")).toEqual([]);
-    expect(pair.undo.op).toBe("mapEntries");
-    expect(pair.undo.path).toBe("/map");
-    expect(readField(pair.undo, "entries")).toEqual([
-      ["a", 1],
-      ["b", 2],
-    ]);
-
-    applyOps(state, [pair.undo]);
-
-    expect([...state.op.unwrap().map]).toEqual([
-      ["a", 1],
-      ["b", 2],
-    ]);
-  });
-
-  it("preserves cross-entry value aliasing through a clear undo", () => {
-    const shared = { n: 1 };
-    const state = createState({
-      map: new TrackedMap<string, { host: { n: number } }>([
-        ["a", { host: shared }],
-        ["b", { host: shared }],
-      ]),
-    });
-    const heard = recordAll(state);
-
-    state.mutate((mutable) => {
-      mutable.map.clear();
-    });
-
-    const undo = heard[0]?.ops[0]?.undo;
-
-    if (undo?.op !== "mapEntries") throw new Error("the mapEntries undo was not heard");
-
-    applyOps(state, [undo]);
-
-    const restored = state.op.unwrap().map;
-    const hostA = restored.get("a")?.host;
-    const hostB = restored.get("b")?.host;
-
-    expect(hostA).toBe(hostB);
-  });
-
-  it("captures values at emission: a later mutation of an aliased value cannot rewrite an undo half", () => {
-    const shared = { n: 0 };
-    const state = createState({ box: shared, map: new TrackedMap<string, { n: number }>([["k", shared]]) });
-    const heard = recordAll(state);
-
-    state.mutate((mutable) => {
-      mutable.map.set("k", { n: 1 });
-    });
-
-    state.mutate((mutable) => {
-      mutable.box.n = 99;
-    });
-
-    const firstUndo = heard[0]?.ops[0]?.undo;
-
-    if (firstUndo?.op !== "mapSet") throw new Error("the mapSet undo was not heard");
-
-    applyOps(state, [firstUndo]);
-
-    expect(state.op.unwrap().map.get("k")).toEqual({ n: 0 });
-  });
+		const ops = heard[0] ?? [];
+		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		expect(state.op.unwrap().map.get("a")?.items).toEqual(["x"]);
+		expect(state.op.unwrap().map.get("a")?.when.getTime()).toBe(0);
+		applyOps(state, ops.map((pair) => pair.do));
+		expect(state.op.unwrap().map.get("a")?.items).toEqual(["x", "y"]);
+		expect(state.op.unwrap().map.get("a")?.when.getTime()).toBe(1);
+	});
 });

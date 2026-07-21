@@ -1,6 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 
-// refSet is the only runtime marker ref() leaves on a value; valtio exposes it nowhere else.
+import { createOperationPath, formatOperationPath, type OperationPath } from "./path";
+
 const { refSet } = unstable_getInternalStates();
 
 export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value) && !refSet.has(value);
@@ -15,32 +16,50 @@ export const isPlainObject = (value: unknown): value is Record<string, unknown> 
 
 export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> => isPlainObject(value) || isPlainArray(value);
 
-export const cyclicError = (pointer: string): Error => new Error(`opshot: cyclic value at ${pointer}; use ignore() for back-linked structures, or ids`);
+export class CyclicValueError extends Error {
+	readonly path: OperationPath;
 
-const cyclicMessagePattern = /^opshot: cyclic value at (.*); use ignore\(\) for back-linked structures, or ids$/;
+	constructor(path: OperationPath) {
+		super(`opshot: cyclic value at ${formatOperationPath(path)}; use ignore() for back-linked structures, or ids`);
+		this.name = "CyclicValueError";
+		this.path = createOperationPath(path);
+	}
+}
 
-export const getCyclicErrorPointer = (error: unknown): string | undefined => {
-	if (!(error instanceof Error)) return undefined;
+export const cyclicError = (path: OperationPath): CyclicValueError => new CyclicValueError(path);
 
-	return cyclicMessagePattern.exec(error.message)?.[1];
-};
+export const getCyclicPath = (error: unknown): OperationPath | undefined => (error instanceof CyclicValueError ? error.path : undefined);
 
 const CLONE_IN_PROGRESS = Symbol("opshot.cloneValue.inProgress");
 
-export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, pointer: string): unknown => {
+export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path: OperationPath): unknown => {
 	if (!isCloneable(value)) return value;
 
 	const cached = memo.get(value);
 
-	if (cached === CLONE_IN_PROGRESS) throw cyclicError(pointer);
+	if (cached === CLONE_IN_PROGRESS) throw cyclicError(path);
 	if (cached !== undefined) return cached;
 
 	memo.set(value, CLONE_IN_PROGRESS);
 
-	// .map skips holes, preserving hole-ness through the clone.
-	const clone = isPlainArray(value)
-		? value.map((child) => cloneValue(child, memo, pointer))
-		: Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneValue(child, memo, pointer)]));
+	const array = isPlainArray(value);
+	const clone: object = array ? [] : {};
+
+	if (!array) {
+		Reflect.setPrototypeOf(clone, Reflect.getPrototypeOf(value));
+	}
+
+	for (const key of Reflect.ownKeys(value)) {
+		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+
+		if (!descriptor) continue;
+
+		if ("value" in descriptor) {
+			Object.defineProperty(clone, key, { ...descriptor, value: cloneValue(descriptor.value, memo, path), writable: true });
+		} else {
+			Object.defineProperty(clone, key, descriptor);
+		}
+	}
 
 	memo.set(value, clone);
 

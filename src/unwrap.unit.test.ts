@@ -1,5 +1,8 @@
+import { snapshot } from "valtio/vanilla";
+
 import { createGroup } from "./createGroup";
 import { createState, type State } from "./createState";
+import { isSameIdentity } from "./identity";
 import { ignore } from "./ignore";
 
 interface Counter {
@@ -45,16 +48,17 @@ const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State
 };
 
 describe("unwrap", () => {
-  it("strips exactly the library keys and keeps data and domain methods", () => {
+  it("returns the cached snapshot with clean enumerable keys", () => {
     const state = createCounter();
     const data = state.op.unwrap();
 
+    expect(data).toBe(snapshot(state.op.unsafeMutable));
     expect(Object.keys(data)).toEqual(["count", "label", "increment"]);
     expect(data.count).toBe(0);
     expect(data.label).toBe("hits");
   });
 
-  it("strips the library keys from every generation", () => {
+  it("keeps the library keys non-enumerable on every generation", () => {
     const { state, emissions } = createTrackedCounter();
 
     state.increment();
@@ -66,11 +70,11 @@ describe("unwrap", () => {
     const later = emitted as State<Counter>;
 
     for (const generation of [state, later]) {
-      const data: object = generation.op.unwrap();
-
-      expect(Object.keys(data)).toEqual(["count", "label", "increment"]);
-      expect("op" in data).toBe(false);
-      expect("mutate" in data).toBe(false);
+      expect(Object.keys(generation)).toEqual(["count", "label", "increment"]);
+      expect("op" in generation).toBe(true);
+      expect("mutate" in generation).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(generation, "op")?.enumerable).toBe(false);
+      expect(Object.getOwnPropertyDescriptor(generation, "mutate")?.enumerable).toBe(false);
     }
   });
 
@@ -82,6 +86,19 @@ describe("unwrap", () => {
 
     expect(state.count).toBe(0);
     expect(state.op.unwrap().count).toBe(2);
+  });
+
+  it("returns the registered generation and rejects a top-level write", () => {
+    const state = createCounter();
+
+    state.increment();
+
+    const unwrapped = state.op.unwrap();
+
+    expect(isSameIdentity(unwrapped, state)).toBe(true);
+    expect(unwrapped).toBe(snapshot(state.op.unsafeMutable));
+    expect(() => Object.assign(unwrapped, { count: 9 })).toThrow(TypeError);
+    expect(state.op.unwrap().count).toBe(1);
   });
 
   it("returns current values from a stale generation held from mid-history", () => {
@@ -102,7 +119,7 @@ describe("unwrap", () => {
     expect(stale.op.unwrap().count).toBe(3);
   });
 
-  it("keeps a domain method working through the unwrapped copy, detached", () => {
+  it("keeps a detached domain method working through the unwrapped snapshot", () => {
     const state = createCounter();
 
     state.increment();
@@ -135,7 +152,7 @@ describe("unwrap", () => {
     expect(state.op.unwrap().doubled).toBe(2);
   });
 
-  it("materializes own enumerable getters into data values, while the state generation keeps them live", () => {
+  it("keeps own getters live on the unwrapped snapshot", () => {
     const state = createState<DerivedCounter>((mutate) => ({
       count: 0,
       label: "hits",
@@ -154,8 +171,9 @@ describe("unwrap", () => {
     const data = state.op.unwrap();
     const descriptor = Object.getOwnPropertyDescriptor(data, "doubled");
 
-    expect(descriptor?.get).toBeUndefined();
-    expect(descriptor?.value).toBe(2);
+    expect(descriptor?.get).toBeTypeOf("function");
+    expect(descriptor?.value).toBeUndefined();
+    expect(data.doubled).toBe(2);
     expect(Object.getOwnPropertyDescriptor(state, "doubled")?.get).toBeTypeOf("function");
   });
 

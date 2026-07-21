@@ -77,7 +77,7 @@ const Child = retrack<{ user: State<User> }>(({ user }) => <p>{user.age}</p>);
 
 This is how you optimize re-rendering across your component tree: place `retrack` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useTrackedState` is a boundary itself.
 
-`retrack` finds states anywhere in props — nested objects, arrays, Maps, Sets, class instances, any key — stopping only at React elements, functions, and cycles. It walks props up to 10 levels deep; a state nested deeper won't be found — pass `maxDepth` to raise it: `retrack(Component, { maxDepth: 20 })`.
+`retrack` finds states anywhere in props — nested object fields, plain arrays, `TrackedMap` values, `TrackedSet` members, and own enumerable data fields on clean class instances. It throws when a state is found inside a private-field or native-slotted class, behind an own enumerable accessor on a class instance, or inside an array subclass. It does not walk `TrackedMap` keys, React elements, functions, or cycles. It walks props up to 10 levels deep; a state nested deeper won't be found — pass `maxDepth` to raise it: `retrack(Component, { maxDepth: 20 })`.
 
 ## Creating State
 
@@ -148,6 +148,14 @@ Two regimes ship today: **tracked** (records what changed — ops) and **ignored
 
 Also refused on tracked state: `Object.defineProperty` (define properties in the `createState` literal) and `Object.setPrototypeOf` both throw — meta-mutating tracked data is bug-shaped.
 
+## Identity
+
+A stored object has one storage identity and three kinds of handles: the raw object that entered state, its mutable proxy inside `mutate`, and read-only snapshot copies across generations. `===` and `Object.is` compare handles, so they are intentionally false across those domains and across changed snapshot generations.
+
+`identify(value)` returns one opaque token for the storage identity behind any of those handles. Use the token as a `Map` or `Set` key. `isSameIdentity(a, b)` answers the same question directly without minting a token.
+
+Storage replacement is observable even when the old and new objects have equal content. It emits a whole-value operation so replay can restore the displaced target. Fine diff recursion continues only through an unchanged storage identity; an interior mutation on the same target emits the deepest operation for the changed field.
+
 ## ignore
 
 `ignore(value)` stores a value by reference, fully outside the system: readable through every snapshot, no reactivity, no ops.
@@ -193,7 +201,7 @@ socket.addEventListener("message", (event) => {
 
 ## Tracked collections
 
-`TrackedMap`, `TrackedSet`, and `TrackedDate` are the tracked equivalents the boundary errors name. Each subclasses its built-in — reads, iteration, `size`, and `instanceof` are the real thing — with the mutating methods overridden to emit ops.
+`TrackedMap`, `TrackedSet`, and `TrackedDate` are tracked facades for the built-ins the boundary rejects. They keep familiar methods, iteration, `size`, and `Symbol.toStringTag`, backed by ordinary tracked state. They are not subclasses: `map instanceof Map`, `set instanceof Set`, and `date instanceof Date` are false.
 
 ```ts
 import { createState, TrackedMap } from "opshot";
@@ -201,17 +209,19 @@ import { createState, TrackedMap } from "opshot";
 const state = createState({ index: new TrackedMap<string, number>() });
 
 state.mutate((mutable) => mutable.index.set("a", 1));
-// ops: [{ isPatch: true, do: { op: "mapSet", path: "/index", key: "a", value: 1 }, undo: { op: "mapDelete", path: "/index", key: "a" } }]
+// ops: [{ isPatch: true, do: { op: "add", path: ["index", "a"], value: 1, slot: 0 }, undo: { op: "remove", path: ["index", "a"] } }]
 ```
 
-- The wrapper is identity-stable across generations: every snapshot hands back the same live object, so reads are always current.
-- A call inside `mutate` joins that mutate's emission, meta included. A call outside `mutate` — including through code that received the wrapper as a plain `Map` — arrives on the next microtask as a side effect (below).
-- Every key type gets fine per-key ops: the path names the wrapper and the key or member rides the op by identity, so an object-keyed `Map` or an object-membered `Set` inverts as cleanly as string keys. `clear` is the one whole-representation shape — a `mapEntries`/`setEntries` pair whose undo carries the prior entries — and `TrackedDate` emits its epoch as a `dateSet` pair.
-- Replay is `applyOps`'s job: it resolves the op's path to the wrapper and calls the method the op names, so collection ops go through the same call as everything else (below).
+- Collection contents follow the value model. Plain objects in keys, values, and members are tracked; unsupported class instances throw. Use `ignore()` when a key, value, or member should stay an identity-only leaf.
+- Membership uses storage identity. A raw original, a mutable proxy, and any snapshot generation of the same object all address the same key or member through `has`, `get`, `set`, `add`, and `delete`. Interior content changes never re-key it.
+- Reads participate in bounded re-rendering. Map values and set members are tracked recursively; `TrackedMap` keys are identity-addressed and are not walked by `retrack`.
+- Map keys, map values, and set members share one flat path model with ordinary data. Nested arrays and facades keep extending the same path.
+- Insertions carry a slot. Delete, undo, and redo restore the same slot, so iteration order stays stable across arbitrary replay cycles.
+- A call inside `mutate` joins that emission and meta. A call outside `mutate` arrives on the next microtask as a side effect.
 
 ## Tracked State
 
-Everything opshot attaches lives under two reserved keys, `mutate` and `op`.
+opshot attaches two reserved, non-enumerable keys: `mutate` and `op`. They stay out of spreads and `JSON.stringify` while remaining readable through every tracked boundary.
 
 ```ts
 // The write path. An optional second argument is meta, delivered with the emission.
@@ -222,13 +232,14 @@ const unsubscribe = counter.op.subscribe((state, ops, emission) => {
 	// ...
 });
 
-// State references are not reliable for equality: every mutation produces a new one. Use this instead.
-counter.op.isSameState(other);
+// Compare or key storage identity across raw, mutable, and snapshot handles.
+isSameIdentity(counter, other);
+identify(counter);
 
 // True while a mutate callback is running.
 counter.op.isMutating;
 
-// The current values as your plain object, op and mutate stripped: for serializing and reads outside render.
+// The current cached snapshot generation, for serialization and reads outside render.
 counter.op.unwrap();
 
 // The underlying valtio proxy, typed object: an escape hatch.
@@ -242,19 +253,54 @@ const unsubscribe = counter.op.subscribe((state, ops, emission) => {
 	// state: the snapshot these ops produced
 	// ops: [{
 	//   isPatch: true,
-	//   do:   { op: "replace", path: "/count", value: 1 },
-	//   undo: { op: "replace", path: "/count", value: 0 },
+	//   do:   { op: "replace", path: ["count"], value: 1 },
+	//   undo: { op: "replace", path: ["count"], value: 0 },
 	// }]
 });
 ```
 
-An op is an invertible pair of `Operation` halves. Plain data emits `add`/`replace`/`remove` at an [RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901) pointer, each half carrying its own value; tracked collections emit their method vocabulary — `mapSet`/`mapDelete`/`mapEntries`, `setAdd`/`setDelete`/`setEntries`, `dateSet` — with the path naming the wrapper and the method's arguments riding the op. `isPatch` is `true` on every op today; a marker variant joins the union, discriminated on it, when the watched regime ships.
+An op is an invertible pair of `Operation` halves. Every half uses one of three verbs:
 
-`applyOps(state, operations, meta?)` is the whole replay surface: it applies one direction's halves — already selected and ordered by you — in a single `mutate`, forwarding `meta` to the emission, routing each op to plain-data application or the wrapper method it names.
+```ts
+type OperationPath = ReadonlyArray<unknown>;
 
-Ops are live objects, not JSON: each value rides behind a per-read accessor, so every application gets a fresh copy and nothing can rewrite a recorded half. Copy an op — spread it, JSON round-trip it, `structuredClone` it — and the copy loses its value along with its brand, so `applyOps` throws naming the cause and the fix. (A `structuredClone` of an op carrying a function payload doesn't even get that far — it throws its own `DataCloneError`.) Apply the op objects the listener delivered; never copy them.
+type Operation =
+	| { readonly op: "add"; readonly path: OperationPath; readonly value: unknown; readonly slot?: number }
+	| { readonly op: "add"; readonly path: OperationPath; readonly slot: number }
+	| { readonly op: "replace"; readonly path: OperationPath; readonly value: unknown }
+	| { readonly op: "remove"; readonly path: OperationPath };
+```
 
-Arrays are dense by contract: holes read as `undefined`, and a presence change at unchanged length — `delete arr[1]`, or a hole becoming a stored `undefined` — escalates to one whole-array `replace`, as a length change already does. Dense same-length changes emit per-index ops.
+The exported `AddOperation`, `ReplaceOperation`, and `RemoveOperation` types give the exact union members. `OperationPath` is a state-relative path whose meaning depends on the value that owns each segment:
+
+| Resolved parent | Segment | Address |
+| --- | --- | --- |
+| plain object | string | enumerable own data property |
+| plain array | non-negative integer | indexed presence and value, with no shifting |
+| plain array | enumerable non-index string | ordinary data property |
+| plain array | `"length"` | conceptual array length |
+| `TrackedMap` | key identity | entry membership and value |
+| `TrackedMap` | emitted `<keyOf>` selector | the stored key object for interior traversal |
+| `TrackedSet` | member identity | membership and the canonical member interior |
+| `TrackedDate` | `"epoch"` | epoch milliseconds |
+
+`[]` names the logical state root, but a half cannot add, replace, or remove that stable root. Segments are parent-sensitive: the same string can be an object property or a Map key depending on what the preceding path resolves to. Map value traversal uses the key itself. Map key traversal uses an internal emitted `keyOf` selector. If a branded selector object is itself stored as a Map key or Set member, Opshot emits an internal `valueOf` segment to escape the collision. These selector objects are observable inside listener-delivered paths, but their constructors and classification are not public APIs; treat each segment as opaque unless you already own the addressed state value.
+
+Every constructed path is a shallow-frozen copy. Identity-bearing segments retain their storage identity. `add` requires an absent address and makes it present; `replace` requires a present address and changes its value or conceptual content; `remove` requires a present address and makes it absent. Presence is distinct from a stored `undefined`. A terminal stored Map key cannot be added, replaced, or removed, and a Set member cannot be replaced.
+
+Arrays are sparse and never use splice semantics during replay. Indexed add fills a hole without shifting, indexed remove creates a hole without shifting, and `"length"` changes length. Growth emits the length replacement before new-tail additions. Shrink emits present-tail removals before the length replacement. Reversing undo halves therefore restores the required length before restoring truncated entries.
+
+Map and Set additions carry their exact slot, including additions whose undo restores removed membership. Replay uses that slot to preserve iteration order through delete, clear, displacement, undo, and redo. Membership removals are emitted before additions when slots are displaced, so an addition never collides with membership that is about to leave. Date content changes replace its `"epoch"` child.
+
+Diffing recurses through an object only while its storage identity is unchanged. A whole-value `replace` means the value at that address changed wholesale: the diff emits it when the storage target is replaced, and when a container's atomic operations would retain more than the container's full contents (small containers included). It does not by itself mean the storage target changed. Replay reattaches the recorded target and restores its recorded content, preserving identity and DAG aliases, so identity-keyed consumers are unaffected. If code edited a detached target after the operation was recorded, replay overwrites those edits with the recorded generation. Consumers that need per-field granularity must handle container-level replaces, which was already true of target replacement.
+
+Ops in an emission are ordered. Apply `do` halves in delivered order and `undo` halves in reverse order. Path-keyed coalescing is unsound: operations sharing a path can address different collection identities or slots, and array operations can depend on earlier operations in the entry.
+
+`applyOps(state, operations, meta?)` applies one direction's already selected, correctly ordered halves in one `mutate`, forwarding `meta`. Replay restores registered storage targets instead of donating clones. It reattaches each target and stomps its recorded content exactly, deleting target-only data and restoring array holes. If code edited a detached object after the operation was recorded, undo overwrites those edits with the recorded generation.
+
+Ops are live runtime objects. Public value accessors return defensive copies, while `applyOps` reaches the registered originals needed for identity restoration. Spreading the outer `{ isPatch, do, undo }` pair is harmless because it preserves the original halves. Spreading an individual half, or copying a pair or half through JSON, produces brandless halves that `applyOps` rejects with the cause and fix. `structuredClone` can throw `DataCloneError` first when an operation carries a non-cloneable payload; otherwise its copied halves are likewise brandless and rejected. Apply the operation halves the listener delivered.
+
+Opshot promises no serializer, whole-contents selector, public path classifier, or foreign applier. An encoded stream would need to intern identity-bearing path segments so repeated references resolve to one identity, as well as encode `undefined`, `NaN`, holes, facade construction, operation brands, and value accessors. No wire format or encoder ships.
 
 Cycles in tracked data throw a named error instead of emitting a record that couldn't invert: the diff throws `opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids` at the observed mutate touching a cyclic region, and an op value that captured a freshly created cycle throws the same error when read. Back-links want identity, which is `ignore()`'s job; ids are the other route.
 
@@ -280,6 +326,7 @@ doc.op.subscribe((state, ops, emission) => {
 The ceiling is trap visibility. Writes no trap can see are invisible to reactivity and ops both:
 
 - writes through a retained original — keep no reference to the object you hand `createState` or assign into state, because writes through the original bypass the proxy (**the don't-retain rule**);
+- assigning a snapshot generation into a draft throws at that assignment because the copy is a read-view and would create a dead region; clone it for new storage, or replay its recorded operation through `applyOps`;
 - the interior of an `ignore()`d value, which is what `ignore` means;
 - closure state, which no scan can see.
 
@@ -356,7 +403,7 @@ const Editor = () => {
 
 ## History
 
-A history is a subscriber: record the ops you hear, replay them with `applyOps`.
+A history is a subscriber: record each listener-delivered op pair as an opaque ordered replay record, then replay its original halves with `applyOps`.
 
 ```ts
 import { applyOps, type Emission, type Op, type State } from "opshot";
@@ -389,4 +436,6 @@ const undo = () => {
 };
 ```
 
-Redo is the mirror: apply `stack[index + 1]`'s `do` halves in order and advance. One recipe covers everything — plain data and tracked collections replay through the same call. Coalescing a drag into one entry is yours — `transactionKey`, or any meta key you declare, arrives with the ops for you to merge on.
+Redo is the mirror: apply `stack[index + 1]`'s `do` halves in order and advance. One recipe covers plain data, sparse arrays, and tracked facades. Keep each listener-delivered pair intact and do not inspect, rewrite, copy, classify, or coalesce its path: a collection insertion half carries the identity, content, and slot needed to restore exact iteration order.
+
+Coalescing a drag into one entry is yours. A `transactionKey`, or any meta key you declare, arrives with the ops to guide a domain-aware merge. Do not merge into a map keyed only by `path`; ordered operations at the same path are not interchangeable.

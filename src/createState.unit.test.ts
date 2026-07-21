@@ -1,9 +1,11 @@
 import { createGroup } from "./createGroup";
 import { createMeta } from "./createMeta";
 import { augmentSideEffectCycleError, createState, type Emission, type OpshotHandle, type State } from "./createState";
+import { isSameIdentity } from "./identity";
 import { isState } from "./isState";
 import { diffSnapshots } from "./ops/diff";
 import { type Op } from "./ops/operation";
+import { cyclicError } from "./ops/cloneValue";
 import { ignore } from "./ignore";
 
 vi.mock(import("./ops/diff"), { spy: true });
@@ -113,6 +115,18 @@ describe("createState", () => {
     expect(state).not.toBe(state.op.unsafeMutable);
   });
 
+  it("keeps op and mutate non-enumerable while data and domain methods spread normally", () => {
+    const state = createCounter();
+
+    expect(Object.keys(state)).toEqual(["count", "increment"]);
+    expect({ ...state }).toEqual({ count: 0, increment: state.increment });
+    expect(JSON.stringify(state)).toBe('{"count":0}');
+    expect(Object.getOwnPropertyDescriptor(state, "op")?.enumerable).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(state, "mutate")?.enumerable).toBe(false);
+    expect(state.op.subscribe).toBeTypeOf("function");
+    expect(state.mutate).toBeTypeOf("function");
+  });
+
   it("throws on an assignment to a returned state, and emits nothing", () => {
     const state = createCounter();
     const emissions = recordEmissions(state);
@@ -194,7 +208,7 @@ describe("createState", () => {
     expect(first.op.unwrap().count).toBe(5);
   });
 
-  it("answers isSameState across generations in both directions, and false for another state", () => {
+  it("answers isSameIdentity across generations in both directions, and false for another state", () => {
     const { state, emissions } = createTrackedCounter();
 
     state.increment();
@@ -205,14 +219,13 @@ describe("createState", () => {
     if (!current) throw new Error("the group heard no emission");
 
     expect(current).not.toBe(state);
-    expect(state.op.isSameState(current)).toBe(true);
-    expect(current.op.isSameState(state)).toBe(true);
-    expect(state.op.isSameState(state)).toBe(true);
+    expect(isSameIdentity(state, current)).toBe(true);
+    expect(isSameIdentity(current, state)).toBe(true);
+    expect(isSameIdentity(state, state)).toBe(true);
 
-    expect(state.op.isSameState(other)).toBe(false);
-    expect(other.op.isSameState(state)).toBe(false);
-    expect(state.op.isSameState({ count: 0 })).toBe(false);
-    expect(state.op.isSameState(undefined)).toBe(false);
+    expect(isSameIdentity(state, other)).toBe(false);
+    expect(isSameIdentity(other, state)).toBe(false);
+    expect(isSameIdentity(state, { count: 0 })).toBe(false);
   });
 
   it("emits once per mutate with the caller's meta verbatim", () => {
@@ -225,7 +238,7 @@ describe("createState", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
@@ -314,7 +327,7 @@ describe("createState", () => {
     state.increment();
 
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
 
     const second = generations[0];
@@ -397,7 +410,7 @@ describe("createState", () => {
     expect(firstEmissions).toHaveLength(1);
     expect(secondEmissions).toHaveLength(1);
     expect(secondEmissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 7 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 7 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(second.op.unwrap().count).toBe(7);
   });
@@ -449,7 +462,7 @@ describe("createState", () => {
     expect(state.op.unwrap().entries).toEqual(["one"]);
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/index", value: 1 }, undo: { op: "replace", path: "/index", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["index"], value: 1 }, undo: { op: "replace", path: ["index"], value: 0 } },
     ]);
   });
 
@@ -472,7 +485,7 @@ describe("createState", () => {
     const first = createState<{ count: number }>(() => defaults);
     const second = createState<{ count: number }>(() => defaults);
 
-    expect(first.op.isSameState(second)).toBe(false);
+    expect(isSameIdentity(first, second)).toBe(false);
 
     first.mutate((mutable) => {
       mutable.count = 5;
@@ -493,7 +506,7 @@ describe("createState", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 3 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(state.op.unwrap().count).toBe(3);
     expect(state.count).toBe(0);
@@ -515,7 +528,7 @@ describe("createState", () => {
     const second = createState(defaults);
 
     expect(first.op).not.toBe(second.op);
-    expect(first.op.isSameState(second)).toBe(false);
+    expect(isSameIdentity(first, second)).toBe(false);
 
     first.mutate((mutable) => {
       mutable.count = 5;
@@ -581,7 +594,7 @@ describe("createState", () => {
 
     expect(diffSnapshots).toHaveBeenCalledTimes(1);
     expect(heard).toEqual([
-      [{ isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+      [{ isPatch: true, do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
     ]);
 
     unsubscribe();
@@ -637,7 +650,7 @@ describe("watchdog", () => {
 
     expect(heard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: "/count", value: 5 }, undo: { op: "replace", path: "/count", value: 0 } }],
+        ops: [{ isPatch: true, do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -674,11 +687,11 @@ describe("watchdog", () => {
     expect(heard).toHaveLength(2);
     expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
     expect(heard[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: 0 } },
+      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(heard[1]?.emission).toEqual({ isSideEffect: true });
     expect(heard[1]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/flag", value: true }, undo: { op: "replace", path: "/flag", value: false } },
+      { isPatch: true, do: { op: "replace", path: ["flag"], value: true }, undo: { op: "replace", path: ["flag"], value: false } },
     ]);
   });
 
@@ -707,7 +720,7 @@ describe("watchdog", () => {
 
     expect(heard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+        ops: [{ isPatch: true, do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -741,7 +754,7 @@ describe("watchdog", () => {
 
     expect(heard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } }],
+        ops: [{ isPatch: true, do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -786,9 +799,11 @@ describe("watchdog", () => {
 });
 
 describe("augmentSideEffectCycleError", () => {
-  it("rewraps the diff's cycle error, preserving the pointer", () => {
-    const augmented = augmentSideEffectCycleError(new Error("opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids"));
+  it("rewraps the diff's typed cycle error, preserving its path", () => {
+    const error = cyclicError(["node", "self"]);
+    const augmented = augmentSideEffectCycleError(error);
 
+		expect(error.path).toEqual(["node", "self"]);
     expect(augmented).toBeInstanceOf(Error);
     expect(augmented?.message).toBe(
       "opshot: a side-effect write created a cyclic value at /node/self. Cycles cannot be tracked. This surfaced asynchronously because the write bypassed mutate (an unsafeMutable write, or a shared/entangled state). Use ignore() for back-linked structures, or ids.",

@@ -6,7 +6,9 @@ import { type FC } from "react";
 import { createMeta } from "../createMeta";
 import { createGroup } from "../createGroup";
 import { type State } from "../createState";
+import { isSameIdentity } from "../identity";
 import { type Op } from "../ops/operation";
+import { TrackedMap } from "../tracked/trackedMap";
 import { retrack } from "./retrack";
 import { useTrackedState } from "./useTrackedState";
 
@@ -33,7 +35,7 @@ describe("useTrackedState", () => {
     rerender();
 
     expect(result.current.op).toBe(first.op);
-    expect(result.current.op.isSameState(first)).toBe(true);
+    expect(isSameIdentity(result.current, first)).toBe(true);
   });
 
   it("creates a working standalone state from a plain-object define", () => {
@@ -68,6 +70,157 @@ describe("useTrackedState", () => {
     });
 
     expect(screen.getByTestId("count").textContent).toBe("1");
+  });
+
+  it("tracks size, get, and iteration readers independently", async () => {
+    interface CollectionState {
+      map: TrackedMap<string, { label: string }>;
+      unrelated: string;
+    }
+
+    const createCollection = (): CollectionState => ({ map: new TrackedMap([["a", { label: "one" }]]), unrelated: "steady" });
+    const renders = { size: 0, get: 0, iteration: 0 };
+
+    const size = renderHook(() => {
+      const state = useTrackedState<CollectionState>(createCollection);
+
+      renders.size += 1;
+
+      return { state, value: state.map.size };
+    });
+    const get = renderHook(() => {
+      const state = useTrackedState<CollectionState>(createCollection);
+
+      renders.get += 1;
+
+      return { state, value: state.map.get("a")?.label ?? "-" };
+    });
+    const iteration = renderHook(() => {
+      const state = useTrackedState<CollectionState>(createCollection);
+
+      renders.iteration += 1;
+
+      return { state, value: [...state.map].map(([key, value]) => `${key}:${value.label}`).join(",") };
+    });
+
+    expect(size.result.current.value).toBe(1);
+    expect(get.result.current.value).toBe("one");
+    expect(iteration.result.current.value).toBe("a:one");
+    expect(renders).toEqual({ size: 1, get: 1, iteration: 1 });
+
+    await act(async () => {
+      size.result.current.state.mutate((mutable) => {
+        mutable.map.set("b", { label: "bee" });
+      });
+      get.result.current.state.mutate((mutable) => {
+        mutable.map.set("b", { label: "bee" });
+      });
+      iteration.result.current.state.mutate((mutable) => {
+        mutable.map.set("b", { label: "bee" });
+      });
+    });
+
+    expect(size.result.current.value).toBe(2);
+    expect(get.result.current.value).toBe("one");
+    expect(iteration.result.current.value).toBe("a:one,b:bee");
+    expect(renders).toEqual({ size: 2, get: 2, iteration: 2 });
+
+    await act(async () => {
+      for (const state of [size.result.current.state, get.result.current.state, iteration.result.current.state]) {
+        state.mutate((mutable) => {
+          const value = mutable.map.get("a");
+
+          if (value !== undefined) value.label = "two";
+        });
+      }
+    });
+
+    expect(size.result.current.value).toBe(2);
+    expect(get.result.current.value).toBe("two");
+    expect(iteration.result.current.value).toBe("a:two,b:bee");
+    expect(renders).toEqual({ size: 2, get: 3, iteration: 3 });
+
+    await act(async () => {
+      for (const state of [size.result.current.state, get.result.current.state, iteration.result.current.state]) {
+        state.mutate((mutable) => {
+          mutable.map.delete("a");
+        });
+      }
+    });
+
+    expect(size.result.current.value).toBe(1);
+    expect(get.result.current.value).toBe("-");
+    expect(iteration.result.current.value).toBe("b:bee");
+    expect(renders).toEqual({ size: 3, get: 4, iteration: 4 });
+
+    await act(async () => {
+      for (const state of [size.result.current.state, get.result.current.state, iteration.result.current.state]) {
+        state.mutate((mutable) => {
+          mutable.map.clear();
+        });
+      }
+    });
+
+    expect(size.result.current.value).toBe(0);
+    expect(get.result.current.value).toBe("-");
+    expect(iteration.result.current.value).toBe("");
+    expect(renders).toEqual({ size: 4, get: 5, iteration: 5 });
+  });
+
+  it("does not re-render an unrelated plain-field reader for map mutations", async () => {
+    interface CollectionState {
+      map: TrackedMap<string, { label: string }>;
+      unrelated: string;
+    }
+
+    let held: State<CollectionState> | undefined;
+    let renders = 0;
+
+    const PlainView: FC = () => {
+      const state = useTrackedState<CollectionState>({ map: new TrackedMap(), unrelated: "steady" });
+
+      held = state;
+      renders += 1;
+
+      return <span data-testid="unrelated">{state.unrelated}</span>;
+    };
+
+    render(<PlainView />);
+
+    await act(async () => {
+      held?.mutate((mutable) => {
+        mutable.map.set("a", { label: "one" });
+      });
+    });
+
+    await act(async () => {
+      held?.mutate((mutable) => {
+        const value = mutable.map.get("a");
+
+        if (value !== undefined) value.label = "two";
+      });
+    });
+
+    await act(async () => {
+      held?.mutate((mutable) => {
+        mutable.map.delete("a");
+      });
+    });
+
+    await act(async () => {
+      held?.mutate((mutable) => {
+        mutable.map.set("b", { label: "bee" });
+      });
+    });
+
+    await act(async () => {
+      held?.mutate((mutable) => {
+        mutable.map.clear();
+      });
+    });
+
+    expect(screen.getByTestId("unrelated").textContent).toBe("steady");
+    expect(renders).toBe(1);
   });
 
   it("does not re-render a creating component that reads no fields", async () => {

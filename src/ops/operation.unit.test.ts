@@ -1,134 +1,85 @@
+import { createState } from "../createState";
+import { getRegisteredTarget } from "../identity";
 import {
-  createDateSetOperation,
-  createMapDeleteOperation,
-  createMapEntriesOperation,
-  createMapSetOperation,
-  createRemoveOperation,
-  createSetAddOperation,
-  createSetDeleteOperation,
-  createSetEntriesOperation,
-  createValueOperation,
-  isOperation,
-  type Operation,
+	createAddOperation,
+	createMembershipAddOperation,
+	createRemoveOperation,
+	createReplaceOperation,
+	getValueOriginal,
+	isOperation,
+	type Operation,
 } from "./operation";
 
 const readValue = (half: Operation): unknown => ("value" in half ? half.value : undefined);
-const readKey = (half: Operation): unknown => ("key" in half ? half.key : undefined);
-const readEntries = (half: Operation): unknown => ("entries" in half ? half.entries : undefined);
-const readMember = (half: Operation): unknown => ("member" in half ? half.member : undefined);
-const readMembers = (half: Operation): unknown => ("members" in half ? half.members : undefined);
 
 describe("operation", () => {
-  it("mints a fresh equal clone on every read of a cloneable value", () => {
-    const half = createValueOperation("add", "/node", { nested: { x: 1 }, list: [1, 2] });
+	it("mints a fresh equal clone on every read of a cloneable value", () => {
+		const original = { nested: { x: 1 }, list: [1, 2] };
+		const half = createAddOperation(["node"], original);
 
-    expect(readValue(half)).not.toBe(readValue(half));
-    expect(readValue(half)).toEqual({ nested: { x: 1 }, list: [1, 2] });
-    expect((readValue(half) as { nested: object }).nested).not.toBe((readValue(half) as { nested: object }).nested);
-  });
+		expect(readValue(half)).not.toBe(readValue(half));
+		expect(readValue(half)).toEqual(original);
+		expect(getValueOriginal(half)).toBe(original);
+	});
 
-  it("rides keys and members by identity while cloning values per read", () => {
-    const key = { id: 1 };
-    const value = { count: 2 };
+	it("keeps non-cloneable values directly readable", () => {
+		const run = (): string => "a";
+		const half = createReplaceOperation(["run"], run);
 
-    const mapSet = createMapSetOperation("/map", key, value);
+		expect(half.value).toBe(run);
+		expect(Object.getOwnPropertyDescriptor(half, "value")?.enumerable).toBe(true);
+	});
 
-    expect(readKey(mapSet)).toBe(key);
-    expect(readValue(mapSet)).not.toBe(value);
-    expect(readValue(mapSet)).toEqual({ count: 2 });
+	it("distinguishes map and membership additions by value presence", () => {
+		const mapUndefined = createAddOperation(["map", "key"], undefined, 4);
+		const membership = createMembershipAddOperation(["set", "member"], 7);
 
-    const mapDelete = createMapDeleteOperation("/map", key);
+		expect("value" in mapUndefined).toBe(true);
+		expect("value" in mapUndefined ? mapUndefined.value : "missing").toBeUndefined();
+		expect("slot" in mapUndefined ? mapUndefined.slot : undefined).toBe(4);
+		expect("value" in membership).toBe(false);
+		expect("slot" in membership ? membership.slot : undefined).toBe(7);
+	});
 
-    expect(readKey(mapDelete)).toBe(key);
+	it("stores a frozen copied path on every half", () => {
+		const source = ["document", 1];
+		const halves = [createAddOperation(source, 1), createReplaceOperation(source, 2), createRemoveOperation(source), createMembershipAddOperation(source, 0)];
 
-    const mapEntries = createMapEntriesOperation("/map", [[key, value]]);
-    const entriesRead = readEntries(mapEntries) as Array<[{ id: number }, { count: number }]>;
+		source[0] = "changed";
 
-    expect(entriesRead).not.toBe(readEntries(mapEntries));
-    expect(entriesRead[0]?.[0]).toBe(key);
-    expect(entriesRead[0]?.[1]).not.toBe(value);
-    expect(entriesRead).toEqual([[{ id: 1 }, { count: 2 }]]);
+		for (const half of halves) {
+			expect(half.path).toEqual(["document", 1]);
+			expect(Object.isFrozen(half.path)).toBe(true);
+		}
+	});
 
-    const setAdd = createSetAddOperation("/set", key);
-    const setDelete = createSetDeleteOperation("/set", key);
+	it("keeps originals registered while public clone reads are independent", () => {
+		const state = createState({ value: { count: 1 } });
+		const half = createReplaceOperation(["value"], state.value);
+		const publicValue = half.value;
 
-    expect(readMember(setAdd)).toBe(key);
-    expect(readMember(setDelete)).toBe(key);
+		expect(getRegisteredTarget(state.value)).toBeDefined();
+		expect(getValueOriginal(half)).toBe(state.value);
+		expect(publicValue).toEqual({ count: 1 });
+		expect(publicValue).not.toBe(state.value);
+		if (typeof publicValue !== "object" || publicValue === null) throw new Error("expected cloned value");
+		expect(getRegisteredTarget(publicValue)).toBeUndefined();
+	});
 
-    const setEntries = createSetEntriesOperation("/set", [key]);
-    const membersRead = readMembers(setEntries) as Array<{ id: number }>;
+	it("brands originals and rejects spread, JSON, and structuredClone copies", () => {
+		const half = createAddOperation(["node"], { nested: true });
 
-    expect(membersRead[0]).toBe(key);
-    expect(membersRead).toEqual([{ id: 1 }]);
-  });
+		expect(isOperation(half)).toBe(true);
+		expect(isOperation({ ...half })).toBe(false);
+		expect(isOperation(JSON.parse(JSON.stringify(half)))).toBe(false);
+		expect(isOperation(structuredClone(half))).toBe(false);
+	});
 
-  it("keeps non-cloneable payloads as own enumerable data properties", () => {
-    const half = createValueOperation("replace", "/count", 2);
-    const descriptor = Object.getOwnPropertyDescriptor(half, "value");
+	it("keeps halves branded through an envelope spread", () => {
+		const envelope = { isPatch: true, do: createAddOperation(["node"], { nested: true }), undo: createRemoveOperation(["node"]) };
+		const spread = { ...envelope };
 
-    expect(descriptor?.value).toBe(2);
-    expect(descriptor?.enumerable).toBe(true);
-    expect(descriptor?.get).toBeUndefined();
-
-    const run = (): string => "a";
-    const withFunction = createValueOperation("add", "/run", run);
-
-    expect(Object.getOwnPropertyDescriptor(withFunction, "value")?.value).toBe(run);
-
-    const dateSet = createDateSetOperation("/date", 1700000000000);
-    const epochDescriptor = Object.getOwnPropertyDescriptor(dateSet, "epoch");
-
-    expect(epochDescriptor?.value).toBe(1700000000000);
-    expect(epochDescriptor?.enumerable).toBe(true);
-
-    const stringKey = createMapDeleteOperation("/map", "a/b");
-
-    expect(Object.getOwnPropertyDescriptor(stringKey, "key")?.value).toBe("a/b");
-  });
-
-  it("fails isOperation for spread, JSON, and structuredClone copies while the original passes", () => {
-    const half = createValueOperation("add", "/node", { nested: true });
-
-    expect(isOperation(half)).toBe(true);
-
-    const spread = { ...half };
-
-    expect("value" in spread).toBe(false);
-    expect(isOperation(spread)).toBe(false);
-
-    const json = JSON.parse(JSON.stringify(half)) as object;
-
-    expect(json).toEqual({ op: "add", path: "/node" });
-    expect(isOperation(json)).toBe(false);
-
-    const structured = structuredClone(half);
-
-    expect("value" in structured).toBe(false);
-    expect(isOperation(structured)).toBe(false);
-
-    expect(isOperation(null)).toBe(false);
-    expect(isOperation(undefined)).toBe(false);
-    expect(isOperation({ op: "add", path: "/node", value: 1 })).toBe(false);
-  });
-
-  it("keeps halves branded through an envelope-level spread", () => {
-    const op = { isPatch: true, do: createValueOperation("add", "/node", { nested: true }), undo: createRemoveOperation("/node") };
-    const spread = { ...op };
-
-    expect(spread.do).toBe(op.do);
-    expect(isOperation(spread.do)).toBe(true);
-    expect(isOperation(spread.undo)).toBe(true);
-    expect(readValue(spread.do)).toEqual({ nested: true });
-  });
-
-  it("hides cloned values behind the getter while keys, members, and scalars stay own keys", () => {
-    expect(Object.keys(createValueOperation("add", "/node", { nested: true }))).toEqual(["op", "path"]);
-    expect(Object.keys(createValueOperation("replace", "/count", 2))).toEqual(["op", "path", "value"]);
-    expect(Object.keys(createRemoveOperation("/count"))).toEqual(["op", "path"]);
-    expect(Object.keys(createDateSetOperation("/date", 0))).toEqual(["op", "path", "epoch"]);
-    expect(Object.keys(createMapSetOperation("/map", "a", { nested: true }))).toEqual(["op", "path", "key"]);
-    expect(Object.keys(createMapSetOperation("/map", { id: 1 }, { nested: true }))).toEqual(["op", "path", "key"]);
-    expect(Object.keys(createSetAddOperation("/set", { id: 1 }))).toEqual(["op", "path", "member"]);
-    expect(Object.keys(createSetEntriesOperation("/set", [{ id: 1 }]))).toEqual(["op", "path", "members"]);
-  });
+		expect(isOperation(spread.do)).toBe(true);
+		expect(isOperation(spread.undo)).toBe(true);
+	});
 });

@@ -1,448 +1,449 @@
-import { proxy, snapshot } from "valtio/vanilla";
-
-import { createState } from "../createState";
-import { ignore } from "../ignore";
+import { createState, type Emission, type State } from "../createState";
+import { isSameIdentity } from "../identity";
+import { TrackedDate } from "../tracked/trackedDate";
+import { TrackedMap } from "../tracked/trackedMap";
+import { TrackedSet } from "../tracked/trackedSet";
 import { applyOps } from "./applyOps";
 import { diffSnapshots } from "./diff";
-import { type Op, type Operation } from "./operation";
+import type { Op, Operation } from "./operation";
+import { createKeyOfPathSegment, getPathSelector } from "./path";
 
-const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
+const readValue = (operation: Operation): unknown => ("value" in operation ? operation.value : undefined);
 
-const expectReplacePair = (op: Op | undefined, path: string, doValue: unknown, undoValue: unknown): void => {
-  if (!op) throw new Error("the op was not produced");
+const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
+	const heard = new Array<Array<Op>>();
 
-  expect(op.isPatch).toBe(true);
-  expect(op.do.op).toBe("replace");
-  expect(op.do.path).toBe(path);
-  expect(readValue(op.do)).toEqual(doValue);
-  expect(op.undo.op).toBe("replace");
-  expect(op.undo.path).toBe(path);
-  expect(readValue(op.undo)).toEqual(undoValue);
+	state.op.subscribe((_snapshot, ops) => heard.push(ops));
+
+	return heard;
 };
 
-describe("diffSnapshots", () => {
-  it("reports a changed primitive as one replace pair at its path", () => {
-    const ops = diffSnapshots({ count: 1 }, { count: 2 });
-
-    expect(ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } },
-    ]);
-  });
-
-  it("reports a nested change as one replace pair at the deep path", () => {
-    const shared = { untouched: true };
-    const ops = diffSnapshots(
-      { document: { item: { value: 1 } }, shared },
-      { document: { item: { value: 2 } }, shared },
-    );
-
-    expect(ops).toEqual([
-      {
-        isPatch: true,
-        do: { op: "replace", path: "/document/item/value", value: 2 },
-        undo: { op: "replace", path: "/document/item/value", value: 1 },
-      },
-    ]);
-  });
-
-  it("produces no ops for an untouched sibling branch", () => {
-    const state = proxy({ left: { value: 1 }, right: { value: 2 } });
-
-    const before = snapshot(state);
-
-    state.left.value = 10;
-
-    const ops = diffSnapshots(before, snapshot(state));
-
-    expect(ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/left/value", value: 10 }, undo: { op: "replace", path: "/left/value", value: 1 } },
-    ]);
-  });
-
-  it("compares leaves with Object.is", () => {
-    expect(diffSnapshots({ value: NaN }, { value: NaN })).toEqual([]);
-    expect(diffSnapshots({ value: NaN }, { value: 1 })).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/value", value: 1 }, undo: { op: "replace", path: "/value", value: NaN } },
-    ]);
-  });
-
-  it("reports an added key as an add/remove pair and a removed key as a remove/add pair", () => {
-    expect(diffSnapshots({}, { count: 1 })).toEqual([
-      { isPatch: true, do: { op: "add", path: "/count", value: 1 }, undo: { op: "remove", path: "/count" } },
-    ]);
-    expect(diffSnapshots({ count: 1 }, {})).toEqual([
-      { isPatch: true, do: { op: "remove", path: "/count" }, undo: { op: "add", path: "/count", value: 1 } },
-    ]);
-  });
-
-  it("carries presence on the op discriminant, never on the value", () => {
-    const [added] = diffSnapshots({}, { count: 1 });
-    const [removed] = diffSnapshots({ count: 1 }, {});
-
-    expect(added?.undo).toEqual({ op: "remove", path: "/count" });
-    expect("value" in (added?.undo ?? {})).toBe(false);
-    expect(removed?.do).toEqual({ op: "remove", path: "/count" });
-    expect("value" in (removed?.do ?? {})).toBe(false);
-  });
-
-  it("treats a key present with value undefined as present", () => {
-    expect(diffSnapshots({ count: 1 }, { count: undefined })).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: undefined }, undo: { op: "replace", path: "/count", value: 1 } },
-    ]);
-    expect(diffSnapshots({ count: undefined }, { count: 1 })).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/count", value: 1 }, undo: { op: "replace", path: "/count", value: undefined } },
-    ]);
-
-    const [removed] = diffSnapshots({ count: undefined }, {});
-
-    expect(removed?.do).toEqual({ op: "remove", path: "/count" });
-    expect(removed?.undo.op).toBe("add");
-    expect("value" in (removed?.undo ?? {})).toBe(true);
-    expect(readValue(removed?.undo)).toBeUndefined();
-  });
-
-  it("recurses same-length arrays per index", () => {
-    const ops = diffSnapshots({ list: [1, 2, 3] }, { list: [1, 9, 3] });
-
-    expect(ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/list/1", value: 9 }, undo: { op: "replace", path: "/list/1", value: 2 } },
-    ]);
-  });
-
-  it("keeps per-index ops when an index holds a present undefined on both sides", () => {
-    const ops = diffSnapshots({ list: [1, undefined, 3] }, { list: [1, undefined, 9] });
-
-    expect(ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/list/2", value: 9 }, undo: { op: "replace", path: "/list/2", value: 3 } },
-    ]);
-  });
-
-  it("reports a length change as one whole-array replace", () => {
-    const grown = diffSnapshots({ list: [1, 2] }, { list: [1, 2, 3] });
-
-    expect(grown).toHaveLength(1);
-    expectReplacePair(grown[0], "/list", [1, 2, 3], [1, 2]);
-
-    const shrunk = diffSnapshots({ list: [1, 2, 3] }, { list: [1, 3] });
-
-    expect(shrunk).toHaveLength(1);
-    expectReplacePair(shrunk[0], "/list", [1, 3], [1, 2, 3]);
-  });
-
-  it("identity-compares function fields", () => {
-    const first = () => "a";
-    const second = () => "b";
-
-    expect(diffSnapshots({ run: first }, { run: first })).toEqual([]);
-    expect(diffSnapshots({ run: first }, { run: second })).toEqual([
-      { isPatch: true, do: { op: "replace", path: "/run", value: second }, undo: { op: "replace", path: "/run", value: first } },
-    ]);
-  });
-
-  it("replaces a leaf when the types mismatch", () => {
-    const ops = diffSnapshots({ value: { nested: 1 } }, { value: 1 });
-
-    expect(ops).toHaveLength(1);
-    expectReplacePair(ops[0], "/value", 1, { nested: 1 });
-  });
-
-  it("emits an empty pointer for a change at the root", () => {
-    const ops = diffSnapshots({ count: 1 }, 5);
-
-    expect(ops).toHaveLength(1);
-    expectReplacePair(ops[0], "", 5, { count: 1 });
-  });
-
-  it("escapes ~ before / in pointer segments", () => {
-    expect(diffSnapshots({}, { "a/b": 1 })).toEqual([
-      { isPatch: true, do: { op: "add", path: "/a~1b", value: 1 }, undo: { op: "remove", path: "/a~1b" } },
-    ]);
-    expect(diffSnapshots({}, { "a~b": 1 })).toEqual([
-      { isPatch: true, do: { op: "add", path: "/a~0b", value: 1 }, undo: { op: "remove", path: "/a~0b" } },
-    ]);
-    expect(diffSnapshots({}, { "a~/b": 1 })).toEqual([
-      { isPatch: true, do: { op: "add", path: "/a~0~1b", value: 1 }, undo: { op: "remove", path: "/a~0~1b" } },
-    ]);
-  });
-
-  it("creates a fresh clone on every read of a cloneable value", () => {
-    const [op] = diffSnapshots({}, { document: { item: { value: 1 }, tags: ["a"] } });
-
-    const first = readValue(op?.do) as { item: { value: number }; tags: Array<string> };
-    const second = readValue(op?.do) as { item: { value: number }; tags: Array<string> };
-
-    expect(first).not.toBe(second);
-    expect(first.item).not.toBe(second.item);
-    expect(first.tags).not.toBe(second.tags);
-    expect(first).toEqual({ item: { value: 1 }, tags: ["a"] });
-    expect(second).toEqual(first);
-  });
-
-  it("leaves the source unfrozen; clones are independent of the record while the source stays shared", () => {
-    const document = { item: { value: 1 }, tags: ["a"] };
-    const [op] = diffSnapshots({}, { document });
-
-    expect(op?.do.op).toBe("add");
-    expect(Object.isFrozen(document)).toBe(false);
-
-    const clone = readValue(op?.do) as { item: { value: number }; tags: Array<string> };
-
-    clone.tags.push("b");
-    clone.item.value = 2;
-
-    expect(document).toEqual({ item: { value: 1 }, tags: ["a"] });
-    expect(readValue(op?.do)).toEqual({ item: { value: 1 }, tags: ["a"] });
-
-    document.item.value = 3;
-
-    expect(readValue(op?.do)).toEqual({ item: { value: 3 }, tags: ["a"] });
-  });
-
-  it("leaves ignore() values inside op values mutable", () => {
-    const bookkeeping = ignore({ entries: new Array<string>() });
-    const document = { bookkeeping };
-    const [op] = diffSnapshots({}, { document });
-
-    bookkeeping.entries.push("one");
-
-    expect(bookkeeping.entries).toEqual(["one"]);
-    expect(readValue(op?.do)).toEqual({ bookkeeping: { entries: ["one"] } });
-  });
-
-  it("treats an ignore() value as an identity leaf", () => {
-    const first = ignore({ entries: [1] });
-    const second = ignore({ entries: [2] });
-    const [op] = diffSnapshots({ bookkeeping: first }, { bookkeeping: second });
-
-    expect(op?.do).toEqual({ op: "replace", path: "/bookkeeping", value: second });
-    expect(readValue(op?.do)).toBe(second);
-    expect(readValue(op?.undo)).toBe(first);
-  });
-
-  it("leaves class instances inside op values mutable", () => {
-    class Emitter {
-      public count = 0;
-    }
-
-    const emitter = new Emitter();
-    const document = { emitter };
-    const [op] = diffSnapshots({}, { document });
-
-    emitter.count = 1;
-
-    expect((readValue(op?.do) as { emitter: Emitter }).emitter.count).toBe(1);
-  });
-
-  it("hands identity leaves back un-cloned through the getter", () => {
-    class Emitter {
-      public count = 0;
-    }
-
-    const bookkeeping = ignore({ entries: new Array<string>() });
-    const emitter = new Emitter();
-    const run = () => "a";
-    const [op] = diffSnapshots({}, { document: { bookkeeping, emitter, run } });
-
-    const clone = readValue(op?.do) as { bookkeeping: object; emitter: Emitter; run: () => string };
-
-    expect(clone.bookkeeping).toBe(bookkeeping);
-    expect(clone.emitter).toBe(emitter);
-    expect(clone.run).toBe(run);
-    expect(Object.isFrozen(clone.bookkeeping)).toBe(false);
-    expect(Object.isFrozen(clone.emitter)).toBe(false);
-  });
-
-  it("keeps producing correct generations after op values share snapshot subtrees", () => {
-    const state = proxy({ document: { item: { value: 1 }, tags: ["a"] } });
-
-    const first = snapshot(state);
-
-    state.document.tags.push("b");
-
-    const second = snapshot(state);
-
-    const firstOps = diffSnapshots(first, second);
-
-    expect(firstOps).toHaveLength(1);
-    expectReplacePair(firstOps[0], "/document/tags", ["a", "b"], ["a"]);
-    state.document.tags.push("c");
-
-    const third = snapshot(state);
-    const secondOps = diffSnapshots(second, third);
-
-    expect(secondOps).toHaveLength(1);
-    expectReplacePair(secondOps[0], "/document/tags", ["a", "b", "c"], ["a", "b"]);
-    expect(third.document.tags).toEqual(["a", "b", "c"]);
-    expect(second.document.tags).toEqual(["a", "b"]);
-
-    state.document.item.value = 2;
-
-    const fourth = snapshot(state);
-
-    expect(diffSnapshots(third, fourth)).toEqual([
-      {
-        isPatch: true,
-        do: { op: "replace", path: "/document/item/value", value: 2 },
-        undo: { op: "replace", path: "/document/item/value", value: 1 },
-      },
-    ]);
-    expect(fourth.document.tags).toBe(third.document.tags);
-  });
-
-  describe("accessors", () => {
-    it("skips getter keys without invoking them while data keys still diff", () => {
-      const makeSide = (count: number): object => ({
-        count,
-        get derived(): never {
-          throw new Error("the diff invoked a getter");
-        },
-      });
-
-      const ops = diffSnapshots(makeSide(1), makeSide(2));
-
-      expect(ops).toEqual([
-        { isPatch: true, do: { op: "replace", path: "/count", value: 2 }, undo: { op: "replace", path: "/count", value: 1 } },
-      ]);
-    });
-
-    it("skips a key carrying a getter on either side alone, including presence changes", () => {
-      const withGetter = {
-        count: 1,
-        get derived(): never {
-          throw new Error("the diff invoked a getter");
-        },
-      };
-
-      expect(diffSnapshots(withGetter, { count: 1, derived: 5 })).toEqual([]);
-      expect(diffSnapshots({ count: 1, derived: 5 }, withGetter)).toEqual([]);
-      expect(diffSnapshots({ count: 1 }, withGetter)).toEqual([]);
-      expect(diffSnapshots(withGetter, { count: 1 })).toEqual([]);
-    });
-  });
-
-  describe("dense-array presence escalation", () => {
-    it("escalates a hole-to-stored-undefined change at fixed length to a whole-array replace", () => {
-      // eslint-disable-next-line no-sparse-arrays
-      const withHole = [1, , 3];
-      const withUndefined = [1, undefined, 3];
-
-      const ops = diffSnapshots({ list: withHole }, { list: withUndefined });
-
-      expect(ops).toHaveLength(1);
-      expectReplacePair(ops[0], "/list", [1, undefined, 3], withHole);
-      expect(Object.hasOwn(readValue(ops[0]?.do) as Array<unknown>, 1)).toBe(true);
-      expect(Object.hasOwn(readValue(ops[0]?.undo) as Array<unknown>, 1)).toBe(false);
-    });
-
-    it("escalates delete m.arr[1] to a whole-array replace whose halves round-trip hole-ness exactly", () => {
-      const state = proxy<{ arr: Array<number | undefined> }>({ arr: [1, 2, 3] });
-      const before = snapshot(state);
-
-      delete state.arr[1];
-
-      const after = snapshot(state);
-      const ops = diffSnapshots(before, after);
-
-      expect(ops).toHaveLength(1);
-      expect(ops[0]?.do.path).toBe("/arr");
-
-      const forward = createState<{ arr: Array<number | undefined> }>({ arr: [1, 2, 3] });
-
-      applyOps(forward, [ops[0]!.do]);
-      expect(Object.hasOwn(forward.op.unwrap().arr, 1)).toBe(false);
-      expect(forward.op.unwrap().arr).toEqual([1, undefined, 3]);
-
-      const backward = createState<{ arr: Array<number | undefined> }>({ arr: [] });
-
-      applyOps(backward, [ops[0]!.undo]);
-      expect(Object.hasOwn(backward.op.unwrap().arr, 1)).toBe(true);
-      expect(backward.op.unwrap().arr[1]).toBe(2);
-    });
-
-    it("keeps per-index ops for a dense array of the same length", () => {
-      const ops = diffSnapshots({ list: [1, 2, 3] }, { list: [1, 9, 3] });
-
-      expect(ops).toEqual([
-        { isPatch: true, do: { op: "replace", path: "/list/1", value: 9 }, undo: { op: "replace", path: "/list/1", value: 2 } },
-      ]);
-    });
-  });
-
-  describe("cycles", () => {
-    it("throws a named cyclic error carrying the pointer, promptly, for cyclic before/after inputs", () => {
-      const beforeCycle: { self?: unknown } = {};
-      beforeCycle.self = beforeCycle;
-      const afterCycle: { self?: unknown } = {};
-      afterCycle.self = afterCycle;
-
-      const start = performance.now();
-
-      expect(() => diffSnapshots({ node: beforeCycle }, { node: afterCycle })).toThrow(
-        "opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids",
-      );
-      expect(performance.now() - start).toBeLessThan(1000);
-    });
-
-    it("throws when reading a newly created cycle's op value, at emission", () => {
-      const state = proxy<{ node: { self?: unknown } }>({ node: {} });
-      const before = snapshot(state);
-
-      state.node.self = state.node;
-
-      const after = snapshot(state);
-      const ops = diffSnapshots(before, after);
-
-      expect(ops).toHaveLength(1);
-      expect(() => readValue(ops[0]?.do)).toThrow(
-        "opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids",
-      );
-    });
-
-    it("treats an ignore()d cycle as a safe leaf, walked past unharmed", () => {
-      const cyclicBefore: { self?: unknown } = {};
-      cyclicBefore.self = cyclicBefore;
-      const wrappedBefore = ignore(cyclicBefore);
-
-      const cyclicAfter: { self?: unknown } = {};
-      cyclicAfter.self = cyclicAfter;
-      const wrappedAfter = ignore(cyclicAfter);
-
-      const ops = diffSnapshots({ node: wrappedBefore }, { node: wrappedAfter });
-
-      expect(ops).toEqual([
-        { isPatch: true, do: { op: "replace", path: "/node", value: wrappedAfter }, undo: { op: "replace", path: "/node", value: wrappedBefore } },
-      ]);
-    });
-
-    it("clones an op value with within-value aliasing preserved: left === right for a shared subtree", () => {
-      const shared = { value: 1 };
-      const [op] = diffSnapshots({}, { document: { left: shared, right: shared } });
-
-      const clone = readValue(op?.do) as { left: { value: number }; right: { value: number } };
-
-      expect(clone.left).toBe(clone.right);
-      expect(clone.left).toEqual({ value: 1 });
-    });
-
-    it("does not false-trip a legitimate before-side DAG compared against genuine after-side cycles", () => {
-      const shared = { tag: "shared" };
-
-      const makeCyclic = (): { tag: string; self?: unknown } => {
-        const node: { tag: string; self?: unknown } = { tag: "cyclic" };
-
-        node.self = node;
-
-        return node;
-      };
-
-      const ops = diffSnapshots({ a: shared, b: shared }, { a: makeCyclic(), b: makeCyclic() });
-
-      expect(ops.map((op) => [op.do.op, op.do.path])).toEqual([
-        ["replace", "/a/tag"],
-        ["add", "/a/self"],
-        ["replace", "/b/tag"],
-        ["add", "/b/self"],
-      ]);
-    });
-  });
+const replayUndo = <T extends object>(state: State<T>, ops: Array<Op>): void => applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+const replayDo = <T extends object>(state: State<T>, ops: Array<Op>): void => applyOps(state, ops.map((pair) => pair.do));
+
+describe("diffSnapshots: atomic flat paths", () => {
+	it("emits add, replace, and remove pairs at frozen array paths", () => {
+		const ops = diffSnapshots({ kept: 1, changed: 2, removed: 3 }, { kept: 1, changed: 4, added: 5 });
+
+		expect(ops).toEqual([
+			{ isPatch: true, do: { op: "replace", path: ["changed"], value: 4 }, undo: { op: "replace", path: ["changed"], value: 2 } },
+			{ isPatch: true, do: { op: "remove", path: ["removed"] }, undo: { op: "add", path: ["removed"], value: 3 } },
+			{ isPatch: true, do: { op: "add", path: ["added"], value: 5 }, undo: { op: "remove", path: ["added"] } },
+		]);
+		for (const pair of ops) expect(Object.isFrozen(pair.do.path)).toBe(true);
+	});
+
+	it("recurses only while storage identity is continuous", () => {
+		const state = createState({ retained: { count: 1 }, replaced: { count: 1 } });
+		const before = state.op.unwrap();
+
+		state.mutate((mutable) => {
+			mutable.retained.count = 2;
+			mutable.replaced = { count: 2 };
+		});
+
+		const ops = diffSnapshots(before, state.op.unwrap());
+
+		expect(ops.map((pair) => pair.do.path)).toEqual([["retained", "count"], ["replaced"]]);
+		expect(readValue(ops[1]?.do ?? { op: "remove", path: [] })).toEqual({ count: 2 });
+	});
+
+	it("rejects primitive, unsupported, and incompatible roots", () => {
+		expect(() => diffSnapshots(1 as unknown as object, 2 as unknown as object)).toThrow("compatible supported object roots");
+		expect(() => diffSnapshots({}, [])).toThrow("compatible supported object roots");
+		expect(() => diffSnapshots(new Map(), new Map())).toThrow("compatible supported object roots");
+	});
+
+	it("rejects reserved paths before emitting", () => {
+		const polluted = Object.create(null);
+		const aliasedPrototype = { prototype: { polluted: true } };
+
+		Object.defineProperty(polluted, "__proto__", { value: { polluted: true }, enumerable: true });
+
+		expect(() => diffSnapshots({}, polluted)).toThrow("reserved operation path");
+		expect(() => diffSnapshots({}, { constructor: { prototype: { polluted: true } } })).toThrow("reserved operation path");
+		expect(() => diffSnapshots({}, { boundary: { safe: aliasedPrototype, constructor: aliasedPrototype } })).toThrow(
+			"reserved operation path /boundary/constructor/prototype",
+		);
+	});
+
+	it("orders sparse growth length before tail additions and preserves holes", () => {
+		const before = [1];
+		const after = new Array<unknown>(1);
+
+		after[0] = 1;
+
+		after.length = 4;
+		after[3] = undefined;
+
+		const ops = diffSnapshots(before, after);
+
+		expect(ops.map((pair) => pair.do)).toEqual([
+			{ op: "replace", path: ["length"], value: 4 },
+			{ op: "add", path: [3], value: undefined },
+		]);
+	});
+
+	it("orders truncated removals before shrink and reverse undo expands first", () => {
+		const before = [1, 2, 3];
+		const after = [1];
+		const ops = diffSnapshots(before, after);
+
+		expect(ops.map((pair) => pair.do)).toEqual([
+			{ op: "remove", path: [1] },
+			{ op: "remove", path: [2] },
+			{ op: "replace", path: ["length"], value: 1 },
+		]);
+		expect([...ops].reverse().map((pair) => pair.undo)).toEqual([
+			{ op: "replace", path: ["length"], value: 3 },
+			{ op: "add", path: [2], value: 3 },
+			{ op: "add", path: [1], value: 2 },
+		]);
+	});
+
+	it("distinguishes holes from stored undefined in overlap", () => {
+		const hole = new Array<unknown>(1);
+		const stored = [undefined];
+
+		expect(diffSnapshots(hole, stored)[0]?.do).toEqual({ op: "add", path: [0], value: undefined });
+		expect(diffSnapshots(stored, hole)[0]?.do).toEqual({ op: "remove", path: [0] });
+	});
+
+	it("emits enumerable array non-index string properties as ordinary paths", () => {
+		const before = [1];
+		const after = [1];
+
+		Object.defineProperty(before, "label", { value: "a", enumerable: true });
+		Object.defineProperty(after, "label", { value: "b", enumerable: true });
+
+		expect(diffSnapshots(before, after)[0]?.do).toEqual({ op: "replace", path: ["label"], value: "b" });
+	});
+
+	it("emits stable Map key interiors through keyOf and values through the raw key", () => {
+		const key = { id: 1 };
+		const value = { count: 1 };
+		// Heavy unchanged padding keeps two small interiors atomic so the keyOf path shape stays observable.
+		const pad = "x".repeat(5_000);
+		const state = createState({
+			map: new TrackedMap<object | string, object | string>([
+				[key, value],
+				["pad0", pad],
+				["pad1", pad],
+			]),
+		});
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			const mutableKey = [...mutable.map.keys()][0] as typeof key;
+			const mutableValue = mutable.map.get(key) as typeof value | undefined;
+
+			if (!mutableKey || !mutableValue) throw new Error("entry missing");
+			mutableKey.id = 2;
+			mutableValue.count = 2;
+		});
+
+		const ops = heard[0] ?? [];
+		const keySelector = getPathSelector(ops[0]?.do.path[1]);
+
+		expect(keySelector?.kind).toBe("keyOf");
+		expect(isSameIdentity(keySelector?.value as object, key)).toBe(true);
+		const keyOperation = ops[0];
+		const valueOperation = ops[1];
+
+		if (!keyOperation || !valueOperation) throw new Error("missing interior operations");
+		expect(keyOperation.do.path[2]).toBe("id");
+		expect(isSameIdentity(valueOperation.do.path[1] as object, key)).toBe(true);
+		expect(valueOperation.do.path[2]).toBe("count");
+	});
+
+	it("escapes a selector object stored as a Map key or Set member", () => {
+		const selectorData = createKeyOfPathSegment("data");
+		const state = createState({ map: new TrackedMap([[selectorData, 1]]), set: new TrackedSet([selectorData]) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.map.delete(selectorData);
+			mutable.set.delete(selectorData);
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(getPathSelector(ops[0]?.do.path[1])).toEqual({ kind: "valueOf", value: selectorData });
+		expect(getPathSelector(ops[1]?.do.path[1])).toEqual({ kind: "valueOf", value: selectorData });
+	});
+
+	it("collapses clear-and-rebuild Map membership into one container replace", () => {
+		const state = createState({ map: new TrackedMap([["a", 1], ["b", 2]]) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.map.clear();
+			mutable.map.set("b", 20);
+			mutable.map.set("a", 10);
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
+		expect([...readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedMap<string, number>]).toEqual([
+			["b", 20],
+			["a", 10],
+		]);
+		replayUndo(state, ops);
+		expect([...state.op.unwrap().map]).toEqual([
+			["a", 1],
+			["b", 2],
+		]);
+		replayDo(state, ops);
+		expect([...state.op.unwrap().map]).toEqual([
+			["b", 20],
+			["a", 10],
+		]);
+	});
+
+	it("collapses multi-slot Set membership edits into one container replace", () => {
+		const state = createState({ set: new TrackedSet([1, 2]) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.set.delete(1);
+			mutable.set.add(3);
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["set"] });
+		expect([...readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedSet<number>]).toEqual([2, 3]);
+		replayUndo(state, ops);
+		expect([...state.op.unwrap().set]).toEqual([1, 2]);
+		replayDo(state, ops);
+		expect([...state.op.unwrap().set]).toEqual([2, 3]);
+	});
+
+	it("emits TrackedDate content at epoch but replaces a different date target at its parent", () => {
+		const state = createState({ retained: new TrackedDate(0), replaced: new TrackedDate(0) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.retained.setTime(5);
+			mutable.replaced = new TrackedDate(10);
+		});
+
+		expect((heard[0] ?? []).map((pair) => pair.do.path)).toEqual([["retained", "epoch"], ["replaced"]]);
+	});
+
+	it("round-trips mixed atomic changes exactly", () => {
+		const key = { id: 1 };
+		const state = createState({ list: [1, 2], map: new TrackedMap([[key, { count: 1 }]]), set: new TrackedSet(["a"]), date: new TrackedDate(0) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.list.length = 4;
+			mutable.list[3] = 9;
+			mutable.map.get(key)!.count = 2;
+			mutable.set.add("b");
+			mutable.date.setTime(10);
+		});
+
+		const after = state.op.unwrap();
+		const ops = heard[0] ?? [];
+
+		replayUndo(state, ops);
+		expect(state.op.unwrap().list).toEqual([1, 2]);
+		expect(state.op.unwrap().map.get(key)?.count).toBe(1);
+		expect([...state.op.unwrap().set]).toEqual(["a"]);
+		expect(state.op.unwrap().date.getTime()).toBe(0);
+
+		replayDo(state, ops);
+		expect(state.op.unwrap()).toEqual(after);
+	});
+});
+
+describe("diffSnapshots: container collapse", () => {
+	it("mass shrink emits one replace at the array path and round-trips", () => {
+		const state = createState({ list: Array.from({ length: 2000 }, (_, index) => index) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.list.length = 10;
+		});
+
+		const after = state.op.unwrap();
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
+		expect(readValue(ops[0]?.do ?? { op: "remove", path: [] })).toEqual(Array.from({ length: 10 }, (_, index) => index));
+
+		replayUndo(state, ops);
+		expect(state.op.unwrap().list).toEqual(Array.from({ length: 2000 }, (_, index) => index));
+		replayDo(state, ops);
+		expect(state.op.unwrap()).toEqual(after);
+	});
+
+	it("scattered scalar edits in a large subtree stay atomic", () => {
+		const state = createState({
+			tree: Array.from({ length: 2000 }, (_, index) => ({ n: index })),
+		});
+		const heard = record(state);
+		const edited = [0, 400, 800, 1200, 1600];
+
+		state.mutate((mutable) => {
+			for (const index of edited) mutable.tree[index]!.n = index + 1;
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(5);
+		expect(ops.map((pair) => pair.do)).toEqual(
+			edited.map((index) => ({ op: "replace", path: ["tree", index, "n"], value: index + 1 })),
+		);
+	});
+
+	it("many small changes beside few huge unchanged entries stay atomic", () => {
+		const huge = "x".repeat(50_000);
+		const state = createState({
+			bag: {
+				a: 1,
+				b: 2,
+				c: 3,
+				d: 4,
+				e: 5,
+				f: 6,
+				g: 7,
+				h: 8,
+				heavy0: huge,
+				heavy1: huge,
+			},
+		});
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.bag.a = 11;
+			mutable.bag.b = 12;
+			mutable.bag.c = 13;
+			mutable.bag.d = 14;
+			mutable.bag.e = 15;
+			mutable.bag.f = 16;
+			mutable.bag.g = 17;
+			mutable.bag.h = 18;
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(8);
+		expect(ops.every((pair) => pair.do.op === "replace" && pair.do.path[0] === "bag" && pair.do.path.length === 2)).toBe(true);
+		expect(ops.map((pair) => pair.do.path[1])).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+	});
+
+	it("composes: a container whose children all collapsed can itself collapse", () => {
+		const state = createState({
+			outer: {
+				left: Array.from({ length: 100 }, (_, index) => index),
+				right: Array.from({ length: 100 }, (_, index) => index),
+			},
+		});
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.outer.left.length = 1;
+			mutable.outer.right.length = 1;
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["outer"] });
+	});
+
+	it("map clear-and-rebuild collapses to one replace with iteration order restored on undo", () => {
+		const state = createState({ map: new TrackedMap([["a", 1], ["b", 2], ["c", 3]]) });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.map.clear();
+			mutable.map.set("c", 30);
+			mutable.map.set("a", 10);
+			mutable.map.set("b", 20);
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
+		expect([...state.op.unwrap().map]).toEqual([
+			["c", 30],
+			["a", 10],
+			["b", 20],
+		]);
+
+		replayUndo(state, ops);
+		expect([...state.op.unwrap().map]).toEqual([
+			["a", 1],
+			["b", 2],
+			["c", 3],
+		]);
+	});
+
+	it("never collapses the root; mass edits collapse only at child paths", () => {
+		const before: Record<string, number> = {};
+		const after: Record<string, number> = {};
+
+		for (let index = 0; index < 50; index++) {
+			before[`k${index}`] = index;
+			after[`k${index}`] = index + 1;
+		}
+
+		const ops = diffSnapshots(before, after);
+
+		expect(ops.length).toBe(50);
+		expect(ops.every((pair) => pair.do.op === "replace" && pair.do.path.length === 1)).toBe(true);
+	});
+
+	it("watchdog mass edit reaches the stream as one side-effect container replace", async () => {
+		const state = createState({ list: Array.from({ length: 200 }, (_, index) => index) });
+		const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+
+		state.op.subscribe((_snapshot, ops, emission) => {
+			heard.push({ ops, emission });
+		});
+
+		const mutable = state.op.unsafeMutable as { list: Array<number> };
+
+		mutable.list.length = 5;
+
+		expect(heard).toHaveLength(0);
+
+		await Promise.resolve();
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.emission).toEqual({ isSideEffect: true });
+		expect(heard[0]?.ops).toHaveLength(1);
+		expect(heard[0]?.ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
+		expect(heard[0]?.ops[0]?.do && "value" in heard[0].ops[0].do ? heard[0].ops[0].do.value : undefined).toEqual([0, 1, 2, 3, 4]);
+	});
+
+	it("small-container two-op edit collapses to one replace and round-trips", () => {
+		const state = createState({ list: [1, 2, 3] });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.list[1] = 20;
+			mutable.list[2] = 30;
+		});
+
+		const after = state.op.unwrap();
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
+		expect(readValue(ops[0]?.do ?? { op: "remove", path: [] })).toEqual([1, 20, 30]);
+
+		replayUndo(state, ops);
+		expect(state.op.unwrap().list).toEqual([1, 2, 3]);
+		replayDo(state, ops);
+		expect(state.op.unwrap()).toEqual(after);
+	});
 });
