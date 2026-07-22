@@ -1,20 +1,16 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 
+import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
+import { isTrackable } from "../valtio/classify";
 import { createOperationPath, formatOperationPath, type OperationPath } from "./path";
 
 const { refSet } = unstable_getInternalStates();
 
 export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value) && !refSet.has(value);
 
-export const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-	if (typeof value !== "object" || value === null || Array.isArray(value) || refSet.has(value)) return false;
+export const isPlainObject = (value: unknown): value is Record<string, unknown> => isTrackable(value) && !Array.isArray(value);
 
-	const prototype: unknown = Object.getPrototypeOf(value);
-
-	return prototype === Object.prototype || prototype === null;
-};
-
-export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> => isPlainObject(value) || isPlainArray(value);
+export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> => isTrackable(value);
 
 export class CyclicValueError extends Error {
 	readonly path: OperationPath;
@@ -62,6 +58,8 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 	}
 
 	memo.set(value, clone);
+
+	if (isUnsafeTracked(value)) unsafeTrack(clone);
 
 	return clone;
 };

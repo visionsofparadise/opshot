@@ -120,12 +120,16 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(state.op.unwrap().count).toBe(0);
 	});
 
-	it("rejects envelopes and marker notifications", () => {
+	it("rejects full Op envelopes; pass op.do or op.undo halves", () => {
 		const state = createState({ count: 0 });
 		const half = createReplaceOperation(["count"], 1);
 
-		expect(() => applyOps(state, [{ isPatch: true, do: half, undo: half } as unknown as Operation])).toThrow("operation halves");
-		expect(() => applyOps(state, [{ isPatch: false } as unknown as Operation])).toThrow("operation halves");
+		expect(() => applyOps(state, [{ isPatch: true, do: half, undo: half } as unknown as Operation])).toThrow(
+			"opshot: applyOps applies operation halves; pass op.do or op.undo.",
+		);
+		expect(() => applyOps(state, [{ isPatch: false } as unknown as Operation])).toThrow(
+			"opshot: applyOps applies operation halves; pass op.do or op.undo.",
+		);
 	});
 
 	it("restores Map values at exact slots, including stored undefined", () => {

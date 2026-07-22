@@ -3,6 +3,10 @@ import { unstable_getInternalStates, unstable_replaceInternalFunction } from "va
 
 import { getRegisteredTarget, registerSnapshotCopy, resolveIdentity } from "../identity";
 import { isTrackedWrapper } from "../tracked/trackedWrapper";
+import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
+import { classifyValue, hasOwnEnumerableFunction, isTrackable } from "./classify";
+
+export { classifyValue, type ValueKind } from "./classify";
 
 // refSet is the only runtime marker ref() leaves on a value; valtio exposes it nowhere else.
 const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
@@ -66,48 +70,11 @@ export const getDirectWriteGeneration = (value: object): DirectWriteGeneration |
 
 export const getDirectWriteVersion = (value: object): number | undefined => getDirectWriteGeneration(value)?.version;
 
-export type ValueKind = "plain" | "plainArray" | "arraySubclass" | "cleanClass" | "privateClass" | "nativeClass";
-
-const sourceCache = new WeakMap<Function, string>();
-
-const readSource = (constructor: Function): string => {
-	const cached = sourceCache.get(constructor);
-
-	if (cached !== undefined) return cached;
-
-	const source = Function.prototype.toString.call(constructor);
-
-	sourceCache.set(constructor, source);
-
-	return source;
-};
-
-const classifyChain = (initialConstructor: unknown): ValueKind => {
-	let sawNativeSource = false;
-	let current = initialConstructor;
-
-	while (typeof current === "function" && current !== Object && current !== Array && current !== Function.prototype) {
-		const source = readSource(current);
-
-		if (source.includes("#")) return "privateClass";
-		if (source.includes("[native code]")) sawNativeSource = true;
-
-		current = Reflect.getPrototypeOf(current);
-	}
-
-	return sawNativeSource ? "nativeClass" : "cleanClass";
-};
-
-export function classifyValue(value: object): ValueKind {
-	const prototype: unknown = Object.getPrototypeOf(value);
-
-	if (Array.isArray(value)) return prototype === Array.prototype || prototype === null ? "plainArray" : "arraySubclass";
-	if (prototype === Object.prototype || prototype === null) return "plain";
-
-	return classifyChain(value.constructor);
-}
-
 const ignoreOption = "ignore(value) to store it by reference, untracked";
+const unsafeTrackDataOption = "unsafeTrack(value) to track its data anyway";
+const unsafeTrackPrivateOption = "unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state";
+const unsafeTrackSlotOption = "unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state";
+const unsafeTrackLossyOption = "unsafeTrack(value) to track it lossily";
 
 export const constructorName = (candidate: unknown): string => (typeof candidate === "function" && candidate.name !== "" ? candidate.name : "Object");
 
@@ -115,15 +82,19 @@ const boundaryError = (className: string, reason: string, options: Array<string>
 	new Error(`opshot: ${className} cannot be tracked (${reason}). Options: ${options.join("; ")}.`);
 
 const slotContainerError = (className: string, trackedName: string): Error =>
-	boundaryError(className, "its state lives in internal slots", [`use ${trackedName} for a tracked equivalent`, ignoreOption]);
+	boundaryError(className, "its state lives in internal slots", [`use ${trackedName} for a tracked equivalent`, unsafeTrackLossyOption, ignoreOption]);
 
-const arraySubclassError = (className: string): Error => boundaryError(className, "array subclasses lose their prototype in snapshots", [ignoreOption]);
+const arraySubclassError = (className: string): Error =>
+	boundaryError(className, "array subclasses lose their prototype in snapshots", [unsafeTrackDataOption, ignoreOption]);
 
-const cleanClassError = (className: string): Error => boundaryError(className, "class instances cannot be tracked", [ignoreOption]);
+const cleanClassError = (className: string): Error =>
+	boundaryError(className, "arrow-method writes won't be tracked", [unsafeTrackDataOption, ignoreOption]);
 
-const privateClassError = (className: string): Error => boundaryError(className, "its state is hidden in private fields", [ignoreOption]);
+const privateClassError = (className: string): Error =>
+	boundaryError(className, "its state is hidden in private fields", [unsafeTrackPrivateOption, ignoreOption]);
 
-const nativeClassError = (className: string): Error => boundaryError(className, "its state is hidden in internal slots", [ignoreOption]);
+const nativeClassError = (className: string): Error =>
+	boundaryError(className, "its state is hidden in internal slots", [unsafeTrackSlotOption, ignoreOption]);
 
 const snapshotDonationError = (key: string | symbol): Error =>
 	new Error(
@@ -161,11 +132,7 @@ const getTrackedRawObject = (value: unknown): object | undefined => {
 	if (!target || refSet.has(target) || Object.isFrozen(target)) return undefined;
 	if (isTrackedWrapper(target)) return target;
 
-	const prototype: unknown = Reflect.getPrototypeOf(target);
-
-	if (Array.isArray(target)) return prototype === Array.prototype || prototype === null ? target : undefined;
-
-	return prototype === Object.prototype || prototype === null ? target : undefined;
+	return isTrackable(target) ? target : undefined;
 };
 
 const getEnumerableDataChild = (target: object, key: PropertyKey): object | undefined => {
@@ -437,6 +404,8 @@ const createSnapshotPreservingAccessors = <T extends object>(target: T, version:
 		(snap as Array<unknown>).length = (target as Array<unknown>).length;
 	}
 
+	if (isUnsafeTracked(target)) unsafeTrack(snap);
+
 	return snap as T;
 };
 
@@ -451,10 +420,12 @@ export function installBoundary(): void {
 		if (typeof value !== "object" || value === null) return false;
 		if (refSet.has(value)) return false;
 		if (isTrackedWrapper(value)) return true;
+		if (isUnsafeTracked(value)) return true;
 
 		const kind = classifyValue(value);
 
 		if (kind === "plain" || kind === "plainArray") return !Object.isFrozen(value);
+		if (kind === "cleanClass" && !hasOwnEnumerableFunction(value)) return true;
 
 		throw rejectionError(value, kind);
 	});

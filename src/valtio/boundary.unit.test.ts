@@ -438,21 +438,21 @@ describe("boundary: throws at entry", () => {
 		expect(state.op.unwrap().alias.prototype).toEqual({ safe: true });
 	});
 
-  it("throws for a Map in the define literal, naming TrackedMap and ignore", () => {
+  it("throws for a Map in the define literal, naming TrackedMap, unsafeTrack, and ignore", () => {
     expect(() => createState({ lookup: new Map<string, number>() })).toThrow(
-      "opshot: Map cannot be tracked (its state lives in internal slots). Options: use TrackedMap for a tracked equivalent; ignore(value) to store it by reference, untracked.",
+      "opshot: Map cannot be tracked (its state lives in internal slots). Options: use TrackedMap for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
     );
   });
 
-  it("throws for a Set, naming TrackedSet and ignore", () => {
+  it("throws for a Set, naming TrackedSet, unsafeTrack, and ignore", () => {
     expect(() => createState({ members: new Set<string>() })).toThrow(
-      "opshot: Set cannot be tracked (its state lives in internal slots). Options: use TrackedSet for a tracked equivalent; ignore(value) to store it by reference, untracked.",
+      "opshot: Set cannot be tracked (its state lives in internal slots). Options: use TrackedSet for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
     );
   });
 
-  it("throws for a Date, naming TrackedDate and ignore", () => {
+  it("throws for a Date, naming TrackedDate, unsafeTrack, and ignore", () => {
     expect(() => createState({ createdAt: new Date() })).toThrow(
-      "opshot: Date cannot be tracked (its state lives in internal slots). Options: use TrackedDate for a tracked equivalent; ignore(value) to store it by reference, untracked.",
+      "opshot: Date cannot be tracked (its state lives in internal slots). Options: use TrackedDate for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
     );
   });
 
@@ -476,7 +476,7 @@ describe("boundary: throws at entry", () => {
     expect(state.op.unwrap().box).toBe(null);
   });
 
-  it("throws for a private-field class, naming its hidden state", () => {
+  it("throws for a private-field class, naming unsafeTrack and ignore", () => {
     class Vault {
       #combination = 7;
 
@@ -486,7 +486,7 @@ describe("boundary: throws at entry", () => {
     }
 
     expect(() => createState({ vault: new Vault() })).toThrow(
-      "opshot: Vault cannot be tracked (its state is hidden in private fields). Options: ignore(value) to store it by reference, untracked.",
+      "opshot: Vault cannot be tracked (its state is hidden in private fields). Options: unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.",
     );
   });
 
@@ -494,7 +494,7 @@ describe("boundary: throws at entry", () => {
     class Cache extends Map<string, number> {}
 
     expect(() => createState({ cache: new Cache() })).toThrow(
-      "opshot: Cache cannot be tracked (its state is hidden in internal slots). Options: ignore(value) to store it by reference, untracked.",
+      "opshot: Cache cannot be tracked (its state is hidden in internal slots). Options: unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.",
     );
   });
 
@@ -502,17 +502,40 @@ describe("boundary: throws at entry", () => {
     class Stack extends Array<number> {}
 
     expect(() => createState({ stack: new Stack() })).toThrow(
-      "opshot: Stack cannot be tracked (array subclasses lose their prototype in snapshots). Options: ignore(value) to store it by reference, untracked.",
+      "opshot: Stack cannot be tracked (array subclasses lose their prototype in snapshots). Options: unsafeTrack(value) to track its data anyway; ignore(value) to store it by reference, untracked.",
     );
   });
 
-  it("throws for a clean class, naming ignore", () => {
+  it("tracks a clean class instance with fine-grained interior ops", () => {
     class Emitter {
       count = 0;
     }
 
-    expect(() => createState({ emitter: new Emitter() })).toThrow(
-      "opshot: Emitter cannot be tracked (class instances cannot be tracked). Options: ignore(value) to store it by reference, untracked.",
+    const state = createState({ emitter: new Emitter() });
+    const emissions = recordEmissions(state);
+
+    state.mutate((mutable) => {
+      mutable.emitter.count = 1;
+    });
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]?.ops).toEqual([
+      { isPatch: true, do: { op: "replace", path: ["emitter", "count"], value: 1 }, undo: { op: "replace", path: ["emitter", "count"], value: 0 } },
+    ]);
+    expect(state.op.unwrap().emitter).toBeInstanceOf(Emitter);
+    expect(state.op.unwrap().emitter.count).toBe(1);
+  });
+
+  it("throws for a clean class with an own-enumerable arrow method, naming unsafeTrack", () => {
+    class Arrow {
+      count = 0;
+      bump = (): void => {
+        this.count += 1;
+      };
+    }
+
+    expect(() => createState({ arrow: new Arrow() })).toThrow(
+      "opshot: Arrow cannot be tracked (arrow-method writes won't be tracked). Options: unsafeTrack(value) to track its data anyway; ignore(value) to store it by reference, untracked.",
     );
   });
 

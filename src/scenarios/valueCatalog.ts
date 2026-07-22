@@ -5,6 +5,7 @@ import { ignore } from "../ignore";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
+import { unsafeTrack } from "../unsafeTrack";
 
 export type Lane = "tracked" | "cyclic" | "throwsAtAttach" | "registeredCopy" | "autoIgnored" | "ignored" | "leaf";
 export type OperationLane = "containerTranslation" | "collectionKeyInterior" | "sparseArray" | "equalContentReplacement" | "sameTargetInterior" | "none";
@@ -25,6 +26,14 @@ class CleanPoint {
 	sum(): number {
 		return this.x + this.y;
 	}
+}
+
+class ArrowPoint {
+	x = 1;
+	y = 2;
+	bump = (): void => {
+		this.x += 1;
+	};
 }
 
 class PrivateBox {
@@ -116,7 +125,9 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 	{ name: "rawMap", lane: "throwsAtAttach", create: () => new Map([["a", 1]]) },
 	{ name: "rawSet", lane: "throwsAtAttach", create: () => new Set([1, 2]) },
 	{ name: "rawDate", lane: "throwsAtAttach", create: () => new Date(0) },
-	{ name: "cleanClassInstance", lane: "throwsAtAttach", create: () => new CleanPoint() },
+	{ name: "cleanClassInstance", lane: "tracked", create: () => new CleanPoint() },
+	{ name: "cleanArrowClassInstance", lane: "throwsAtAttach", create: () => new ArrowPoint() },
+	{ name: "unsafeTrackedCleanArrowClass", lane: "tracked", create: () => unsafeTrack(new ArrowPoint()) },
 	{ name: "privateFieldClassInstance", lane: "throwsAtAttach", create: () => new PrivateBox() },
 	{ name: "arraySubclass", lane: "throwsAtAttach", create: () => new ArraySubclass() },
 	{ name: "mapSubclass", lane: "throwsAtAttach", create: () => new MapSubclass() },

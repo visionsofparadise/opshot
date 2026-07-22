@@ -2,9 +2,10 @@
 
 import { createState } from "../createState";
 
-// jsdom implements the DOM in JavaScript, not native code, so its nodes classify as clean- or
-// private-field classes rather than the slot-bearing "internal slots" a real browser reports -- the
-// message differs by environment, so these assertions pin only that a remedy is offered, not its text.
+// jsdom implements the DOM in JavaScript, not native code, so its nodes classify as clean classes
+// (no `#`, no `[native code]`, no own-enumerable functions) and now attach under the clean-class
+// tracking rule. Real browsers still reject them as native-slot bearers. These pins document the
+// jsdom path only.
 const domValues: ReadonlyArray<{ readonly name: string; readonly create: () => unknown }> = [
 	{ name: "htmlElement", create: () => document.createElement("div") },
 	{ name: "documentFragment", create: () => document.createDocumentFragment() },
@@ -12,16 +13,18 @@ const domValues: ReadonlyArray<{ readonly name: string; readonly create: () => u
 	{ name: "blob", create: () => new Blob(["catalog"]) },
 ];
 
-describe("web DOM globals are rejected at the loud boundary", () => {
-	it.each(domValues.map((entry) => [entry.name, entry] as const))("%s throws at create and via mutate", (_name, entry) => {
-		expect(() => createState<{ value: unknown }>({ value: entry.create() })).toThrow(/Options:/);
+describe("web DOM globals under jsdom (clean-class attach)", () => {
+	it.each(domValues.map((entry) => [entry.name, entry] as const))("%s attaches at create and via mutate", (_name, entry) => {
+		const created = createState<{ value: unknown }>({ value: entry.create() });
+
+		expect("value" in created.op.unwrap()).toBe(true);
 
 		const state = createState<{ value?: unknown }>({});
 
-		expect(() =>
-			state.mutate((mutable) => {
-				mutable.value = entry.create();
-			}),
-		).toThrow(/Options:/);
+		state.mutate((mutable) => {
+			mutable.value = entry.create();
+		});
+
+		expect("value" in state.op.unwrap()).toBe(true);
 	});
 });

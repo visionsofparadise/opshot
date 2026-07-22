@@ -27,9 +27,7 @@ const sameIdentity = (first: unknown, second: unknown): boolean => sameValueZero
 
 const assertApplicable: (operation: unknown) => asserts operation is Operation = (operation) => {
 	if (typeof operation === "object" && operation !== null && "isPatch" in operation) {
-		throw new Error(
-			"opshot: applyOps applies operation halves; pass op.do or op.undo. A marker (isPatch: false) is a notification and cannot be applied; project the value's state into plain fields instead.",
-		);
+		throw new Error("opshot: applyOps applies operation halves; pass op.do or op.undo.");
 	}
 
 	if (!isOperation(operation)) {

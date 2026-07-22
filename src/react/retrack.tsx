@@ -3,7 +3,8 @@ import { isState } from "../isState";
 import { getTrackedMapData, setTrackedMapData } from "../tracked/trackedMap";
 import { getTrackedSetData, setTrackedSetData } from "../tracked/trackedSet";
 import { isTrackedWrapper } from "../tracked/trackedWrapper";
-import { classifyValue, constructorName } from "../valtio/boundary";
+import { constructorName } from "../valtio/boundary";
+import { classifyValue } from "../valtio/classify";
 import { useRetrackAll } from "./tracking";
 
 interface FacadePathSegment {

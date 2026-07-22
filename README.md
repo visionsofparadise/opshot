@@ -117,25 +117,25 @@ Without `ignore`, that `new Audio()` would throw. The next section is why.
 
 ## The value model
 
-Tracked state is plain data: plain objects, plain arrays, primitives. That is what the op stream can promise faithful, invertible ops for. Everything else declares its treatment at the moment it enters state, or the assignment throws:
+Two regimes: **tracked** (records what changed — ops) and **ignored** (present, untreated). Tracked state is plain data, clean class instances, and anything you deliberately admit with `unsafeTrack`. That is what the op stream can promise — faithfully for plain data and clean classes, lossily when you opted in with `unsafeTrack`. Everything else declares its treatment at the moment it enters state, or the assignment throws:
 
 ```ts
 state.mutate((mutable) => (mutable.index = new Map()));
 // Error: opshot: Map cannot be tracked (its state lives in internal slots).
-// Options: use TrackedMap for a tracked equivalent; ignore(value) to store it by reference, untracked.
+// Options: use TrackedMap for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.
 
 state.mutate((mutable) => (mutable.job = new UploadJob()));
 // Error: opshot: UploadJob cannot be tracked (its state is hidden in private fields).
-// Options: ignore(value) to store it by reference, untracked.
+// Options: unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.
 ```
 
-The throw is synchronous at the assigning line (or at `createState` when the initializer carries the value), and the message carries the fix: `Map`/`Set`/`Date` name their tracked equivalents, classes and array subclasses name `ignore()`. There is no silent lane — nothing is stored raw to misbehave later, far from the cause.
+The throw is synchronous at the assigning line (or at `createState` when the initializer carries the value), and the message carries the fix. There is no silent lane — nothing is stored raw to misbehave later, far from the cause.
 
 | Lane | Values | Treatment |
 | --- | --- | --- |
-| Tracked automatically | plain objects, plain arrays, primitives | proxied, diffed, fine-grained ops |
+| Tracked automatically | plain objects, plain arrays, primitives, clean class instances (no own-enumerable functions) | proxied, diffed, fine-grained ops |
 | Admitted by rule | frozen plain objects; symbol-keyed and non-enumerable properties; functions; own getters | present, no ops (rules below) |
-| Declaration required | `Map`/`Set`/`Date`, class instances, array subclasses, everything else | throws until you pick `TrackedMap`/`TrackedSet`/`TrackedDate` or `ignore()` |
+| Declaration required | `Map`/`Set`/`Date`, classes with own-enumerable functions or hidden state, array subclasses, everything else | throws until you pick a facade, `unsafeTrack()`, or `ignore()` |
 
 The admitted-by-rule lane holds values that carry an in-band declaration of their own:
 
@@ -144,7 +144,15 @@ The admitted-by-rule lane holds values that carry an in-band declaration of thei
 - **Functions** are identity leaves: domain methods and function fields never produce ops, and replacing one is a tracked identity replace.
 - **Own getters** stay live on snapshots: a getter declares derived, so it recomputes per generation and emits no ops.
 
-Two regimes ship today: **tracked** (records what changed — ops) and **ignored** (present, untreated). A third, **watched** — reactivity without op values, for class instances free of hidden state — is designed but not yet available; today class instances take `ignore()`.
+**Clean classes track.** A class whose entire state is own-enumerable data with prototype methods rides the same copy / diff / replay path as a plain object: fine-grained reactivity, faithful ops, undo/replay. A clean class that carries an own-enumerable function (constructor-bound arrow methods are the common case) throws instead: those arrow-method writes would bypass the proxy undetected. The throw offers `unsafeTrack()` or `ignore()`.
+
+**`unsafeTrack(value)`** is the universal loud opt-in. It suppresses the boundary throw and admits any otherwise-rejected value to the copy-tracking path, accepting whatever breaks:
+
+- clean class with arrow fields — public data tracks; arrow-method writes are not recorded
+- `#private` / native-slotted class — public fields track; methods that read hidden state throw on snapshots; whole-instance undo drops that state
+- raw `Map`/`Set`/`Date` — lossy; prefer the facade (`TrackedMap`/`TrackedSet`/`TrackedDate`) for correct, full tracking
+
+For `Map`/`Set`/`Date`, the throw leads with the facade, then `unsafeTrack`, then `ignore`. For classes and array subclasses, it offers `unsafeTrack` and `ignore`.
 
 Also refused on tracked state: `Object.defineProperty` (define properties in the `createState` literal) and `Object.setPrototypeOf` both throw — meta-mutating tracked data is bug-shaped.
 
@@ -209,10 +217,10 @@ import { createState, TrackedMap } from "opshot";
 const state = createState({ index: new TrackedMap<string, number>() });
 
 state.mutate((mutable) => mutable.index.set("a", 1));
-// ops: [{ isPatch: true, do: { op: "add", path: ["index", "a"], value: 1, slot: 0 }, undo: { op: "remove", path: ["index", "a"] } }]
+// ops: [{ do: { op: "add", path: ["index", "a"], value: 1, slot: 0 }, undo: { op: "remove", path: ["index", "a"] } }]
 ```
 
-- Collection contents follow the value model. Plain objects in keys, values, and members are tracked; unsupported class instances throw. Use `ignore()` when a key, value, or member should stay an identity-only leaf.
+- Collection contents follow the value model. Plain objects and clean class instances in keys, values, and members are tracked; values the boundary rejects throw at attach. Use `ignore()` when a key, value, or member should stay an identity-only leaf, or `unsafeTrack()` to admit a caveated value.
 - Membership uses storage identity. A raw original, a mutable proxy, and any snapshot generation of the same object all address the same key or member through `has`, `get`, `set`, `add`, and `delete`. Interior content changes never re-key it.
 - Reads participate in bounded re-rendering. Map values and set members are tracked recursively; `TrackedMap` keys are identity-addressed and are not walked by `retrack`.
 - Map keys, map values, and set members share one flat path model with ordinary data. Nested arrays and facades keep extending the same path.
@@ -252,7 +260,6 @@ counter.op.unsafeMutable;
 const unsubscribe = counter.op.subscribe((state, ops, emission) => {
 	// state: the snapshot these ops produced
 	// ops: [{
-	//   isPatch: true,
 	//   do:   { op: "replace", path: ["count"], value: 1 },
 	//   undo: { op: "replace", path: ["count"], value: 0 },
 	// }]
@@ -298,7 +305,7 @@ Ops in an emission are ordered. Apply `do` halves in delivered order and `undo` 
 
 `applyOps(state, operations, meta?)` applies one direction's already selected, correctly ordered halves in one `mutate`, forwarding `meta`. Replay restores registered storage targets instead of donating clones. It reattaches each target and stomps its recorded content exactly, deleting target-only data and restoring array holes. If code edited a detached object after the operation was recorded, undo overwrites those edits with the recorded generation.
 
-Ops are live runtime objects. Public value accessors return defensive copies, while `applyOps` reaches the registered originals needed for identity restoration. Spreading the outer `{ isPatch, do, undo }` pair is harmless because it preserves the original halves. Spreading an individual half, or copying a pair or half through JSON, produces brandless halves that `applyOps` rejects with the cause and fix. `structuredClone` can throw `DataCloneError` first when an operation carries a non-cloneable payload; otherwise its copied halves are likewise brandless and rejected. Apply the operation halves the listener delivered.
+Ops are live runtime objects. Public value accessors return defensive copies, while `applyOps` reaches the registered originals needed for identity restoration. Spreading the outer `{ do, undo }` pair is harmless because it preserves the original halves. Spreading an individual half, or copying a pair or half through JSON, produces brandless halves that `applyOps` rejects with the cause and fix. `structuredClone` can throw `DataCloneError` first when an operation carries a non-cloneable payload; otherwise its copied halves are likewise brandless and rejected. Apply the operation halves the listener delivered.
 
 Opshot promises no serializer, whole-contents selector, public path classifier, or foreign applier. An encoded stream would need to intern identity-bearing path segments so repeated references resolve to one identity, as well as encode `undefined`, `NaN`, holes, facade construction, operation brands, and value accessors. No wire format or encoder ships.
 

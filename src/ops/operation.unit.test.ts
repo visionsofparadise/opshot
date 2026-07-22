@@ -1,5 +1,9 @@
 import { createState } from "../createState";
 import { getRegisteredTarget } from "../identity";
+import { TrackedDate } from "../tracked/trackedDate";
+import { TrackedMap } from "../tracked/trackedMap";
+import { TrackedSet } from "../tracked/trackedSet";
+import { isCloneable } from "./cloneValue";
 import {
 	createAddOperation,
 	createMembershipAddOperation,
@@ -81,5 +85,24 @@ describe("operation", () => {
 
 		expect(isOperation(spread.do)).toBe(true);
 		expect(isOperation(spread.undo)).toBe(true);
+	});
+
+	it("keeps whole-facade op values by reference, not a structural clone", () => {
+		const map = new TrackedMap([["a", 1]]);
+		const set = new TrackedSet([1]);
+		const date = new TrackedDate(0);
+
+		expect(isCloneable(map)).toBe(false);
+		expect(isCloneable(set)).toBe(false);
+		expect(isCloneable(date)).toBe(false);
+
+		const mapHalf = createReplaceOperation(["map"], map);
+		const setHalf = createReplaceOperation(["set"], set);
+		const dateHalf = createReplaceOperation(["date"], date);
+
+		expect(mapHalf.value).toBe(map);
+		expect(setHalf.value).toBe(set);
+		expect(dateHalf.value).toBe(date);
+		expect(getValueOriginal(mapHalf)).toBe(map);
 	});
 });

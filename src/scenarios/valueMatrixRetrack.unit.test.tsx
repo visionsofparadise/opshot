@@ -9,7 +9,7 @@ import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { isTrackedWrapper } from "../tracked/trackedWrapper";
-import { classifyValue } from "../valtio/boundary";
+import { classifyValue } from "../valtio/classify";
 import { catalog, type CatalogEntry } from "./valueCatalog";
 
 type NestedState = State<{ label: number }>;
