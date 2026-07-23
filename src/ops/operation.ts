@@ -1,16 +1,22 @@
 import { cloneValue, isCloneable } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 
-export type AddOperation =
-	| { readonly op: "add"; readonly path: OperationPath; readonly value: unknown }
-	| { readonly op: "add"; readonly path: OperationPath; readonly value: unknown; readonly slot: number }
-	| { readonly op: "add"; readonly path: OperationPath; readonly slot: number };
-
-export interface ReplaceOperation { readonly op: "replace"; readonly path: OperationPath; readonly value: unknown }
-export interface RemoveOperation { readonly op: "remove"; readonly path: OperationPath }
+export interface AddOperation { readonly op: "add"; readonly path: OperationPath; readonly value: unknown }
+export interface ReplaceOperation {
+	readonly op: "replace";
+	readonly path: OperationPath;
+	readonly value: unknown;
+}
+export interface RemoveOperation {
+	readonly op: "remove";
+	readonly path: OperationPath;
+}
 export type Operation = AddOperation | ReplaceOperation | RemoveOperation;
 
-export interface Op { readonly isPatch: true; readonly do: Operation; readonly undo: Operation }
+export interface Op {
+	readonly do: Operation;
+	readonly undo: Operation;
+}
 
 const operationBrand = Symbol.for("opshot.operation");
 const valueOriginals = new WeakMap<object, unknown>();
@@ -43,26 +49,6 @@ class AddHalf extends ValueHalf {
 	readonly op = "add";
 }
 
-class SlottedAddHalf extends ValueHalf {
-	readonly op = "add";
-	readonly slot: number;
-
-	constructor(path: OperationPath, value: unknown, slot: number) {
-		super(path, value);
-		this.slot = slot;
-	}
-}
-
-class MembershipAddHalf extends OperationHalf {
-	readonly op = "add";
-	readonly slot: number;
-
-	constructor(path: OperationPath, slot: number) {
-		super(path);
-		this.slot = slot;
-	}
-}
-
 class ReplaceHalf extends ValueHalf {
 	readonly op = "replace";
 }
@@ -75,10 +61,7 @@ export const isOperation = (value: unknown): value is Operation => typeof value 
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
-export const createAddOperation = (path: OperationPath, value: unknown, slot?: number): AddOperation =>
-	slot === undefined ? new AddHalf(path, value) : new SlottedAddHalf(path, value, slot);
-
-export const createMembershipAddOperation = (path: OperationPath, slot: number): AddOperation => new MembershipAddHalf(path, slot);
+export const createAddOperation = (path: OperationPath, value: unknown): AddOperation => new AddHalf(path, value);
 
 export const createReplaceOperation = (path: OperationPath, value: unknown): ReplaceOperation => new ReplaceHalf(path, value);
 

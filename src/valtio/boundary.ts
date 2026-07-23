@@ -2,7 +2,6 @@ import { getUntracked, markToTrack } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 
 import { getRegisteredTarget, registerSnapshotCopy, resolveIdentity } from "../identity";
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { classifyValue, hasOwnEnumerableFunction, isTrackable } from "./classify";
 
@@ -130,7 +129,6 @@ const getTrackedRawObject = (value: unknown): object | undefined => {
 	const target = getRawObject(value);
 
 	if (!target || refSet.has(target) || Object.isFrozen(target)) return undefined;
-	if (isTrackedWrapper(target)) return target;
 
 	return isTrackable(target) ? target : undefined;
 };
@@ -419,7 +417,6 @@ export function installBoundary(): void {
 	unstable_replaceInternalFunction("canProxy", () => (value) => {
 		if (typeof value !== "object" || value === null) return false;
 		if (refSet.has(value)) return false;
-		if (isTrackedWrapper(value)) return true;
 		if (isUnsafeTracked(value)) return true;
 
 		const kind = classifyValue(value);

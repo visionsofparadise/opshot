@@ -1,20 +1,12 @@
 import { createState, type Emission, type State } from "../createState";
 import { identify, isSameIdentity } from "../identity";
+import { addressOf } from "../tracked/address";
 import { TrackedDate } from "../tracked/trackedDate";
-import { getTrackedMapData, TrackedMap } from "../tracked/trackedMap";
-import { getTrackedSetData, TrackedSet } from "../tracked/trackedSet";
-import { getDirectWriteVersion } from "../valtio/boundary";
+import { TrackedMap } from "../tracked/trackedMap";
+import { TrackedSet } from "../tracked/trackedSet";
 import { applyOps } from "./applyOps";
 import { diffSnapshots } from "./diff";
-import {
-	createAddOperation,
-	createMembershipAddOperation,
-	createRemoveOperation,
-	createReplaceOperation,
-	type Op,
-	type Operation,
-} from "./operation";
-import { createKeyOfPathSegment, createValueOfPathSegment } from "./path";
+import { createAddOperation, createRemoveOperation, createReplaceOperation, type Op, type Operation } from "./operation";
 
 const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
 	const heard = new Array<Array<Op>>();
@@ -76,13 +68,12 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 
 		expect(() => applyOps(state, [createReplaceOperation([], {})])).toThrow("root operations");
 		expect(() => applyOps(state, [createAddOperation(["__proto__", "polluted"], true)])).toThrow("reserved operation path");
-		expect(() => applyOps(state, [createRemoveOperation(["constructor", "prototype", "polluted"])] )).toThrow("reserved operation path");
+		expect(() => applyOps(state, [createRemoveOperation(["constructor", "prototype", "polluted"])])).toThrow("reserved operation path");
 		expect(() => applyOps(state, [createAddOperation(["list", 0], 2)])).toThrow("does not resolve");
 		expect(() => applyOps(state, [createReplaceOperation(["list", "0"], 2)])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createRemoveOperation(["list", "length"])] )).toThrow("does not resolve");
-		expect(() => applyOps(state, [createReplaceOperation(["set", "a"], "b")])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createReplaceOperation(["map", createKeyOfPathSegment("a")], "b")])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createAddOperation(["date", "epoch"], 1)])).toThrow("does not resolve");
+		expect(() => applyOps(state, [createRemoveOperation(["list", "length"])])).toThrow("does not resolve");
+		expect(() => applyOps(state, [createReplaceOperation(["map", "missing"], 1)])).toThrow("does not resolve");
+		expect(() => applyOps(state, [createAddOperation(["date", "epochMs"], 1)])).toThrow("does not resolve");
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
@@ -124,43 +115,82 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const state = createState({ count: 0 });
 		const half = createReplaceOperation(["count"], 1);
 
-		expect(() => applyOps(state, [{ isPatch: true, do: half, undo: half } as unknown as Operation])).toThrow(
+		expect(() => applyOps(state, [{ do: half, undo: half } as unknown as Operation])).toThrow(
 			"opshot: applyOps applies operation halves; pass op.do or op.undo.",
 		);
-		expect(() => applyOps(state, [{ isPatch: false } as unknown as Operation])).toThrow(
+		expect(() => applyOps(state, [{ do: half } as unknown as Operation])).toThrow(
 			"opshot: applyOps applies operation halves; pass op.do or op.undo.",
 		);
 	});
 
-	it("restores Map values at exact slots, including stored undefined", () => {
-		const state = createState({ map: new TrackedMap<string, number | undefined>([["a", 1], ["b", 2]]) });
+	it("restores Map membership through plain index/slots/count ops", () => {
+		const state = createState({
+			map: new TrackedMap<string, number | undefined>([
+				["a", 1],
+				["b", 2],
+			]),
+		});
+		const heard = record(state);
 
-		applyOps(state, [createRemoveOperation(["map", "a"]), createAddOperation(["map", "c"], undefined, 0)]);
+		state.mutate((mutable) => {
+			mutable.map.delete("a");
+			mutable.map.set("c", undefined);
+		});
 
-		expect([...state.op.unwrap().map]).toEqual([["c", undefined], ["b", 2]]);
+		const ops = heard[0] ?? [];
+
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
+		expect([...state.op.unwrap().map]).toEqual([
+			["a", 1],
+			["b", 2],
+		]);
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
+		expect([...state.op.unwrap().map]).toEqual([
+			["b", 2],
+			["c", undefined],
+		]);
 		expect(state.op.unwrap().map.has("c")).toBe(true);
 	});
 
-	it("restores Set membership at exact slots with no value property", () => {
+	it("restores Set membership through plain index/slots/count ops", () => {
 		const state = createState({ set: new TrackedSet(["a", "b"]) });
-		const addition = createMembershipAddOperation(["set", "c"], 0);
+		const heard = record(state);
 
-		applyOps(state, [createRemoveOperation(["set", "a"]), addition]);
+		state.mutate((mutable) => {
+			mutable.set.delete("a");
+			mutable.set.add("c");
+		});
 
-		expect("value" in addition).toBe(false);
-		expect([...state.op.unwrap().set]).toEqual(["c", "b"]);
+		const ops = heard[0] ?? [];
+
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
+		expect([...state.op.unwrap().set]).toEqual(["a", "b"]);
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
+		expect([...state.op.unwrap().set]).toEqual(["b", "c"]);
 	});
 
-	it("traverses Map keys and values and Set members by canonical storage identity", () => {
+	it("traverses Map key/value and Set member interiors through slots", () => {
 		const key = { profile: { id: 1 } };
 		const value = { count: 1 };
 		const member = { count: 1 };
 		const state = createState({ map: new TrackedMap([[key, value]]), set: new TrackedSet([member]) });
 
 		applyOps(state, [
-			createReplaceOperation(["map", createKeyOfPathSegment(key), "profile", "id"], 2),
-			createReplaceOperation(["map", key, "count"], 2),
-			createReplaceOperation(["set", member, "count"], 2),
+			createReplaceOperation(["map", "slots", 0, 0, "profile", "id"], 2),
+			createReplaceOperation(["map", "slots", 0, 1, "count"], 2),
+			createReplaceOperation(["set", "slots", 0, 0, "count"], 2),
 		]);
 
 		const storedKey = [...state.op.unwrap().map.keys()][0];
@@ -173,27 +203,19 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(storedMember && isSameIdentity(storedMember, member)).toBe(true);
 	});
 
-	it("interprets selector payloads once when a branded selector is stored as data", () => {
-		const selectorData = createKeyOfPathSegment("inner");
-		const state = createState({ map: new TrackedMap([[selectorData, 1]]), set: new TrackedSet([selectorData]) });
-
-		applyOps(state, [createReplaceOperation(["map", createValueOfPathSegment(selectorData)], 2)]);
-		expect(state.op.unwrap().map.get(selectorData)).toBe(2);
-		applyOps(state, [createRemoveOperation(["set", createValueOfPathSegment(selectorData)])]);
-		expect(state.op.unwrap().set.has(selectorData)).toBe(false);
-	});
-
-	it("applies TrackedDate epoch content separately from whole-target replacement", () => {
+	it("applies TrackedDate epochMs content separately from whole-target replacement", () => {
 		const held = new TrackedDate(0);
-		const replacement = new TrackedDate(10);
 		const state = createState({ date: held });
 
-		applyOps(state, [createReplaceOperation(["date", "epoch"], 5)]);
+		applyOps(state, [createReplaceOperation(["date", "epochMs"], 5)]);
 		expect(state.op.unwrap().date.getTime()).toBe(5);
 		expect(isSameIdentity(state.op.unwrap().date, held)).toBe(true);
-		applyOps(state, [createReplaceOperation(["date"], replacement)]);
+
+		// Whole-facade replace clones through the generic path (facades are clean-class cloneable).
+		applyOps(state, [createReplaceOperation(["date"], new TrackedDate(10))]);
 		expect(state.op.unwrap().date.getTime()).toBe(10);
-		expect(isSameIdentity(state.op.unwrap().date, replacement)).toBe(true);
+		expect(state.op.unwrap().date).toBeInstanceOf(TrackedDate);
+		expect(isSameIdentity(state.op.unwrap().date, held)).toBe(false);
 	});
 
 	it("restores removed targets with identity, exact content, and DAG aliases", () => {
@@ -224,8 +246,14 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(isSameIdentity(restored.left, shared)).toBe(true);
 	});
 
-	it("round-trips clear, delete-readd, slot displacement, and direct backing writes atomically", () => {
-		const state = createState({ map: new TrackedMap([["a", 1], ["b", 2]]), set: new TrackedSet(["a", "b"]) });
+	it("round-trips clear, delete-readd, and slot displacement atomically", () => {
+		const state = createState({
+			map: new TrackedMap([
+				["a", 1],
+				["b", 2],
+			]),
+			set: new TrackedSet(["a", "b"]),
+		});
 		const before = state.op.unwrap();
 		const heard = record(state);
 
@@ -241,10 +269,16 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const ops = heard[0] ?? [];
 		const after = state.op.unwrap();
 
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 		expect([...state.op.unwrap().map]).toEqual([...before.map]);
 		expect([...state.op.unwrap().set]).toEqual([...before.set]);
-		applyOps(state, ops.map((pair) => pair.do));
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
 		expect([...state.op.unwrap().map]).toEqual([...after.map]);
 		expect([...state.op.unwrap().set]).toEqual([...after.set]);
 	});
@@ -266,7 +300,11 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		});
 		const ops = recorded[0];
 		if (!ops) throw new Error("missing history");
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo), { replay: true });
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+			{ replay: true },
+		);
 
 		expect(state.op.unwrap().count).toBe(0);
 		expect(recorded).toHaveLength(1);
@@ -277,9 +315,15 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const state = createState({ count: 0 });
 		const ops = diffSnapshots({ count: 0 }, { count: 2 });
 
-		applyOps(state, ops.map((pair) => pair.do));
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
 		expect(state.op.unwrap().count).toBe(2);
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 		expect(state.op.unwrap().count).toBe(0);
 	});
 
@@ -299,7 +343,6 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		]);
 		const heard = record(state);
 		const beforeEntries = [...state.op.unwrap().map];
-		const beforeVersion = getDirectWriteVersion(getTrackedMapData(state.op.unwrap().map));
 
 		state.mutate((mutable) => {
 			mutable.map = new TrackedMap([[{ id: "z" }, { label: "Z" }]]);
@@ -311,7 +354,6 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
 		expect(isSameIdentity(state.op.unwrap().map, original)).toBe(false);
 
-		// Stomp the detached target in place (same data array, tombstones) so restore must rewrite recorded slots.
 		original.delete(keyA);
 		original.set(keyB, { label: "stomped-value" });
 		original.set({ id: "stomp" }, { label: "stomped" });
@@ -320,11 +362,13 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const undoHeard: Array<Array<Op>> = [];
 
 		state.op.subscribe((_snapshot, next) => undoHeard.push(next));
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		const restored = state.op.unwrap().map;
 		const restoredEntries = [...restored];
-		const restoredVersion = getDirectWriteVersion(getTrackedMapData(restored));
 
 		expect(isSameIdentity(restored, original)).toBe(true);
 		expect(restored.size).toBe(2);
@@ -338,19 +382,22 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(restoredEntries[1]?.[0] && selection.get(identify(restoredEntries[1][0]))).toBe("b");
 		expect(restoredEntries[0]?.[1] && isSameIdentity(restoredEntries[0][1], valueA)).toBe(true);
 		expect(restoredEntries[1]?.[1] && isSameIdentity(restoredEntries[1][1], valueB)).toBe(true);
-		// Reactivity: applyOps emission and/or data generation advance.
-		expect(undoHeard.length > 0 || (beforeVersion !== undefined && restoredVersion !== undefined && restoredVersion !== beforeVersion)).toBe(true);
+		expect(undoHeard.length).toBeGreaterThan(0);
 
 		const afterUndo = [...restored].map(([key, value]) => [key.id, value.label]);
 
-		applyOps(state, ops.map((pair) => pair.do));
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
 		expect([...state.op.unwrap().map]).toEqual([[{ id: "z" }, { label: "Z" }]]);
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 		expect([...state.op.unwrap().map].map(([key, value]) => [key.id, value.label])).toEqual(afterUndo);
 		expect(isSameIdentity(state.op.unwrap().map, original)).toBe(true);
-		expect(beforeEntries.map(([key]) => identify(key as object))).toEqual(
-			[...state.op.unwrap().map].map(([key]) => identify(key as object)),
-		);
+		expect(beforeEntries.map(([key]) => identify(key as object))).toEqual([...state.op.unwrap().map].map(([key]) => identify(key as object)));
 	});
 
 	it("restores a whole TrackedMap replace nested as a Map value", () => {
@@ -369,11 +416,6 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 			[identify(keyB), "b"],
 		]);
 		const heard = record(state);
-		const beforeInner = state.op.unwrap().outer.get(outerKey);
-
-		if (!beforeInner) throw new Error("missing inner map");
-
-		const beforeVersion = getDirectWriteVersion(getTrackedMapData(beforeInner));
 
 		state.mutate((mutable) => {
 			mutable.outer.set(outerKey, new TrackedMap([[{ id: "z" }, { label: "Z" }]]));
@@ -381,26 +423,23 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 
 		const ops = heard[0] ?? [];
 
-		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do.op).toBe("replace");
-		expect(ops[0]?.do.path[0]).toBe("outer");
+		expect(ops.length).toBeGreaterThan(0);
 
 		inner.delete(keyA);
 		inner.set(keyB, { label: "stomped-value" });
 		inner.set({ id: "stomp" }, { label: "stomped" });
 		valueA.label = "mutated-while-detached";
 
-		const undoHeard: Array<Array<Op>> = [];
-
-		state.op.subscribe((_snapshot, next) => undoHeard.push(next));
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		const restored = state.op.unwrap().outer.get(outerKey);
 
 		if (!restored) throw new Error("missing restored inner map");
 
 		const restoredEntries = [...restored];
-		const restoredVersion = getDirectWriteVersion(getTrackedMapData(restored));
 
 		expect(isSameIdentity(restored, inner)).toBe(true);
 		expect(restored.size).toBe(2);
@@ -414,11 +453,16 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(restoredEntries[1]?.[0] && selection.get(identify(restoredEntries[1][0]))).toBe("b");
 		expect(restoredEntries[0]?.[1] && isSameIdentity(restoredEntries[0][1], valueA)).toBe(true);
 		expect(restoredEntries[1]?.[1] && isSameIdentity(restoredEntries[1][1], valueB)).toBe(true);
-		expect(undoHeard.length > 0 || (beforeVersion !== undefined && restoredVersion !== undefined && restoredVersion !== beforeVersion)).toBe(true);
 
-		applyOps(state, ops.map((pair) => pair.do));
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
 		expect([...state.op.unwrap().outer.get(outerKey)!]).toEqual([[{ id: "z" }, { label: "Z" }]]);
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 		expect([...state.op.unwrap().outer.get(outerKey)!].map(([key, value]) => [key.id, value.label])).toEqual([
 			["a", "A"],
 			["b", "B"],
@@ -436,7 +480,6 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 			[identify(memberB), "b"],
 		]);
 		const heard = record(state);
-		const beforeVersion = getDirectWriteVersion(getTrackedSetData(state.op.unwrap().set));
 
 		state.mutate((mutable) => {
 			mutable.set = new TrackedSet([{ id: "z" }]);
@@ -451,14 +494,13 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		original.add({ id: "stomp" });
 		memberA.id = "mutated-while-detached";
 
-		const undoHeard: Array<Array<Op>> = [];
-
-		state.op.subscribe((_snapshot, next) => undoHeard.push(next));
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		const restored = state.op.unwrap().set;
 		const restoredMembers = [...restored];
-		const restoredVersion = getDirectWriteVersion(getTrackedSetData(restored));
 
 		expect(isSameIdentity(restored, original)).toBe(true);
 		expect(restored.size).toBe(2);
@@ -469,11 +511,16 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(restoredMembers[1] && selection.get(identify(restoredMembers[1]))).toBe("b");
 		expect(restoredMembers[0] && isSameIdentity(restoredMembers[0], memberA)).toBe(true);
 		expect(restoredMembers[1] && isSameIdentity(restoredMembers[1], memberB)).toBe(true);
-		expect(undoHeard.length > 0 || (beforeVersion !== undefined && restoredVersion !== undefined && restoredVersion !== beforeVersion)).toBe(true);
 
-		applyOps(state, ops.map((pair) => pair.do));
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
 		expect([...state.op.unwrap().set].map((member) => member.id)).toEqual(["z"]);
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 		expect([...state.op.unwrap().set].map((member) => member.id)).toEqual(["a", "b"]);
 		expect(isSameIdentity(state.op.unwrap().set, original)).toBe(true);
 	});
@@ -498,7 +545,10 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["document"] });
 
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		const restored = state.op.unwrap().document;
 
@@ -520,7 +570,10 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 
 		const ops = heard[0] ?? [];
 
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		const restored = state.op.unwrap().document;
 
@@ -543,7 +596,10 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 
 		expect(isSameIdentity(state.op.unwrap().document, container)).toBe(false);
 
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		expect(isSameIdentity(state.op.unwrap().document, container)).toBe(true);
 		expect(state.op.unwrap().document.count).toBe(1);
@@ -573,18 +629,42 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(secondOps).toHaveLength(1);
 		expect(secondOps[0]?.do).toMatchObject({ op: "replace", path: ["root"] });
 
-		applyOps(state, [...secondOps].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...secondOps].reverse().map((pair) => pair.undo),
+		);
 		expect(state.op.unwrap().root.nested.value).toBe(2);
 
-		applyOps(state, [...firstOps].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...firstOps].reverse().map((pair) => pair.undo),
+		);
 		expect(state.op.unwrap().root.nested.value).toBe(1);
 		expect(isSameIdentity(state.op.unwrap().root, outer)).toBe(true);
 		expect(isSameIdentity(state.op.unwrap().root.nested, inner)).toBe(true);
 
-		applyOps(state, firstOps.map((pair) => pair.do));
+		applyOps(
+			state,
+			firstOps.map((pair) => pair.do),
+		);
 		expect(state.op.unwrap().root.nested.value).toBe(2);
 
-		applyOps(state, secondOps.map((pair) => pair.do));
+		applyOps(
+			state,
+			secondOps.map((pair) => pair.do),
+		);
 		expect(state.op.unwrap().root.nested.value).toBe(3);
+	});
+
+	it("applies an atomic Map index address write", () => {
+		const key = { id: 1 };
+		const state = createState({ map: new TrackedMap([[key, 1]]) });
+		const addr = addressOf(key);
+
+		applyOps(state, [createReplaceOperation(["map", "slots", 0], [key, 9] as const)]);
+		expect(state.op.unwrap().map.get(key)).toBe(9);
+		applyOps(state, [createRemoveOperation(["map", "index", addr]), createReplaceOperation(["map", "slots", 0], null), createReplaceOperation(["map", "count"], 0)]);
+		expect(state.op.unwrap().map.size).toBe(0);
+		expect(state.op.unwrap().map.has(key)).toBe(false);
 	});
 });

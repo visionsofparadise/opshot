@@ -1,12 +1,11 @@
 import { createState, type Emission, type State } from "../createState";
-import { isSameIdentity } from "../identity";
+import { addressOf } from "../tracked/address";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { applyOps } from "./applyOps";
 import { diffSnapshots } from "./diff";
 import type { Op, Operation } from "./operation";
-import { createKeyOfPathSegment, getPathSelector } from "./path";
 
 const readValue = (operation: Operation): unknown => ("value" in operation ? operation.value : undefined);
 
@@ -26,9 +25,9 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const ops = diffSnapshots({ kept: 1, changed: 2, removed: 3 }, { kept: 1, changed: 4, added: 5 });
 
 		expect(ops).toEqual([
-			{ isPatch: true, do: { op: "replace", path: ["changed"], value: 4 }, undo: { op: "replace", path: ["changed"], value: 2 } },
-			{ isPatch: true, do: { op: "remove", path: ["removed"] }, undo: { op: "add", path: ["removed"], value: 3 } },
-			{ isPatch: true, do: { op: "add", path: ["added"], value: 5 }, undo: { op: "remove", path: ["added"] } },
+			{ do: { op: "replace", path: ["changed"], value: 4 }, undo: { op: "replace", path: ["changed"], value: 2 } },
+			{ do: { op: "remove", path: ["removed"] }, undo: { op: "add", path: ["removed"], value: 3 } },
+			{ do: { op: "add", path: ["added"], value: 5 }, undo: { op: "remove", path: ["added"] } },
 		]);
 		for (const pair of ops) expect(Object.isFrozen(pair.do.path)).toBe(true);
 	});
@@ -52,6 +51,13 @@ describe("diffSnapshots: atomic flat paths", () => {
 		expect(() => diffSnapshots(1 as unknown as object, 2 as unknown as object)).toThrow("compatible supported object roots");
 		expect(() => diffSnapshots({}, [])).toThrow("compatible supported object roots");
 		expect(() => diffSnapshots(new Map(), new Map())).toThrow("compatible supported object roots");
+	});
+
+	it("accepts plain-data facades as object-container roots", () => {
+		const before = new TrackedMap([["a", 1]]);
+		const after = new TrackedMap([["a", 2]]);
+
+		expect(() => diffSnapshots(before, after)).not.toThrow();
 	});
 
 	it("rejects reserved paths before emitting", () => {
@@ -119,10 +125,10 @@ describe("diffSnapshots: atomic flat paths", () => {
 		expect(diffSnapshots(before, after)[0]?.do).toEqual({ op: "replace", path: ["label"], value: "b" });
 	});
 
-	it("emits stable Map key interiors through keyOf and values through the raw key", () => {
+	it("emits stable Map key and value interiors through slots", () => {
 		const key = { id: 1 };
 		const value = { count: 1 };
-		// Heavy unchanged padding keeps two small interiors atomic so the keyOf path shape stays observable.
+		// Heavy unchanged padding keeps interiors atomic so the path shape stays observable.
 		const pad = "x".repeat(5_000);
 		const state = createState({
 			map: new TrackedMap<object | string, object | string>([
@@ -134,46 +140,58 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const heard = record(state);
 
 		state.mutate((mutable) => {
-			const mutableKey = [...mutable.map.keys()][0] as typeof key;
 			const mutableValue = mutable.map.get(key) as typeof value | undefined;
 
-			if (!mutableKey || !mutableValue) throw new Error("entry missing");
-			mutableKey.id = 2;
+			if (!mutableValue) throw new Error("entry missing");
 			mutableValue.count = 2;
 		});
+		state.mutate((mutable) => {
+			const mutableKey = [...mutable.map.keys()][0] as typeof key;
 
-		const ops = heard[0] ?? [];
-		const keySelector = getPathSelector(ops[0]?.do.path[1]);
+			if (!mutableKey) throw new Error("key missing");
+			mutableKey.id = 2;
+		});
 
-		expect(keySelector?.kind).toBe("keyOf");
-		expect(isSameIdentity(keySelector?.value as object, key)).toBe(true);
-		const keyOperation = ops[0];
-		const valueOperation = ops[1];
-
-		if (!keyOperation || !valueOperation) throw new Error("missing interior operations");
-		expect(keyOperation.do.path[2]).toBe("id");
-		expect(isSameIdentity(valueOperation.do.path[1] as object, key)).toBe(true);
-		expect(valueOperation.do.path[2]).toBe("count");
+		expect(heard[0]?.[0]?.do.path).toEqual(["map", "slots", 0, 1, "count"]);
+		expect(heard[1]?.[0]?.do.path).toEqual(["map", "slots", 0, 0, "id"]);
 	});
 
-	it("escapes a selector object stored as a Map key or Set member", () => {
-		const selectorData = createKeyOfPathSegment("data");
-		const state = createState({ map: new TrackedMap([[selectorData, 1]]), set: new TrackedSet([selectorData]) });
+	it("emits plain-data membership ops for Map and Set deletes", () => {
+		const pad = "x".repeat(5_000);
+		const map = new TrackedMap<string, string>();
+		const set = new TrackedSet<string>();
+
+		for (let index = 0; index < 20; index++) {
+			map.set(`pad${index}`, pad);
+			set.add(`pad${index}${pad}`);
+		}
+
+		map.set("target", "1");
+		set.add("target");
+
+		const state = createState({ map, set });
 		const heard = record(state);
 
 		state.mutate((mutable) => {
-			mutable.map.delete(selectorData);
-			mutable.set.delete(selectorData);
+			mutable.map.delete("target");
+			mutable.set.delete("target");
 		});
 
 		const ops = heard[0] ?? [];
+		const mapIndexPath = ops.find((pair) => pair.do.path[0] === "map" && pair.do.path[1] === "index")?.do.path;
+		const setIndexPath = ops.find((pair) => pair.do.path[0] === "set" && pair.do.path[1] === "index")?.do.path;
 
-		expect(getPathSelector(ops[0]?.do.path[1])).toEqual({ kind: "valueOf", value: selectorData });
-		expect(getPathSelector(ops[1]?.do.path[1])).toEqual({ kind: "valueOf", value: selectorData });
+		expect(mapIndexPath).toEqual(["map", "index", addressOf("target")]);
+		expect(setIndexPath).toEqual(["set", "index", addressOf("target")]);
 	});
 
 	it("collapses clear-and-rebuild Map membership into one container replace", () => {
-		const state = createState({ map: new TrackedMap([["a", 1], ["b", 2]]) });
+		const state = createState({
+			map: new TrackedMap([
+				["a", 1],
+				["b", 2],
+			]),
+		});
 		const heard = record(state);
 
 		state.mutate((mutable) => {
@@ -186,7 +204,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
-		expect([...readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedMap<string, number>]).toEqual([
+		expect([...(readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedMap<string, number>)]).toEqual([
 			["b", 20],
 			["a", 10],
 		]);
@@ -215,14 +233,14 @@ describe("diffSnapshots: atomic flat paths", () => {
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["set"] });
-		expect([...readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedSet<number>]).toEqual([2, 3]);
+		expect([...(readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedSet<number>)]).toEqual([2, 3]);
 		replayUndo(state, ops);
 		expect([...state.op.unwrap().set]).toEqual([1, 2]);
 		replayDo(state, ops);
 		expect([...state.op.unwrap().set]).toEqual([2, 3]);
 	});
 
-	it("emits TrackedDate content at epoch but replaces a different date target at its parent", () => {
+	it("emits TrackedDate content at epochMs but replaces a different date target at its parent", () => {
 		const state = createState({ retained: new TrackedDate(0), replaced: new TrackedDate(0) });
 		const heard = record(state);
 
@@ -231,7 +249,10 @@ describe("diffSnapshots: atomic flat paths", () => {
 			mutable.replaced = new TrackedDate(10);
 		});
 
-		expect((heard[0] ?? []).map((pair) => pair.do.path)).toEqual([["retained", "epoch"], ["replaced"]]);
+		expect((heard[0] ?? []).map((pair) => pair.do.path)).toEqual([
+			["retained", "epochMs"],
+			["replaced"],
+		]);
 	});
 
 	it("round-trips mixed atomic changes exactly", () => {
@@ -297,9 +318,7 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(5);
-		expect(ops.map((pair) => pair.do)).toEqual(
-			edited.map((index) => ({ op: "replace", path: ["tree", index, "n"], value: index + 1 })),
-		);
+		expect(ops.map((pair) => pair.do)).toEqual(edited.map((index) => ({ op: "replace", path: ["tree", index, "n"], value: index + 1 })));
 	});
 
 	it("many small changes beside few huge unchanged entries stay atomic", () => {
@@ -359,7 +378,13 @@ describe("diffSnapshots: container collapse", () => {
 	});
 
 	it("map clear-and-rebuild collapses to one replace with iteration order restored on undo", () => {
-		const state = createState({ map: new TrackedMap([["a", 1], ["b", 2], ["c", 3]]) });
+		const state = createState({
+			map: new TrackedMap([
+				["a", 1],
+				["b", 2],
+				["c", 3],
+			]),
+		});
 		const heard = record(state);
 
 		state.mutate((mutable) => {
@@ -445,5 +470,30 @@ describe("diffSnapshots: container collapse", () => {
 		expect(state.op.unwrap().list).toEqual([1, 2, 3]);
 		replayDo(state, ops);
 		expect(state.op.unwrap()).toEqual(after);
+	});
+
+	it("sibling containers straddling the compaction threshold round-trip consistently", () => {
+		const bigArray = Array.from({ length: 400 }, (_, index) => index);
+		const state = createState({ big: bigArray.slice(), small: { flag: false } });
+		const heard = record(state);
+
+		state.mutate((mutable) => {
+			mutable.big.length = 5;
+			mutable.small.flag = true;
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(state.op.unwrap().big.length).toBe(5);
+		expect(state.op.unwrap().small.flag).toBe(true);
+
+		replayUndo(state, ops);
+		expect(state.op.unwrap().big.length).toBe(400);
+		expect(state.op.unwrap().big[399]).toBe(399);
+		expect(state.op.unwrap().small.flag).toBe(false);
+
+		replayDo(state, ops);
+		expect(state.op.unwrap().big.length).toBe(5);
+		expect(state.op.unwrap().small.flag).toBe(true);
 	});
 });

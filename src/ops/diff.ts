@@ -1,29 +1,10 @@
-import { isSameIdentity, resolveIdentity } from "../identity";
-import { getTrackedDateEpoch } from "../tracked/trackedDate";
-import { getTrackedMapData } from "../tracked/trackedMap";
-import { getTrackedSetData } from "../tracked/trackedSet";
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
+import { isSameIdentity } from "../identity";
 import { cyclicError, isPlainArray, isPlainObject } from "./cloneValue";
-import {
-	createAddOperation,
-	createMembershipAddOperation,
-	createRemoveOperation,
-	createReplaceOperation,
-	type Op,
-} from "./operation";
-import {
-	appendOperationPath,
-	createKeyOfPathSegment,
-	createOperationPath,
-	createValueOfPathSegment,
-	formatOperationPath,
-	getPathSelector,
-	type OperationPath,
-} from "./path";
+import { createAddOperation, createRemoveOperation, createReplaceOperation, type Op } from "./operation";
+import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
 
-type FacadeKind = "TrackedMap" | "TrackedSet" | "TrackedDate";
-type RootKind = "plainObject" | "plainArray" | FacadeKind;
+type RootKind = "plainObject" | "plainArray";
 type Ancestors = Map<object, Set<object>>;
 
 const UNCAPPED_WEIGHT = Number.MAX_SAFE_INTEGER;
@@ -35,46 +16,31 @@ class IncompatibleSnapshotRootsError extends Error {
 	}
 }
 
-const addPair = (path: OperationPath, after: unknown, slot?: number): Op => ({
-	isPatch: true,
-	do: createAddOperation(path, after, slot),
+const addPair = (path: OperationPath, after: unknown): Op => ({
+	do: createAddOperation(path, after),
 	undo: createRemoveOperation(path),
 });
 
-const membershipAddPair = (path: OperationPath, slot: number): Op => ({
-	isPatch: true,
-	do: createMembershipAddOperation(path, slot),
-	undo: createRemoveOperation(path),
-});
-
-const removePair = (path: OperationPath, before: unknown, slot?: number): Op => ({
-	isPatch: true,
+const removePair = (path: OperationPath, before: unknown): Op => ({
 	do: createRemoveOperation(path),
-	undo: createAddOperation(path, before, slot),
-});
-
-const membershipRemovePair = (path: OperationPath, slot: number): Op => ({
-	isPatch: true,
-	do: createRemoveOperation(path),
-	undo: createMembershipAddOperation(path, slot),
+	undo: createAddOperation(path, before),
 });
 
 const replacePair = (path: OperationPath, before: unknown, after: unknown): Op => ({
-	isPatch: true,
 	do: createReplaceOperation(path, after),
 	undo: createReplaceOperation(path, before),
 });
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
 
-const pushAdd = (ops: Array<Op>, path: OperationPath, after: unknown, slot?: number): number => {
-	ops.push(addPair(path, after, slot));
+const pushAdd = (ops: Array<Op>, path: OperationPath, after: unknown): number => {
+	ops.push(addPair(path, after));
 
 	return OPERATION_WEIGHT + weighCarried(after);
 };
 
-const pushRemove = (ops: Array<Op>, path: OperationPath, before: unknown, slot?: number): number => {
-	ops.push(removePair(path, before, slot));
+const pushRemove = (ops: Array<Op>, path: OperationPath, before: unknown): number => {
+	ops.push(removePair(path, before));
 
 	return OPERATION_WEIGHT + weighCarried(before);
 };
@@ -83,18 +49,6 @@ const pushReplace = (ops: Array<Op>, path: OperationPath, before: unknown, after
 	ops.push(replacePair(path, before, after));
 
 	return OPERATION_WEIGHT + weighCarried(before) + weighCarried(after);
-};
-
-const pushMembershipAdd = (ops: Array<Op>, path: OperationPath, slot: number): number => {
-	ops.push(membershipAddPair(path, slot));
-
-	return OPERATION_WEIGHT;
-};
-
-const pushMembershipRemove = (ops: Array<Op>, path: OperationPath, slot: number): number => {
-	ops.push(membershipRemovePair(path, slot));
-
-	return OPERATION_WEIGHT;
 };
 
 const tryCollapse = (
@@ -142,22 +96,7 @@ const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): 
 
 const isObjectLike = (value: unknown): value is object => value !== null && (typeof value === "object" || typeof value === "function");
 
-const sameAddressIdentity = (before: unknown, after: unknown): boolean => {
-	const beforeIdentity = resolveIdentity(before);
-	const afterIdentity = resolveIdentity(after);
-
-	return beforeIdentity === afterIdentity || (beforeIdentity !== beforeIdentity && afterIdentity !== afterIdentity);
-};
-
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean => isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
-
-const getFacadeKind = (value: object): FacadeKind | undefined => {
-	const tag: unknown = Reflect.get(value, Symbol.toStringTag);
-
-	if (tag === "TrackedMap" || tag === "TrackedSet" || tag === "TrackedDate") return tag;
-
-	return undefined;
-};
 
 const assertSafePath = (path: OperationPath): void => {
 	for (let index = 0; index < path.length; index++) {
@@ -189,11 +128,6 @@ const assertSafeSubtree = (value: unknown, path: OperationPath, activeAncestors 
 		activeAncestors.delete(value);
 	}
 };
-
-const getMapPair = (entry: unknown): ReadonlyArray<unknown> | undefined => (Array.isArray(entry) && entry.length >= 2 ? entry : undefined);
-const getSetPair = (entry: unknown): ReadonlyArray<unknown> | undefined => (Array.isArray(entry) && entry.length >= 1 ? entry : undefined);
-
-const collectionSegment = (value: unknown): unknown => (getPathSelector(value) ? createValueOfPathSegment(value) : value);
 
 const isCanonicalArrayIndex = (key: string): boolean => {
 	const index = Number(key);
@@ -233,59 +167,6 @@ const diffObjectProperties = (
 			weight += diffValue(Reflect.get(before, key), Reflect.get(after, key), nextPath, ops, ancestors);
 		}
 	}
-
-	return weight;
-};
-
-const diffMap = (before: object, after: object, path: OperationPath, ops: Array<Op>, ancestors: Ancestors): number => {
-	const beforeData = getTrackedMapData(before);
-	const afterData = getTrackedMapData(after);
-	const length = Math.max(beforeData.length, afterData.length);
-	const removals = new Array<Op>();
-	const additions = new Array<Op>();
-	const interiors = new Array<Op>();
-	let weight = 0;
-
-	for (let slot = 0; slot < length; slot++) {
-		const beforePair = getMapPair(beforeData[slot]);
-		const afterPair = getMapPair(afterData[slot]);
-		const stable = beforePair !== undefined && afterPair !== undefined && sameAddressIdentity(beforePair[0], afterPair[0]);
-
-		if (beforePair !== undefined && !stable) weight += pushRemove(removals, appendOperationPath(path, collectionSegment(beforePair[0])), beforePair[1], slot);
-		if (afterPair !== undefined && !stable) weight += pushAdd(additions, appendOperationPath(path, collectionSegment(afterPair[0])), afterPair[1], slot);
-		if (!stable) continue;
-
-		weight += diffValue(beforePair[0], afterPair[0], appendOperationPath(path, createKeyOfPathSegment(beforePair[0])), interiors, ancestors);
-		weight += diffValue(beforePair[1], afterPair[1], appendOperationPath(path, collectionSegment(beforePair[0])), interiors, ancestors);
-	}
-
-	ops.push(...removals, ...additions, ...interiors);
-
-	return weight;
-};
-
-const diffSet = (before: object, after: object, path: OperationPath, ops: Array<Op>, ancestors: Ancestors): number => {
-	const beforeData = getTrackedSetData(before);
-	const afterData = getTrackedSetData(after);
-	const length = Math.max(beforeData.length, afterData.length);
-	const removals = new Array<Op>();
-	const additions = new Array<Op>();
-	const interiors = new Array<Op>();
-	let weight = 0;
-
-	for (let slot = 0; slot < length; slot++) {
-		const beforePair = getSetPair(beforeData[slot]);
-		const afterPair = getSetPair(afterData[slot]);
-		const stable = beforePair !== undefined && afterPair !== undefined && sameAddressIdentity(beforePair[0], afterPair[0]);
-
-		if (beforePair !== undefined && !stable) weight += pushMembershipRemove(removals, appendOperationPath(path, collectionSegment(beforePair[0])), slot);
-		if (afterPair !== undefined && !stable) weight += pushMembershipAdd(additions, appendOperationPath(path, collectionSegment(afterPair[0])), slot);
-		if (!stable) continue;
-
-		weight += diffValue(beforePair[0], afterPair[0], appendOperationPath(path, collectionSegment(beforePair[0])), interiors, ancestors);
-	}
-
-	ops.push(...removals, ...additions, ...interiors);
 
 	return weight;
 };
@@ -362,31 +243,6 @@ const diffValue = (before: unknown, after: unknown, path: OperationPath, ops: Ar
 		return pushReplace(ops, path, before, after);
 	}
 
-	const beforeTracked = isTrackedWrapper(before);
-	const afterTracked = isTrackedWrapper(after);
-
-	if (beforeTracked || afterTracked) {
-		const beforeKind = beforeTracked ? getFacadeKind(before) : undefined;
-		const afterKind = afterTracked ? getFacadeKind(after) : undefined;
-
-		if (!beforeTracked || !afterTracked || beforeKind === undefined || beforeKind !== afterKind) {
-			return pushReplace(ops, path, before, after);
-		}
-
-		if (beforeKind === "TrackedDate") {
-			const beforeEpoch = getTrackedDateEpoch(before);
-			const afterEpoch = getTrackedDateEpoch(after);
-
-			if (!Object.is(beforeEpoch, afterEpoch)) return pushReplace(ops, appendOperationPath(path, "epoch"), beforeEpoch, afterEpoch);
-
-			return 0;
-		}
-
-		return walkContainer(before, after, path, ops, ancestors, () =>
-			beforeKind === "TrackedMap" ? diffMap(before, after, path, ops, ancestors) : diffSet(before, after, path, ops, ancestors),
-		);
-	}
-
 	if (isPlainArray(before) && isPlainArray(after)) {
 		return walkContainer(before, after, path, ops, ancestors, () => diffArray(before, after, path, ops, ancestors));
 	}
@@ -402,7 +258,6 @@ const diffValue = (before: unknown, after: unknown, path: OperationPath, ops: Ar
 };
 
 const getRootKind = (value: object): RootKind | undefined => {
-	if (isTrackedWrapper(value)) return getFacadeKind(value);
 	if (isPlainArray(value)) return "plainArray";
 	if (isPlainObject(value)) return "plainObject";
 

@@ -6,7 +6,6 @@ import { TrackedSet } from "../tracked/trackedSet";
 import { isCloneable } from "./cloneValue";
 import {
 	createAddOperation,
-	createMembershipAddOperation,
 	createRemoveOperation,
 	createReplaceOperation,
 	getValueOriginal,
@@ -34,20 +33,9 @@ describe("operation", () => {
 		expect(Object.getOwnPropertyDescriptor(half, "value")?.enumerable).toBe(true);
 	});
 
-	it("distinguishes map and membership additions by value presence", () => {
-		const mapUndefined = createAddOperation(["map", "key"], undefined, 4);
-		const membership = createMembershipAddOperation(["set", "member"], 7);
-
-		expect("value" in mapUndefined).toBe(true);
-		expect("value" in mapUndefined ? mapUndefined.value : "missing").toBeUndefined();
-		expect("slot" in mapUndefined ? mapUndefined.slot : undefined).toBe(4);
-		expect("value" in membership).toBe(false);
-		expect("slot" in membership ? membership.slot : undefined).toBe(7);
-	});
-
 	it("stores a frozen copied path on every half", () => {
 		const source = ["document", 1];
-		const halves = [createAddOperation(source, 1), createReplaceOperation(source, 2), createRemoveOperation(source), createMembershipAddOperation(source, 0)];
+		const halves = [createAddOperation(source, 1), createReplaceOperation(source, 2), createRemoveOperation(source)];
 
 		source[0] = "changed";
 
@@ -80,29 +68,35 @@ describe("operation", () => {
 	});
 
 	it("keeps halves branded through an envelope spread", () => {
-		const envelope = { isPatch: true, do: createAddOperation(["node"], { nested: true }), undo: createRemoveOperation(["node"]) };
+		const envelope = { do: createAddOperation(["node"], { nested: true }), undo: createRemoveOperation(["node"]) };
 		const spread = { ...envelope };
 
 		expect(isOperation(spread.do)).toBe(true);
 		expect(isOperation(spread.undo)).toBe(true);
 	});
 
-	it("keeps whole-facade op values by reference, not a structural clone", () => {
+	it("clones plain-data facade op values through the generic path", () => {
 		const map = new TrackedMap([["a", 1]]);
 		const set = new TrackedSet([1]);
 		const date = new TrackedDate(0);
 
-		expect(isCloneable(map)).toBe(false);
-		expect(isCloneable(set)).toBe(false);
-		expect(isCloneable(date)).toBe(false);
+		expect(isCloneable(map)).toBe(true);
+		expect(isCloneable(set)).toBe(true);
+		expect(isCloneable(date)).toBe(true);
 
 		const mapHalf = createReplaceOperation(["map"], map);
 		const setHalf = createReplaceOperation(["set"], set);
 		const dateHalf = createReplaceOperation(["date"], date);
 
-		expect(mapHalf.value).toBe(map);
-		expect(setHalf.value).toBe(set);
-		expect(dateHalf.value).toBe(date);
+		expect(mapHalf.value).not.toBe(map);
+		expect(setHalf.value).not.toBe(set);
+		expect(dateHalf.value).not.toBe(date);
+		expect(mapHalf.value).toBeInstanceOf(TrackedMap);
+		expect(setHalf.value).toBeInstanceOf(TrackedSet);
+		expect(dateHalf.value).toBeInstanceOf(TrackedDate);
+		expect([...(mapHalf.value as TrackedMap<string, number>)]).toEqual([["a", 1]]);
+		expect([...(setHalf.value as TrackedSet<number>)]).toEqual([1]);
+		expect((dateHalf.value as TrackedDate).getTime()).toBe(0);
 		expect(getValueOriginal(mapHalf)).toBe(map);
 	});
 });

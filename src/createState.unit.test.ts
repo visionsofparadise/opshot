@@ -238,7 +238,7 @@ describe("createState", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
@@ -327,7 +327,7 @@ describe("createState", () => {
     state.increment();
 
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
 
     const second = generations[0];
@@ -410,7 +410,7 @@ describe("createState", () => {
     expect(firstEmissions).toHaveLength(1);
     expect(secondEmissions).toHaveLength(1);
     expect(secondEmissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 7 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 7 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(second.op.unwrap().count).toBe(7);
   });
@@ -462,7 +462,7 @@ describe("createState", () => {
     expect(state.op.unwrap().entries).toEqual(["one"]);
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["index"], value: 1 }, undo: { op: "replace", path: ["index"], value: 0 } },
+      { do: { op: "replace", path: ["index"], value: 1 }, undo: { op: "replace", path: ["index"], value: 0 } },
     ]);
   });
 
@@ -506,7 +506,7 @@ describe("createState", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(state.op.unwrap().count).toBe(3);
     expect(state.count).toBe(0);
@@ -594,7 +594,7 @@ describe("createState", () => {
 
     expect(diffSnapshots).toHaveBeenCalledTimes(1);
     expect(heard).toEqual([
-      [{ isPatch: true, do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+      [{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
     ]);
 
     unsubscribe();
@@ -650,7 +650,7 @@ describe("watchdog", () => {
 
     expect(heard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+        ops: [{ do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -687,11 +687,11 @@ describe("watchdog", () => {
     expect(heard).toHaveLength(2);
     expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
     expect(heard[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(heard[1]?.emission).toEqual({ isSideEffect: true });
     expect(heard[1]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["flag"], value: true }, undo: { op: "replace", path: ["flag"], value: false } },
+      { do: { op: "replace", path: ["flag"], value: true }, undo: { op: "replace", path: ["flag"], value: false } },
     ]);
   });
 
@@ -720,7 +720,7 @@ describe("watchdog", () => {
 
     expect(heard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+        ops: [{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -754,7 +754,7 @@ describe("watchdog", () => {
 
     expect(heard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+        ops: [{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
         emission: { isSideEffect: true },
       },
     ]);

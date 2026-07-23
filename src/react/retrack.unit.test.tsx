@@ -8,9 +8,8 @@ import { createState, type Emission, type State } from "../createState";
 import { isState } from "../isState";
 import { applyOps } from "../ops/applyOps";
 import { type Op } from "../ops/operation";
-import { getTrackedMapData, TrackedMap } from "../tracked/trackedMap";
-import { getTrackedSetData, TrackedSet } from "../tracked/trackedSet";
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
+import { TrackedMap } from "../tracked/trackedMap";
+import { TrackedSet } from "../tracked/trackedSet";
 import { retrack } from "./retrack";
 
 vi.mock("valtio/vanilla", async (importOriginal) => {
@@ -228,12 +227,12 @@ describe("retrack", () => {
     expect(screen.getByTestId("count").textContent).toBe("0");
   });
 
-  it("substitutes facade slots immutably while preserving facade identity metadata", async () => {
+  it("substitutes facade class instances immutably through the generic path", async () => {
     const counter = createCounter();
     const map = new TrackedMap<string, object>([["counter", counter.op.unsafeMutable]]);
     const set = new TrackedSet<object>([counter.op.unsafeMutable]);
-    const originalMapData = getTrackedMapData(map);
-    const originalSetData = getTrackedSetData(set);
+    const originalMapSlots = Reflect.get(map, "slots") as Array<readonly [string, object] | null>;
+    const originalSetSlots = Reflect.get(set, "slots") as Array<readonly [object] | null>;
 
     let receivedMap: TrackedMap<string, object> | undefined;
     let receivedSet: TrackedSet<object> | undefined;
@@ -266,31 +265,23 @@ describe("retrack", () => {
     expect(receivedSet).not.toBe(set);
     expect(Reflect.getPrototypeOf(receivedMap)).toBe(Reflect.getPrototypeOf(map));
     expect(Reflect.getPrototypeOf(receivedSet)).toBe(Reflect.getPrototypeOf(set));
-    expect(isTrackedWrapper(receivedMap)).toBe(true);
-    expect(isTrackedWrapper(receivedSet)).toBe(true);
-    expect(Object.getOwnPropertyDescriptor(receivedMap, "epoch")).toEqual(Object.getOwnPropertyDescriptor(map, "epoch"));
-    expect(Object.getOwnPropertyDescriptor(receivedSet, "epoch")).toEqual(Object.getOwnPropertyDescriptor(set, "epoch"));
+    expect(receivedMap).toBeInstanceOf(TrackedMap);
+    expect(receivedSet).toBeInstanceOf(TrackedSet);
+    expect(Object.prototype.toString.call(receivedMap)).toBe("[object TrackedMap]");
+    expect(Object.prototype.toString.call(receivedSet)).toBe("[object TrackedSet]");
 
-    const mapDataDescriptor = Object.getOwnPropertyDescriptor(map, "data");
-    const receivedMapDataDescriptor = Object.getOwnPropertyDescriptor(receivedMap, "data");
-    const setDataDescriptor = Object.getOwnPropertyDescriptor(set, "data");
-    const receivedSetDataDescriptor = Object.getOwnPropertyDescriptor(receivedSet, "data");
+    const receivedMapSlots = Reflect.get(receivedMap, "slots") as Array<readonly [string, object] | null>;
+    const receivedSetSlots = Reflect.get(receivedSet, "slots") as Array<readonly [object] | null>;
 
-    expect(receivedMapDataDescriptor?.enumerable).toBe(mapDataDescriptor?.enumerable);
-    expect(receivedMapDataDescriptor?.configurable).toBe(mapDataDescriptor?.configurable);
-    expect(receivedMapDataDescriptor?.writable).toBe(mapDataDescriptor?.writable);
-    expect(receivedSetDataDescriptor?.enumerable).toBe(setDataDescriptor?.enumerable);
-    expect(receivedSetDataDescriptor?.configurable).toBe(setDataDescriptor?.configurable);
-    expect(receivedSetDataDescriptor?.writable).toBe(setDataDescriptor?.writable);
-    expect(getTrackedMapData(receivedMap)).not.toBe(originalMapData);
-    expect(getTrackedSetData(receivedSet)).not.toBe(originalSetData);
-    expect(getTrackedMapData(map)).toBe(originalMapData);
-    expect(getTrackedSetData(set)).toBe(originalSetData);
+    expect(receivedMapSlots).not.toBe(originalMapSlots);
+    expect(receivedSetSlots).not.toBe(originalSetSlots);
+    expect(Reflect.get(map, "slots")).toBe(originalMapSlots);
+    expect(Reflect.get(set, "slots")).toBe(originalSetSlots);
 
-    const originalMapPair = originalMapData[0];
-    const receivedMapPair = getTrackedMapData(receivedMap)[0];
-    const originalSetPair = originalSetData[0];
-    const receivedSetPair = getTrackedSetData(receivedSet)[0];
+    const originalMapPair = originalMapSlots[0];
+    const receivedMapPair = receivedMapSlots[0];
+    const originalSetPair = originalSetSlots[0];
+    const receivedSetPair = receivedSetSlots[0];
 
     if (originalMapPair === null || originalMapPair === undefined || receivedMapPair === null || receivedMapPair === undefined) throw new Error("expected live map slots");
     if (originalSetPair === null || originalSetPair === undefined || receivedSetPair === null || receivedSetPair === undefined) throw new Error("expected live set slots");
@@ -569,7 +560,8 @@ describe("retrack", () => {
     expect(screen.getByTestId("tracked-size").textContent).toBe("2");
     expect(screen.getByTestId("tracked-get").textContent).toBe("one");
     expect(screen.getByTestId("tracked-iteration").textContent).toBe("a:one,b:bee");
-    expect(renders).toEqual({ size: 2, get: 2, iteration: 2, unrelated: 1 });
+    // get("a") only reads index[sa]/slots[a]; an unrelated membership add does not wake it.
+    expect(renders).toEqual({ size: 2, get: 1, iteration: 2, unrelated: 1 });
 
     await act(async () => {
       state.mutate((mutable) => {
@@ -582,7 +574,7 @@ describe("retrack", () => {
     expect(screen.getByTestId("tracked-size").textContent).toBe("2");
     expect(screen.getByTestId("tracked-get").textContent).toBe("two");
     expect(screen.getByTestId("tracked-iteration").textContent).toBe("a:two,b:bee");
-    expect(renders).toEqual({ size: 2, get: 3, iteration: 3, unrelated: 1 });
+    expect(renders).toEqual({ size: 2, get: 2, iteration: 3, unrelated: 1 });
 
     await act(async () => {
       state.mutate((mutable) => {
@@ -593,7 +585,7 @@ describe("retrack", () => {
     expect(screen.getByTestId("tracked-size").textContent).toBe("1");
     expect(screen.getByTestId("tracked-get").textContent).toBe("-");
     expect(screen.getByTestId("tracked-iteration").textContent).toBe("b:bee");
-    expect(renders).toEqual({ size: 3, get: 4, iteration: 4, unrelated: 1 });
+    expect(renders).toEqual({ size: 3, get: 3, iteration: 4, unrelated: 1 });
 
     await act(async () => {
       state.mutate((mutable) => {
@@ -605,7 +597,59 @@ describe("retrack", () => {
     expect(screen.getByTestId("tracked-get").textContent).toBe("-");
     expect(screen.getByTestId("tracked-iteration").textContent).toBe("");
     expect(screen.getByTestId("tracked-unrelated").textContent).toBe("steady");
-    expect(renders).toEqual({ size: 4, get: 5, iteration: 5, unrelated: 1 });
+    // get("a") already saw the absent address after delete; clear does not re-wake that reader.
+    expect(renders).toEqual({ size: 4, get: 3, iteration: 5, unrelated: 1 });
+  });
+
+  it("granular membership: has(k) for absent k wakes only when k is added", async () => {
+    interface CollectionState {
+      map: TrackedMap<string, number>;
+    }
+
+    const state = createState<CollectionState>({ map: new TrackedMap() });
+    const renders = { target: 0, other: 0 };
+
+    const TargetHas = retrack<{ state: State<CollectionState> }>(({ state: snap }) => {
+      renders.target += 1;
+
+      return <span data-testid="has-k">{String(snap.map.has("k"))}</span>;
+    });
+    const OtherHas = retrack<{ state: State<CollectionState> }>(({ state: snap }) => {
+      renders.other += 1;
+
+      return <span data-testid="has-j">{String(snap.map.has("j"))}</span>;
+    });
+
+    render(
+      <>
+        <TargetHas state={state} />
+        <OtherHas state={state} />
+      </>,
+    );
+
+    expect(screen.getByTestId("has-k").textContent).toBe("false");
+    expect(screen.getByTestId("has-j").textContent).toBe("false");
+    expect(renders).toEqual({ target: 1, other: 1 });
+
+    await act(async () => {
+      state.mutate((mutable) => {
+        mutable.map.set("j", 1);
+      });
+    });
+
+    expect(screen.getByTestId("has-k").textContent).toBe("false");
+    expect(screen.getByTestId("has-j").textContent).toBe("true");
+    expect(renders).toEqual({ target: 1, other: 2 });
+
+    await act(async () => {
+      state.mutate((mutable) => {
+        mutable.map.set("k", 2);
+      });
+    });
+
+    expect(screen.getByTestId("has-k").textContent).toBe("true");
+    expect(screen.getByTestId("has-j").textContent).toBe("true");
+    expect(renders).toEqual({ target: 2, other: 2 });
   });
 
   it("re-renders only the components whose read fields changed", async () => {

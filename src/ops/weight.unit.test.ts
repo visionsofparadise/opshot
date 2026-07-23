@@ -1,13 +1,7 @@
 import { ignore } from "../ignore";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
-import {
-	CHARACTER_WEIGHT,
-	KEY_WEIGHT,
-	LEAF_WEIGHT,
-	NODE_WEIGHT,
-	weighValue,
-} from "./weight";
+import { CHARACTER_WEIGHT, KEY_WEIGHT, LEAF_WEIGHT, NODE_WEIGHT, weighValue } from "./weight";
 
 describe("weighValue", () => {
 	it("aborts once accumulated weight exceeds the budget", () => {
@@ -45,7 +39,7 @@ describe("weighValue", () => {
 		expect(weighValue(shared, Number.MAX_SAFE_INTEGER)).toBe(sharedWeight);
 	});
 
-	it("weighs TrackedMap live entries and skips tombstones", () => {
+	it("weighs TrackedMap as a clean-class container including tombstones", () => {
 		const withTombstone = new TrackedMap<number, number>([
 			[1, 10],
 			[2, 20],
@@ -56,13 +50,17 @@ describe("weighValue", () => {
 		const liveOnly = new TrackedMap<number, number>([[2, 20]]);
 		const budget = Number.MAX_SAFE_INTEGER;
 
-		expect(weighValue(withTombstone, budget)).toBe(weighValue(liveOnly, budget));
-		expect(weighValue(liveOnly, budget)).toBe(NODE_WEIGHT + LEAF_WEIGHT + LEAF_WEIGHT);
+		// Tombstones keep slot length, so a deleted entry still charges array/index structure weight.
+		expect(weighValue(withTombstone, budget)).toBeGreaterThan(weighValue(liveOnly, budget));
+		expect(weighValue(liveOnly, budget)).toBeGreaterThan(NODE_WEIGHT);
 	});
 
-	it("weighs TrackedDate as a leaf", () => {
-		expect(weighValue(new TrackedDate(0), Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
-		expect(weighValue(new TrackedDate(Date.UTC(2026, 0, 1)), Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
+	it("weighs TrackedDate as a clean-class container over epochMs", () => {
+		const date = new TrackedDate(0);
+		const expected = NODE_WEIGHT + KEY_WEIGHT + LEAF_WEIGHT;
+
+		expect(weighValue(date, Number.MAX_SAFE_INTEGER)).toBe(expected);
+		expect(weighValue(new TrackedDate(Date.UTC(2026, 0, 1)), Number.MAX_SAFE_INTEGER)).toBe(expected);
 	});
 
 	it("charges nothing for a hole and a leaf for stored undefined", () => {

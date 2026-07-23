@@ -1,131 +1,96 @@
-import { resolveIdentity } from "../identity";
-import { assertMutableFacade, createCollectionData, getCollectionIndex, iterateCollectionData, resetCollectionIndex, updateCollectionIndex } from "./trackedCollection";
-import { brandTrackedPrototype } from "./trackedWrapper";
+import { addressOf } from "./address";
+import { assertMutableFacade } from "./facadeGuard";
+import { iterateSlots } from "./iterateSlots";
 
 export class TrackedSet<T> {
-	private data: Array<readonly [T] | null> = createCollectionData();
-	private declare epoch: number;
+	private slots: Array<readonly [T] | null>;
+	private index: Record<string, number>;
+	private count: number;
 
 	constructor(values?: Iterable<T>) {
-		Object.defineProperty(this, "epoch", { value: 0, enumerable: false, configurable: false, writable: true });
+		this.slots = [];
+		this.index = {};
+		this.count = 0;
 
 		if (values !== undefined) for (const value of values) this.add(value);
 	}
 
 	get size(): number {
-		void this.epoch;
-
-		return getCollectionIndex(this.data).slots.size;
+		return this.count;
 	}
 
 	has(value: T): boolean {
-		void this.epoch;
-
-		return getCollectionIndex(this.data).slots.has(resolveIdentity(value));
+		return this.index[addressOf(value)] !== undefined;
 	}
 
 	add(value: T): this {
-		assertMutableFacade(this, "epoch", this.data);
+		assertMutableFacade(this, "count");
 
-		const index = getCollectionIndex(this.data);
+		const addr = addressOf(value);
 
-		if (index.slots.has(resolveIdentity(value))) return this;
+		if (this.index[addr] !== undefined) return this;
 
-		const slot = this.data.length;
+		const slot = this.slots.length;
 
-		this.data.push([value]);
-		updateCollectionIndex(index, this.data, slot);
-		this.epoch += 1;
+		this.slots.push([value]);
+		this.index[addr] = slot;
+		this.count += 1;
 
 		return this;
 	}
 
 	delete(value: T): boolean {
-		assertMutableFacade(this, "epoch", this.data);
+		assertMutableFacade(this, "count");
 
-		const index = getCollectionIndex(this.data);
-		const slot = index.slots.get(resolveIdentity(value));
+		const addr = addressOf(value);
+		const slot = this.index[addr];
 
 		if (slot === undefined) return false;
 
-		this.data[slot] = null;
-		updateCollectionIndex(index, this.data, slot);
-		this.epoch += 1;
+		this.slots[slot] = null;
+		Reflect.deleteProperty(this.index, addr);
+		this.count -= 1;
 
 		return true;
 	}
 
 	clear(): void {
-		assertMutableFacade(this, "epoch", this.data);
+		assertMutableFacade(this, "count");
 
-		this.data = createCollectionData();
-		resetCollectionIndex(this.data);
-		this.epoch += 1;
+		this.slots = [];
+		this.index = {};
+		this.count = 0;
 	}
 
 	entries(): IterableIterator<[T, T]> {
-		void this.epoch;
-
-		const data = iterateCollectionData(() => this.data);
+		const members = iterateSlots<readonly [T]>(() => this.slots);
 
 		return (function* () {
-			for (const pair of data) yield [pair[0], pair[0]];
+			for (const member of members) yield [member[0], member[0]];
 		})();
 	}
 
 	keys(): IterableIterator<T> {
-		void this.epoch;
-
 		return this.values();
 	}
 
 	values(): IterableIterator<T> {
-		void this.epoch;
-
-		const data = iterateCollectionData(() => this.data);
+		const members = iterateSlots<readonly [T]>(() => this.slots);
 
 		return (function* () {
-			for (const pair of data) yield pair[0];
+			for (const member of members) yield member[0];
 		})();
 	}
 
 	forEach(callback: (value: T, key: T, set: TrackedSet<T>) => void): void {
-		void this.epoch;
-
-		for (const pair of iterateCollectionData(() => this.data)) callback(pair[0], pair[0], this);
+		for (const member of iterateSlots<readonly [T]>(() => this.slots)) callback(member[0], member[0], this);
 	}
 
 	[Symbol.iterator](): IterableIterator<T> {
-		void this.epoch;
-
 		return this.values();
 	}
 
 	declare readonly [Symbol.toStringTag]: "TrackedSet";
 }
 
-const isTrackedSetData = <T>(value: unknown): value is Array<readonly [T] | null> => Array.isArray(value);
-
-export const getTrackedSetData = <T>(set: object): Array<readonly [T] | null> => {
-	const data: unknown = Reflect.get(set, "data");
-
-	if (!isTrackedSetData<T>(data)) throw new Error("opshot: TrackedSet facade has invalid data backing");
-
-	return data;
-};
-
-export const setTrackedSetData = <T>(set: object, data: Array<readonly [T] | null>): void => {
-	const descriptor = Reflect.getOwnPropertyDescriptor(set, "data");
-
-	if (descriptor === undefined || !("value" in descriptor)) throw new Error("opshot: TrackedSet facade has invalid data backing");
-	if (!Reflect.defineProperty(set, "data", { ...descriptor, value: data })) throw new Error("opshot: TrackedSet data backing could not be replaced");
-};
-
-export const bumpTrackedSetEpoch = (set: object): void => {
-	const epoch: unknown = Reflect.get(set, "epoch");
-
-	if (typeof epoch !== "number" || !Reflect.set(set, "epoch", epoch + 1)) throw new Error("opshot: TrackedSet facade has invalid epoch backing");
-};
-
 Object.defineProperty(TrackedSet.prototype, Symbol.toStringTag, { value: "TrackedSet", enumerable: false, configurable: false, writable: false });
-brandTrackedPrototype(TrackedSet.prototype);

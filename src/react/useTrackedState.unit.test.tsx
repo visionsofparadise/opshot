@@ -123,7 +123,8 @@ describe("useTrackedState", () => {
     expect(size.result.current.value).toBe(2);
     expect(get.result.current.value).toBe("one");
     expect(iteration.result.current.value).toBe("a:one,b:bee");
-    expect(renders).toEqual({ size: 2, get: 2, iteration: 2 });
+    // get("a") only records the a-key address; an unrelated add does not wake it.
+    expect(renders).toEqual({ size: 2, get: 1, iteration: 2 });
 
     await act(async () => {
       for (const state of [size.result.current.state, get.result.current.state, iteration.result.current.state]) {
@@ -138,7 +139,7 @@ describe("useTrackedState", () => {
     expect(size.result.current.value).toBe(2);
     expect(get.result.current.value).toBe("two");
     expect(iteration.result.current.value).toBe("a:two,b:bee");
-    expect(renders).toEqual({ size: 2, get: 3, iteration: 3 });
+    expect(renders).toEqual({ size: 2, get: 2, iteration: 3 });
 
     await act(async () => {
       for (const state of [size.result.current.state, get.result.current.state, iteration.result.current.state]) {
@@ -151,7 +152,7 @@ describe("useTrackedState", () => {
     expect(size.result.current.value).toBe(1);
     expect(get.result.current.value).toBe("-");
     expect(iteration.result.current.value).toBe("b:bee");
-    expect(renders).toEqual({ size: 3, get: 4, iteration: 4 });
+    expect(renders).toEqual({ size: 3, get: 3, iteration: 4 });
 
     await act(async () => {
       for (const state of [size.result.current.state, get.result.current.state, iteration.result.current.state]) {
@@ -164,7 +165,40 @@ describe("useTrackedState", () => {
     expect(size.result.current.value).toBe(0);
     expect(get.result.current.value).toBe("-");
     expect(iteration.result.current.value).toBe("");
-    expect(renders).toEqual({ size: 4, get: 5, iteration: 5 });
+    // get("a") already saw the absent address after delete; clear does not re-wake that reader.
+    expect(renders).toEqual({ size: 4, get: 3, iteration: 5 });
+  });
+
+  it("re-renders a useTrackedState facade reader on membership change", async () => {
+    interface CollectionState {
+      map: TrackedMap<string, number>;
+    }
+
+    let held: State<CollectionState> | undefined;
+    let renders = 0;
+
+    const View: FC = () => {
+      const state = useTrackedState<CollectionState>({ map: new TrackedMap() });
+
+      held = state;
+      renders += 1;
+
+      return <span data-testid="map-size">{state.map.size}</span>;
+    };
+
+    render(<View />);
+
+    expect(screen.getByTestId("map-size").textContent).toBe("0");
+    expect(renders).toBe(1);
+
+    await act(async () => {
+      held?.mutate((mutable) => {
+        mutable.map.set("a", 1);
+      });
+    });
+
+    expect(screen.getByTestId("map-size").textContent).toBe("1");
+    expect(renders).toBe(2);
   });
 
   it("does not re-render an unrelated plain-field reader for map mutations", async () => {

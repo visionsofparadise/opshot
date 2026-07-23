@@ -1,7 +1,8 @@
 import { createState, type State } from "../createState";
 import { identify, isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
-import type { Op } from "../ops/operation";
+import type { Op, Operation } from "../ops/operation";
+import { addressOf } from "./address";
 import { TrackedSet } from "./trackedSet";
 
 const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
@@ -12,6 +13,8 @@ const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
 	return heard;
 };
 
+const doPaths = (ops: Array<Op> | undefined): Array<Operation["path"]> => (ops ?? []).map((pair) => pair.do.path);
+
 describe("TrackedSet", () => {
 	it("implements ordered Set membership and deduplication", () => {
 		const set = new TrackedSet([1, 2, 1]);
@@ -20,11 +23,25 @@ describe("TrackedSet", () => {
 		expect(set.has(1)).toBe(true);
 		expect(set.add(3)).toBe(set);
 		expect([...set]).toEqual([1, 2, 3]);
-		expect([...set.entries()]).toEqual([[1, 1], [2, 2], [3, 3]]);
+		expect([...set.entries()]).toEqual([
+			[1, 1],
+			[2, 2],
+			[3, 3],
+		]);
 		expect(set.delete(2)).toBe(true);
 		expect(set.delete(2)).toBe(false);
 		set.clear();
 		expect(set.size).toBe(0);
+	});
+
+	it("keeps tombstones so re-adds append and iteration skips deleted slots", () => {
+		const set = new TrackedSet([1, 2]);
+
+		set.delete(1);
+		set.add(3);
+
+		expect([...set]).toEqual([2, 3]);
+		expect(set.size).toBe(2);
 	});
 
 	it("normalizes raw, proxy, and snapshot members by storage identity", () => {
@@ -47,27 +64,42 @@ describe("TrackedSet", () => {
 		expect(state.op.unwrap().set.size).toBe(1);
 	});
 
-	it("emits valueless slotted add and remove halves", () => {
-		const member = { id: 1 };
-		const state = createState({ set: new TrackedSet<typeof member>() });
+	it("emits plain-data membership add and remove ops", () => {
+		const pad = "x".repeat(5_000);
+		const set = new TrackedSet<string>();
+
+		for (let index = 0; index < 20; index++) set.add(`pad${index}${pad}`);
+
+		const member = "member";
+		const addr = addressOf(member);
+		const state = createState({ set });
 		const heard = record(state);
 
 		state.mutate((mutable) => mutable.set.add(member));
 		state.mutate((mutable) => mutable.set.delete(member));
 
-		const addition = heard[0]?.[0];
-		const removal = heard[1]?.[0];
+		expect(doPaths(heard[0])).toEqual(
+			expect.arrayContaining([
+				["set", "index", addr],
+				["set", "slots", 20],
+				["set", "count"],
+			]),
+		);
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.do.op).toBe("add");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({ op: "add", path: ["set", "index", addr], value: 20 });
 
-		expect(addition?.do.op).toBe("add");
-		expect(addition?.do.path[0]).toBe("set");
-		expect(isSameIdentity(addition?.do.path[1] as object, member)).toBe(true);
-		expect(addition?.do.op === "add" && "slot" in addition.do ? addition.do.slot : undefined).toBe(0);
-		expect(addition?.do && "value" in addition.do).toBe(false);
-		expect(removal?.do).toMatchObject({ op: "remove", path: ["set", expect.any(Object)] });
-		expect(removal?.undo.op === "add" && "value" in removal.undo).toBe(false);
+		expect(doPaths(heard[1])).toEqual(
+			expect.arrayContaining([
+				["set", "index", addr],
+				["set", "slots", 20],
+				["set", "count"],
+			]),
+		);
+		expect(heard[1]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({ op: "replace", path: ["set", "slots", 20], value: null });
+		expect(heard[1]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("remove");
 	});
 
-	it("emits member interiors at the member path", () => {
+	it("emits member interiors through slots", () => {
 		const member = { profile: { count: 1 } };
 		const state = createState({ set: new TrackedSet([member]) });
 		const heard = record(state);
@@ -82,9 +114,7 @@ describe("TrackedSet", () => {
 		const operation = heard[0]?.[0]?.do;
 
 		expect(operation?.op).toBe("replace");
-		expect(operation?.path[0]).toBe("set");
-		expect(isSameIdentity(operation?.path[1] as object, member)).toBe(true);
-		expect(operation?.path.slice(2)).toEqual(["profile", "count"]);
+		expect(operation?.path).toEqual(["set", "slots", 0, 0, "profile", "count"]);
 	});
 
 	it("round-trips clear and reorder through one collapsed container replace", () => {
@@ -101,9 +131,15 @@ describe("TrackedSet", () => {
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["set"] });
-		applyOps(state, [...ops].reverse().map((pair) => pair.undo));
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 		expect([...state.op.unwrap().set]).toEqual(["a", "b"]);
-		applyOps(state, ops.map((pair) => pair.do));
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
 		expect([...state.op.unwrap().set]).toEqual(["b", "a"]);
 	});
 
@@ -114,13 +150,40 @@ describe("TrackedSet", () => {
 		const heard = record(state);
 
 		state.mutate((mutable) => mutable.set.delete(member));
-		const undo = heard[0]?.[0]?.undo;
-		if (!undo) throw new Error("missing undo");
-		applyOps(state, [undo]);
+		const ops = heard[0] ?? [];
+		applyOps(
+			state,
+			[...ops].reverse().map((pair) => pair.undo),
+		);
 
 		const restored = [...state.op.unwrap().set][0];
 
 		expect(restored && selection.get(identify(restored))).toBe("selected");
 		expect(restored && isSameIdentity(restored, member)).toBe(true);
+	});
+
+	it("retains full function after a minimal clean-class clone", () => {
+		const set = new TrackedSet([1, 2]);
+		const clone = Object.create(Object.getPrototypeOf(set)) as TrackedSet<number>;
+
+		for (const key of Object.keys(set as object)) {
+			Reflect.set(clone, key, Reflect.get(set as object, key));
+		}
+
+		expect(clone.size).toBe(2);
+		expect(clone.has(1)).toBe(true);
+		clone.add(3);
+		expect([...clone]).toEqual([1, 2, 3]);
+		expect(clone.delete(1)).toBe(true);
+		expect([...clone]).toEqual([2, 3]);
+		expect(Object.prototype.toString.call(clone)).toBe("[object TrackedSet]");
+	});
+
+	it("throws when mutating a snapshot copy", () => {
+		const state = createState({ set: new TrackedSet([1]) });
+		const snapshot = state.op.unwrap();
+
+		expect(() => snapshot.set.add(2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
+		expect(snapshot.set.size).toBe(1);
 	});
 });

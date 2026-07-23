@@ -3,7 +3,7 @@ import { createProxy, isChanged } from "proxy-compare";
 import { createState, type Emission, type State } from "../createState";
 import { applyOps } from "../ops/applyOps";
 import type { Op, Operation } from "../ops/operation";
-import { getTrackedDateEpoch, TrackedDate } from "./trackedDate";
+import { TrackedDate } from "./trackedDate";
 
 const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
 
@@ -117,7 +117,7 @@ describe("TrackedDate facade", () => {
 		const result = Reflect.apply(facadeMethod, date, args);
 
 		expect(result).toBe(expected);
-		expect(getTrackedDateEpoch(date)).toBe(expected);
+		expect(date.getTime()).toBe(expected);
 		expect(date.getTime()).toBe(native.getTime());
 	});
 
@@ -191,13 +191,27 @@ describe("TrackedDate facade", () => {
 			expect(() => date.setYear(25)).toThrow("opshot: cannot mutate a tracked collection snapshot");
 		}
 
-		expect(getTrackedDateEpoch(snapshot.when)).toBe(0);
-		expect(getTrackedDateEpoch(state.op.unwrap().when)).toBe(0);
+		expect(snapshot.when.getTime()).toBe(0);
+		expect(state.op.unwrap().when.getTime()).toBe(0);
+	});
+
+	it("retains full function after a minimal clean-class clone", () => {
+		const date = new TrackedDate(1_000);
+		const clone = Object.create(Object.getPrototypeOf(date)) as TrackedDate;
+
+		for (const key of Object.keys(date as object)) {
+			Reflect.set(clone, key, Reflect.get(date as object, key));
+		}
+
+		expect(clone.getTime()).toBe(1_000);
+		expect(clone.setTime(2_000)).toBe(2_000);
+		expect(clone.getTime()).toBe(2_000);
+		expect(Object.prototype.toString.call(clone)).toBe("[object TrackedDate]");
 	});
 });
 
 describe("TrackedDate atomic emission", () => {
-	it("emits a scalar epoch replacement pair", () => {
+	it("emits a scalar epochMs replacement pair", () => {
 		const state = createState({ when: new TrackedDate(Date.UTC(2020, 0, 1)) });
 		const heard = recordAll(state);
 
@@ -211,16 +225,15 @@ describe("TrackedDate atomic emission", () => {
 
 		expect(heard[0]?.ops).toHaveLength(1);
 		expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
-		expect(pair.isPatch).toBe(true);
 		expect(pair.do.op).toBe("replace");
-		expect(pair.do.path).toEqual(["when", "epoch"]);
+		expect(pair.do.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.do)).toBe(Date.UTC(2024, 0, 1));
 		expect(pair.undo.op).toBe("replace");
-		expect(pair.undo.path).toEqual(["when", "epoch"]);
+		expect(pair.undo.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.undo)).toBe(Date.UTC(2020, 0, 1));
 	});
 
-	it("applies and inverts epoch replacement through brand-based facade routing", () => {
+	it("applies and inverts epochMs replacement through generic replay", () => {
 		const state = createState({ when: new TrackedDate(0) });
 		const heard = recordAll(state);
 

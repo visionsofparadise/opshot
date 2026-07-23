@@ -2,7 +2,6 @@ import { createState, type State } from "../createState";
 import { isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
 import type { Op } from "../ops/operation";
-import { getPathSelector } from "../ops/path";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
@@ -88,13 +87,6 @@ const getMapKey = (facade: unknown): object => {
 	if (typeof key !== "object" || key === null) throw new Error("getMapKey: map has no object key");
 
 	return key;
-};
-
-const getFacadeOperation = (facade: unknown): "add" | "replace" => {
-	if (facade instanceof TrackedMap || facade instanceof TrackedSet) return "add";
-	if (facade instanceof TrackedDate) return "replace";
-
-	throw new Error("getFacadeOperation: not a tracked facade");
 };
 
 const driveSparseArray = (value: unknown): void => {
@@ -193,15 +185,12 @@ const opsAndReplay: Scenario = {
 		}
 
 		const before = state.op.unwrap().value;
-		const usesFacade = operationLane === "containerTranslation" || operationLane === "collectionKeyInterior";
+		const usesFacade = operationLane === "collectionKeyInterior" || before instanceof TrackedMap || before instanceof TrackedSet || before instanceof TrackedDate;
 		const beforeFacade = usesFacade ? readFacade(before) : undefined;
 		const beforeMapKey = operationLane === "collectionKeyInterior" ? getMapKey(before) : undefined;
 
 		state.mutate((mutable) => {
 			switch (operationLane) {
-				case "containerTranslation":
-					driveFacade(mutable.value);
-					break;
 				case "collectionKeyInterior":
 					driveMapKey(mutable.value);
 					break;
@@ -215,7 +204,11 @@ const opsAndReplay: Scenario = {
 					(mutable.value as { value: number }).value = 2;
 					break;
 				case "trackedInterior":
-					driveInterior(mutable.value as object);
+					if (mutable.value instanceof TrackedMap || mutable.value instanceof TrackedSet || mutable.value instanceof TrackedDate) {
+						driveFacade(mutable.value);
+					} else {
+						driveInterior(mutable.value as object);
+					}
 					break;
 				case "replaceValue":
 					mutable.value = "__probe__";
@@ -229,10 +222,6 @@ const opsAndReplay: Scenario = {
 		expect(ops.length).toBeGreaterThan(0);
 
 		switch (operationLane) {
-			case "containerTranslation":
-				expect(ops.map((op) => op.do.op)).toEqual([getFacadeOperation(value)]);
-				expect(ops[0]?.do.path[0]).toBe("value");
-				break;
 			case "collectionKeyInterior": {
 				const operation = ops[0]?.do;
 				const mutatedKey = getMapKey(mutated);
@@ -241,9 +230,7 @@ const opsAndReplay: Scenario = {
 
 				expect(ops).toHaveLength(1);
 				expect(operation?.op).toBe("replace");
-				expect(operation?.path[0]).toBe("value");
-				expect(getPathSelector(operation?.path[1])?.kind).toBe("keyOf");
-				expect(operation).toMatchObject({ op: "replace", path: ["value", expect.any(Object), "id"], value: 2 });
+				expect(operation?.path).toEqual(["value", "slots", 0, 0, "id"]);
 				expect(isSameIdentity(mutatedKey, beforeMapKey)).toBe(true);
 				break;
 			}
@@ -269,6 +256,9 @@ const opsAndReplay: Scenario = {
 				if (typeof before !== "object" || before === null || typeof mutated !== "object" || mutated === null) throw new Error("interior lane did not produce object handles");
 
 				expect(isSameIdentity(before, mutated)).toBe(true);
+				break;
+			case "trackedInterior":
+				expect(ops.every((op) => op.do.path[0] === "value")).toBe(true);
 				break;
 		}
 
@@ -383,10 +373,10 @@ const watchdogReport: Scenario = {
 
 		const rootValue: unknown = Reflect.get(state.op.unsafeMutable, "value");
 
-		if (getOperationLane(entry) === "containerTranslation") {
-			driveFacade(rootValue);
-		} else if (getOperationLane(entry) === "collectionKeyInterior") {
+		if (getOperationLane(entry) === "collectionKeyInterior") {
 			driveMapKey(rootValue);
+		} else if (rootValue instanceof TrackedMap || rootValue instanceof TrackedSet || rootValue instanceof TrackedDate) {
+			driveFacade(rootValue);
 		} else {
 			if (rootValue === null || (typeof rootValue !== "object" && typeof rootValue !== "function")) throw new Error("a watchdog row did not produce an object");
 

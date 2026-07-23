@@ -1,17 +1,12 @@
-import {
-	appendOperationPath,
-	createKeyOfPathSegment,
-	createOperationPath,
-	createValueOfPathSegment,
-	formatOperationPath,
-	getPathSelector,
-} from "./path";
+import { appendOperationPath, createOperationPath, formatOperationPath } from "./path";
 
 describe("operation paths", () => {
 	it("formats root, escaped strings, numbers, and opaque identity segments", () => {
-		const object = { toString: () => {
-			throw new Error("must not convert identity segments");
-		} };
+		const object = {
+			toString: () => {
+				throw new Error("must not convert identity segments");
+			},
+		};
 
 		expect(formatOperationPath(createOperationPath([]))).toBe("");
 		expect(formatOperationPath(createOperationPath(["a/b", "c~d", 3, "3"]))).toBe("/a~1b/c~0d/3/3");
@@ -25,36 +20,11 @@ describe("operation paths", () => {
 		expect(path[1]).toBe("1");
 	});
 
-	it("brands and freezes keyOf and valueOf selectors while retaining payload identity", () => {
-		const value = { id: 1 };
-		const keyOf = createKeyOfPathSegment(value);
-		const valueOf = createValueOfPathSegment(value);
-
-		expect(getPathSelector(keyOf)).toEqual({ kind: "keyOf", value });
-		expect(getPathSelector(valueOf)).toEqual({ kind: "valueOf", value });
-		expect(getPathSelector(keyOf)?.value).toBe(value);
-		expect(getPathSelector(valueOf)?.value).toBe(value);
-		expect(Object.keys(keyOf)).toEqual(["kind", "value"]);
-		expect(Object.isFrozen(keyOf)).toBe(true);
-		expect(Object.isFrozen(valueOf)).toBe(true);
-		expect(formatOperationPath(createOperationPath([keyOf, valueOf]))).toBe("/<keyOf>/<valueOf>");
-	});
-
-	it("does not accept structurally similar user data as a selector", () => {
+	it("formats plain object segments as identity without selector machinery", () => {
 		const forged = { kind: "keyOf", value: { id: 1 } };
 
-		expect(getPathSelector(forged)).toBeUndefined();
 		expect(formatOperationPath(createOperationPath([forged]))).toBe("/<identity>");
-	});
-
-	it("unwraps one selector level and leaves a branded selector payload as data", () => {
-		const dataSelector = createKeyOfPathSegment("stored");
-		const escaped = createValueOfPathSegment(dataSelector);
-		const selector = getPathSelector(escaped);
-
-		expect(selector?.kind).toBe("valueOf");
-		expect(selector?.value).toBe(dataSelector);
-		expect(getPathSelector(selector?.value)).toEqual({ kind: "keyOf", value: "stored" });
+		expect(formatOperationPath(createOperationPath(["index", "sa", "slots", 0]))).toBe("/index/sa/slots/0");
 	});
 
 	it("stores shallow-frozen copies and preserves raw object identity", () => {

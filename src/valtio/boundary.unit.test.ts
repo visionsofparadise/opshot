@@ -30,8 +30,8 @@ describe("boundary: tracked lane", () => {
     });
 
     expect(emissions.map((emission) => emission.ops)).toEqual([
-      [{ isPatch: true, do: { op: "replace", path: ["document", "title"], value: "b" }, undo: { op: "replace", path: ["document", "title"], value: "a" } }],
-      [{ isPatch: true, do: { op: "replace", path: ["document", "tags", 1], value: "z" }, undo: { op: "replace", path: ["document", "tags", 1], value: "y" } }],
+      [{ do: { op: "replace", path: ["document", "title"], value: "b" }, undo: { op: "replace", path: ["document", "title"], value: "a" } }],
+      [{ do: { op: "replace", path: ["document", "tags", 1], value: "z" }, undo: { op: "replace", path: ["document", "tags", 1], value: "y" } }],
     ]);
   });
 
@@ -54,7 +54,7 @@ describe("boundary: tracked lane", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["collection", "count"], value: 1 }, undo: { op: "replace", path: ["collection", "count"], value: 0 } },
+      { do: { op: "replace", path: ["collection", "count"], value: 1 }, undo: { op: "replace", path: ["collection", "count"], value: 0 } },
     ]);
     expect(state.op.unwrap().collection.count).toBe(1);
   });
@@ -520,7 +520,7 @@ describe("boundary: throws at entry", () => {
 
     expect(emissions).toHaveLength(1);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["emitter", "count"], value: 1 }, undo: { op: "replace", path: ["emitter", "count"], value: 0 } },
+      { do: { op: "replace", path: ["emitter", "count"], value: 1 }, undo: { op: "replace", path: ["emitter", "count"], value: 0 } },
     ]);
     expect(state.op.unwrap().emitter).toBeInstanceOf(Emitter);
     expect(state.op.unwrap().emitter.count).toBe(1);
@@ -557,7 +557,7 @@ describe("boundary: admitted by rule", () => {
     });
 
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: ["tick"], value: 1 }, undo: { op: "replace", path: ["tick"], value: 0 } }]);
+    expect(emissions[0]?.ops).toEqual([{ do: { op: "replace", path: ["tick"], value: 1 }, undo: { op: "replace", path: ["tick"], value: 0 } }]);
     expect(state.op.unwrap().box).toBe(frozen);
 
     expect(() => {
@@ -614,7 +614,7 @@ describe("boundary: admitted by rule", () => {
     });
 
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }]);
+    expect(emissions[0]?.ops).toEqual([{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }]);
 
     const emitted = emissions[0]?.state;
 
@@ -635,7 +635,7 @@ describe("boundary: admitted by rule", () => {
     });
 
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ isPatch: true, do: { op: "replace", path: ["run"], value: second }, undo: { op: "replace", path: ["run"], value: first } }]);
+    expect(emissions[0]?.ops).toEqual([{ do: { op: "replace", path: ["run"], value: second }, undo: { op: "replace", path: ["run"], value: first } }]);
     expect(state.op.unwrap().run).toBe(second);
   });
 });

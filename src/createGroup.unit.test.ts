@@ -48,7 +48,7 @@ describe("createGroup", () => {
     expect(isSameIdentity(first, firstEmission.state)).toBe(true);
     expect(isSameIdentity(second, firstEmission.state)).toBe(false);
     expect(firstEmission.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(firstEmission.meta).toEqual({ transactionKey: "drag" });
     expect(isSameIdentity(second, secondEmission.state)).toBe(true);
@@ -109,12 +109,12 @@ describe("createGroup", () => {
 
     expect(emissions).toHaveLength(2);
     expect(emissions[0]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
     ]);
     expect(emissions[0]?.state).toEqual(expect.objectContaining({ count: 1 }));
 
     expect(emissions[1]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["count"], value: 99 }, undo: { op: "replace", path: ["count"], value: 1 } },
+      { do: { op: "replace", path: ["count"], value: 99 }, undo: { op: "replace", path: ["count"], value: 1 } },
     ]);
     expect(emissions[1]?.state).toEqual(expect.objectContaining({ count: 99 }));
     expect(state.op.unwrap().count).toBe(99);

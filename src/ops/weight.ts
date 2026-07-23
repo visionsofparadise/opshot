@@ -1,6 +1,3 @@
-import { getTrackedMapData } from "../tracked/trackedMap";
-import { getTrackedSetData } from "../tracked/trackedSet";
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
 import { isCloneable } from "./cloneValue";
 
 export const NODE_WEIGHT = 32;
@@ -21,16 +18,6 @@ const addWeight = (state: WeightState, amount: number): boolean => {
 	return state.weight <= state.budget;
 };
 
-const getFacadeKind = (value: object): "TrackedMap" | "TrackedSet" | "TrackedDate" | undefined => {
-	if (!isTrackedWrapper(value)) return undefined;
-
-	const tag: unknown = Reflect.get(value, Symbol.toStringTag);
-
-	if (tag === "TrackedMap" || tag === "TrackedSet" || tag === "TrackedDate") return tag;
-
-	return undefined;
-};
-
 const weigh = (value: unknown, state: WeightState): void => {
 	if (state.weight > state.budget) return;
 
@@ -47,47 +34,6 @@ const weigh = (value: unknown, state: WeightState): void => {
 	}
 
 	if (state.seen.has(value)) return;
-
-	const facadeKind = getFacadeKind(value);
-
-	if (facadeKind === "TrackedDate") {
-		addWeight(state, LEAF_WEIGHT);
-
-		return;
-	}
-
-	if (facadeKind === "TrackedMap") {
-		state.seen.add(value);
-
-		if (!addWeight(state, NODE_WEIGHT)) return;
-
-		for (const entry of getTrackedMapData(value)) {
-			if (entry === null) continue;
-
-			weigh(entry[0], state);
-			if (state.weight > state.budget) return;
-
-			weigh(entry[1], state);
-			if (state.weight > state.budget) return;
-		}
-
-		return;
-	}
-
-	if (facadeKind === "TrackedSet") {
-		state.seen.add(value);
-
-		if (!addWeight(state, NODE_WEIGHT)) return;
-
-		for (const entry of getTrackedSetData(value)) {
-			if (entry === null) continue;
-
-			weigh(entry[0], state);
-			if (state.weight > state.budget) return;
-		}
-
-		return;
-	}
 
 	if (isCloneable(value)) {
 		state.seen.add(value);

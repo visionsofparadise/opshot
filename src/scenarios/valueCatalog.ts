@@ -8,7 +8,7 @@ import { TrackedSet } from "../tracked/trackedSet";
 import { unsafeTrack } from "../unsafeTrack";
 
 export type Lane = "tracked" | "cyclic" | "throwsAtAttach" | "registeredCopy" | "autoIgnored" | "ignored" | "leaf";
-export type OperationLane = "containerTranslation" | "collectionKeyInterior" | "sparseArray" | "equalContentReplacement" | "sameTargetInterior" | "none";
+export type OperationLane = "collectionKeyInterior" | "sparseArray" | "equalContentReplacement" | "sameTargetInterior" | "none";
 export type ContentsLane = "ignored";
 
 export interface CatalogEntry {
@@ -145,22 +145,21 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 	{ name: "ignoredClassInstance", lane: "ignored", create: () => ignore(new CleanPoint()) },
 	{ name: "ignoredCycle", lane: "ignored", create: () => ignore(makeSelfCycle() as object) },
 	{ name: "registeredCopyDonation", lane: "registeredCopy", operationLane: "none", create: makeRegisteredCopy },
-	{ name: "trackedMap", lane: "tracked", operationLane: "containerTranslation", create: () => new TrackedMap<string, number>([["a", 1]]) },
+	{ name: "trackedMap", lane: "tracked", create: () => new TrackedMap<string, number>([["a", 1]]) },
 	{
 		name: "trackedMapObjectKeys",
 		lane: "tracked",
 		operationLane: "collectionKeyInterior",
 		create: () => new TrackedMap<{ id: number }, string>([[{ id: 1 }, "one"]]),
 	},
-	{ name: "trackedSet", lane: "tracked", operationLane: "containerTranslation", create: () => new TrackedSet<number>([1, 2]) },
+	{ name: "trackedSet", lane: "tracked", create: () => new TrackedSet<number>([1, 2]) },
 	{
 		name: "trackedSetIgnoredMember",
 		lane: "tracked",
-		operationLane: "containerTranslation",
 		contentsLane: "ignored",
 		create: () => new TrackedSet([ignore(new CleanPoint())]),
 	},
-	{ name: "trackedDate", lane: "tracked", operationLane: "containerTranslation", create: () => new TrackedDate(0) },
+	{ name: "trackedDate", lane: "tracked", create: () => new TrackedDate(0) },
 	{ name: "namedFunction", lane: "leaf", create: () => function named(): number { return 1; } },
 	{ name: "arrowFunction", lane: "leaf", create: () => () => 1 },
 	{ name: "reactElement", lane: "leaf", operationLane: "none", create: makeReactElement },

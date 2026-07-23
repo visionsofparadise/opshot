@@ -1,6 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
 import { isUnsafeTracked } from "../unsafeTrack";
 
 // refSet is the only runtime marker ref() leaves on a value; valtio exposes it nowhere else.
@@ -60,7 +59,7 @@ export function hasOwnEnumerableFunction(value: object): boolean {
 
 export function isTrackable(value: unknown): boolean {
 	if (typeof value !== "object" || value === null) return false;
-	if (isTrackedWrapper(value) || refSet.has(value) || Object.isFrozen(value)) return false;
+	if (refSet.has(value) || Object.isFrozen(value)) return false;
 	if (isUnsafeTracked(value)) return true;
 
 	const kind = classifyValue(value);

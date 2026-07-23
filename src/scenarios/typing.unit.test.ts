@@ -57,15 +57,19 @@ describe("typing", () => {
 		const set = new TrackedSet<number>();
 		const date = new TrackedDate(0);
 
-		// @ts-expect-error TrackedMap backing is source-private
-		void map.data;
-		// @ts-expect-error TrackedSet backing is source-private
-		void set.data;
-		// @ts-expect-error TrackedDate backing is source-private
+		// @ts-expect-error TrackedMap slots is source-private
+		void map.slots;
+		// @ts-expect-error TrackedMap index is source-private
+		void map.index;
+		// @ts-expect-error TrackedMap count is source-private
+		void map.count;
+		// @ts-expect-error TrackedSet slots is source-private
+		void set.slots;
+		// @ts-expect-error TrackedDate epochMs is source-private
 		void date.epochMs;
 
-		expect(Object.keys(map)).toEqual(["data"]);
-		expect(Object.keys(set)).toEqual(["data"]);
+		expect(Object.keys(map)).toEqual(["slots", "index", "count"]);
+		expect(Object.keys(set)).toEqual(["slots", "index", "count"]);
 		expect(Object.keys(date)).toEqual(["epochMs"]);
 	});
 

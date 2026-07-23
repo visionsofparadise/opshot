@@ -77,7 +77,7 @@ const Child = retrack<{ user: State<User> }>(({ user }) => <p>{user.age}</p>);
 
 This is how you optimize re-rendering across your component tree: place `retrack` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useTrackedState` is a boundary itself.
 
-`retrack` finds states anywhere in props — nested object fields, plain arrays, `TrackedMap` values, `TrackedSet` members, and own enumerable data fields on clean class instances. It throws when a state is found inside a private-field or native-slotted class, behind an own enumerable accessor on a class instance, or inside an array subclass. It does not walk `TrackedMap` keys, React elements, functions, or cycles. It walks props up to 10 levels deep; a state nested deeper won't be found — pass `maxDepth` to raise it: `retrack(Component, { maxDepth: 20 })`.
+`retrack` finds states anywhere in props — nested object fields, plain arrays, `TrackedMap` keys and values, `TrackedSet` members, and own enumerable data fields on clean class instances (including the facades, which are ordinary clean classes). It throws when a state is found inside a private-field or native-slotted class, behind an own enumerable accessor on a class instance, or inside an array subclass. It does not walk React elements, functions, or cycles. It walks props up to 10 levels deep; a state nested deeper won't be found — pass `maxDepth` to raise it: `retrack(Component, { maxDepth: 20 })`.
 
 ## Creating State
 
@@ -209,7 +209,7 @@ socket.addEventListener("message", (event) => {
 
 ## Tracked collections
 
-`TrackedMap`, `TrackedSet`, and `TrackedDate` are tracked facades for the built-ins the boundary rejects. They keep familiar methods, iteration, `size`, and `Symbol.toStringTag`, backed by ordinary tracked state. They are not subclasses: `map instanceof Map`, `set instanceof Set`, and `date instanceof Date` are false.
+`TrackedMap`, `TrackedSet`, and `TrackedDate` are plain-data clean classes that stand in for the built-ins the boundary rejects. They keep familiar methods, iteration, `size`, and `Symbol.toStringTag`. They are not subclasses: `map instanceof Map`, `set instanceof Set`, and `date instanceof Date` are false. Their entire functional state is own-enumerable tracked data, so they ride the generic boundary, diff, replay, and `retrack` paths with no special casing.
 
 ```ts
 import { createState, TrackedMap } from "opshot";
@@ -217,14 +217,23 @@ import { createState, TrackedMap } from "opshot";
 const state = createState({ index: new TrackedMap<string, number>() });
 
 state.mutate((mutable) => mutable.index.set("a", 1));
-// ops: [{ do: { op: "add", path: ["index", "a"], value: 1, slot: 0 }, undo: { op: "remove", path: ["index", "a"] } }]
+// membership lands as ordinary plain-data ops at index / slots / count
+// (small maps often compact to one whole-container replace)
 ```
+
+Backing (Map; Set is the single-element analogue):
+
+- `slots` — ordered entry array, append-only, with bare `null` tombstones so slot numbers stay stable
+- `index` — tagged address → slot map (`s`/`n`/`i`/`b`/`u`/`z`/`r`/`o…` for key type); identity-typed keys use a module-level intern table keyed on `resolveIdentity`
+- `count` — live size; a prototype `size` getter reads it
+
+`TrackedDate` is one own-enumerable `epochMs` field with the Date surface derived on read.
 
 - Collection contents follow the value model. Plain objects and clean class instances in keys, values, and members are tracked; values the boundary rejects throw at attach. Use `ignore()` when a key, value, or member should stay an identity-only leaf, or `unsafeTrack()` to admit a caveated value.
 - Membership uses storage identity. A raw original, a mutable proxy, and any snapshot generation of the same object all address the same key or member through `has`, `get`, `set`, `add`, and `delete`. Interior content changes never re-key it.
-- Reads participate in bounded re-rendering. Map values and set members are tracked recursively; `TrackedMap` keys are identity-addressed and are not walked by `retrack`.
-- Map keys, map values, and set members share one flat path model with ordinary data. Nested arrays and facades keep extending the same path.
-- Insertions carry a slot. Delete, undo, and redo restore the same slot, so iteration order stays stable across arbitrary replay cycles.
+- Membership reactivity is granular: `has`/`get` read `index[address]`, so an unrelated add wakes nobody and the probed key appearing wakes exactly its readers. Whole-map aggregates (`size`, full iteration) are coarse by semantics.
+- Map keys, map values, and set members are walked like any stored data — a state stored as a Map key is discovered by `retrack`.
+- Delete, undo, and redo restore an entry at its original slot (tombstones keep positions stable), so iteration order survives arbitrary replay. A minimal clean-class clone (`Object.create(prototype)` plus own-enumerable copy) remains a fully functional facade.
 - A call inside `mutate` joins that emission and meta. A call outside `mutate` arrives on the next microtask as a side effect.
 
 ## Tracked State
@@ -269,45 +278,47 @@ const unsubscribe = counter.op.subscribe((state, ops, emission) => {
 An op is an invertible pair of `Operation` halves. Every half uses one of three verbs:
 
 ```ts
-type OperationPath = ReadonlyArray<unknown>;
+type OperationPath = ReadonlyArray<string | number>;
 
 type Operation =
-	| { readonly op: "add"; readonly path: OperationPath; readonly value: unknown; readonly slot?: number }
-	| { readonly op: "add"; readonly path: OperationPath; readonly slot: number }
+	| { readonly op: "add"; readonly path: OperationPath; readonly value: unknown }
 	| { readonly op: "replace"; readonly path: OperationPath; readonly value: unknown }
 	| { readonly op: "remove"; readonly path: OperationPath };
+
+interface Op {
+	readonly do: Operation;
+	readonly undo: Operation;
+}
 ```
 
-The exported `AddOperation`, `ReplaceOperation`, and `RemoveOperation` types give the exact union members. `OperationPath` is a state-relative path whose meaning depends on the value that owns each segment:
+The exported `AddOperation`, `ReplaceOperation`, and `RemoveOperation` types give the exact union members. Paths are state-relative sequences of string and numeric segments over plain data:
 
 | Resolved parent | Segment | Address |
 | --- | --- | --- |
-| plain object | string | enumerable own data property |
+| plain object / clean class | string | enumerable own data property |
 | plain array | non-negative integer | indexed presence and value, with no shifting |
 | plain array | enumerable non-index string | ordinary data property |
 | plain array | `"length"` | conceptual array length |
-| `TrackedMap` | key identity | entry membership and value |
-| `TrackedMap` | emitted `<keyOf>` selector | the stored key object for interior traversal |
-| `TrackedSet` | member identity | membership and the canonical member interior |
-| `TrackedDate` | `"epoch"` | epoch milliseconds |
+| `TrackedMap` / `TrackedSet` | `"index"` / `"slots"` / `"count"` | facade backing fields (addresses are tagged strings inside `index`) |
+| `TrackedDate` | `"epochMs"` | epoch milliseconds |
 
-`[]` names the logical state root, but a half cannot add, replace, or remove that stable root. Segments are parent-sensitive: the same string can be an object property or a Map key depending on what the preceding path resolves to. Map value traversal uses the key itself. Map key traversal uses an internal emitted `keyOf` selector. If a branded selector object is itself stored as a Map key or Set member, Opshot emits an internal `valueOf` segment to escape the collision. These selector objects are observable inside listener-delivered paths, but their constructors and classification are not public APIs; treat each segment as opaque unless you already own the addressed state value.
-
-Every constructed path is a shallow-frozen copy. Identity-bearing segments retain their storage identity. `add` requires an absent address and makes it present; `replace` requires a present address and changes its value or conceptual content; `remove` requires a present address and makes it absent. Presence is distinct from a stored `undefined`. A terminal stored Map key cannot be added, replaced, or removed, and a Set member cannot be replaced.
+`[]` names the logical state root, but a half cannot add, replace, or remove that stable root. Every constructed path is a shallow-frozen copy. `add` requires an absent address and makes it present; `replace` requires a present address and changes its value; `remove` requires a present address and makes it absent. Presence is distinct from a stored `undefined`.
 
 Arrays are sparse and never use splice semantics during replay. Indexed add fills a hole without shifting, indexed remove creates a hole without shifting, and `"length"` changes length. Growth emits the length replacement before new-tail additions. Shrink emits present-tail removals before the length replacement. Reversing undo halves therefore restores the required length before restoring truncated entries.
 
-Map and Set additions carry their exact slot, including additions whose undo restores removed membership. Replay uses that slot to preserve iteration order through delete, clear, displacement, undo, and redo. Membership removals are emitted before additions when slots are displaced, so an addition never collides with membership that is about to leave. Date content changes replace its `"epoch"` child.
+Facades emit ordinary plain-data ops at their backing fields. A growing Map membership add typically lands as four atomic ops (`slots.length`, `slots[n]`, `index[addr]`, `count`); a delete as three (tombstone, index remove, count). Small facades often compact to one whole-container replace. Undo of a delete restores the entry at its original slot because the recorded index value and tombstone keep the position. Date mutations are ordinary scalar replaces of `epochMs`.
 
 Diffing recurses through an object only while its storage identity is unchanged. A whole-value `replace` means the value at that address changed wholesale: the diff emits it when the storage target is replaced, and when a container's atomic operations would retain more than the container's full contents (small containers included). It does not by itself mean the storage target changed. Replay reattaches the recorded target and restores its recorded content, preserving identity and DAG aliases, so identity-keyed consumers are unaffected. If code edited a detached target after the operation was recorded, replay overwrites those edits with the recorded generation. Consumers that need per-field granularity must handle container-level replaces, which was already true of target replacement.
 
-Ops in an emission are ordered. Apply `do` halves in delivered order and `undo` halves in reverse order. Path-keyed coalescing is unsound: operations sharing a path can address different collection identities or slots, and array operations can depend on earlier operations in the entry.
+Ops in an emission are ordered. Apply `do` halves in delivered order and `undo` halves in reverse order. Path-keyed coalescing is unsound: operations sharing a path can address different identities or depend on earlier operations in the entry (arrays especially).
 
 `applyOps(state, operations, meta?)` applies one direction's already selected, correctly ordered halves in one `mutate`, forwarding `meta`. Replay restores registered storage targets instead of donating clones. It reattaches each target and stomps its recorded content exactly, deleting target-only data and restoring array holes. If code edited a detached object after the operation was recorded, undo overwrites those edits with the recorded generation.
 
 Ops are live runtime objects. Public value accessors return defensive copies, while `applyOps` reaches the registered originals needed for identity restoration. Spreading the outer `{ do, undo }` pair is harmless because it preserves the original halves. Spreading an individual half, or copying a pair or half through JSON, produces brandless halves that `applyOps` rejects with the cause and fix. `structuredClone` can throw `DataCloneError` first when an operation carries a non-cloneable payload; otherwise its copied halves are likewise brandless and rejected. Apply the operation halves the listener delivered.
 
-Opshot promises no serializer, whole-contents selector, public path classifier, or foreign applier. An encoded stream would need to intern identity-bearing path segments so repeated references resolve to one identity, as well as encode `undefined`, `NaN`, holes, facade construction, operation brands, and value accessors. No wire format or encoder ships.
+**Serializability scope:** JSON-serializable state yields JSON-serializable ops, round-trip consistent — that is the whole guarantee. Facades carry methods, so they are never JSON-serializable state; interned object addresses appear only in facade ops, which already sit outside the guarantee.
+
+Opshot promises no serializer, whole-contents selector, public path classifier, or foreign applier. No wire format or encoder ships.
 
 Cycles in tracked data throw a named error instead of emitting a record that couldn't invert: the diff throws `opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids` at the observed mutate touching a cyclic region, and an op value that captured a freshly created cycle throws the same error when read. Back-links want identity, which is `ignore()`'s job; ids are the other route.
 
@@ -443,6 +454,6 @@ const undo = () => {
 };
 ```
 
-Redo is the mirror: apply `stack[index + 1]`'s `do` halves in order and advance. One recipe covers plain data, sparse arrays, and tracked facades. Keep each listener-delivered pair intact and do not inspect, rewrite, copy, classify, or coalesce its path: a collection insertion half carries the identity, content, and slot needed to restore exact iteration order.
+Redo is the mirror: apply `stack[index + 1]`'s `do` halves in order and advance. One recipe covers plain data, sparse arrays, and tracked facades. Keep each listener-delivered pair intact and do not inspect, rewrite, copy, classify, or coalesce its path: each half already carries the identity and content needed to restore exact state, including facade iteration order through recorded slot indexes and tombstones.
 
 Coalescing a drag into one entry is yours. A `transactionKey`, or any meta key you declare, arrives with the ops to guide a domain-aware merge. Do not merge into a map keyed only by `path`; ordered operations at the same path are not interchangeable.

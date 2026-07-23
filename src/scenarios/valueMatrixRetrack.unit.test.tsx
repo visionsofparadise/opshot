@@ -8,7 +8,6 @@ import { retrack } from "../react/retrack";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
 import { classifyValue } from "../valtio/classify";
 import { catalog, type CatalogEntry } from "./valueCatalog";
 
@@ -16,20 +15,13 @@ type NestedState = State<{ label: number }>;
 
 type Verdict = "found" | "throws" | "skipped";
 
-const hasTrackedBrand = (value: object): boolean => isTrackedWrapper(value);
-
 const walkVerdict = (container: unknown): Verdict => {
 	if (container === null || typeof container === "function") return "skipped";
 	if (typeof container !== "object") return "skipped";
 	if ("$$typeof" in container) return "skipped";
 
-	if (hasTrackedBrand(container)) {
-		const tag: unknown = Reflect.get(container, Symbol.toStringTag);
-
-		return tag === "TrackedMap" || tag === "TrackedSet" ? "found" : "skipped";
-	}
-
 	if (container instanceof Map || container instanceof Set) return "skipped";
+	if (container instanceof TrackedMap || container instanceof TrackedSet) return "found";
 
 	if (Array.isArray(container)) {
 		const prototype = Object.getPrototypeOf(container) as object | null;
@@ -72,8 +64,11 @@ const findLabelled = (root: unknown): { label: number } | undefined => {
 		if (typeof (value as { label?: unknown }).label === "number") return value as { label: number };
 
 		if (Array.isArray(value)) for (const item of value) queue.push(item);
-		else if (value instanceof Map || value instanceof TrackedMap) for (const entry of value.values()) queue.push(entry);
-		else if (value instanceof Set || value instanceof TrackedSet) for (const entry of value) queue.push(entry);
+		else if (value instanceof Map || value instanceof TrackedMap) {
+			for (const entry of value.entries()) {
+				queue.push(entry[0], entry[1]);
+			}
+		} else if (value instanceof Set || value instanceof TrackedSet) for (const entry of value) queue.push(entry);
 		else for (const key of Object.keys(value as object)) queue.push((value as Record<string, unknown>)[key]);
 	}
 
@@ -159,14 +154,14 @@ describe("value matrix retrack walk", () => {
 
 	for (const entry of applicable) it(entry.name, async () => runRetrackRow(entry));
 
-	it("does not traverse a TrackedMap key", async () => {
+	it("traverses a TrackedMap key and discovers a nested state", async () => {
 		const key = createState({ label: 0 });
 		const map = new TrackedMap<object, string>([[key.op.unsafeMutable, "value"]]);
 		const { Probe, renders } = buildProbe();
 
 		render(createElement(Probe, { holder: map }));
 
-		expect(screen.getByTestId("out").textContent).toBe("none");
+		expect(screen.getByTestId("out").textContent).toBe("0");
 
 		const before = renders.count;
 
@@ -176,7 +171,7 @@ describe("value matrix retrack walk", () => {
 			});
 		});
 
-		expect(screen.getByTestId("out").textContent).toBe("none");
-		expect(renders.count).toBe(before);
+		expect(screen.getByTestId("out").textContent).toBe("1");
+		expect(renders.count).toBeGreaterThan(before);
 	});
 });

@@ -140,9 +140,9 @@ describe("scenarios", () => {
     expect(received).toHaveLength(3);
     expect(received.every((emission) => emission.meta.transactionKey === "drag")).toBe(true);
     expect(received.map((emission) => emission.ops)).toEqual([
-      [{ isPatch: true, do: { op: "replace", path: ["exposure"], value: 1 }, undo: { op: "replace", path: ["exposure"], value: 0 } }],
-      [{ isPatch: true, do: { op: "replace", path: ["exposure"], value: 2 }, undo: { op: "replace", path: ["exposure"], value: 1 } }],
-      [{ isPatch: true, do: { op: "replace", path: ["exposure"], value: 3 }, undo: { op: "replace", path: ["exposure"], value: 2 } }],
+      [{ do: { op: "replace", path: ["exposure"], value: 1 }, undo: { op: "replace", path: ["exposure"], value: 0 } }],
+      [{ do: { op: "replace", path: ["exposure"], value: 2 }, undo: { op: "replace", path: ["exposure"], value: 1 } }],
+      [{ do: { op: "replace", path: ["exposure"], value: 3 }, undo: { op: "replace", path: ["exposure"], value: 2 } }],
     ]);
   });
 
@@ -274,7 +274,7 @@ describe("scenarios", () => {
 
     expect(aHeard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
+        ops: [{ do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
         emission: { isSideEffect: false, meta: {} },
       },
     ]);
@@ -285,7 +285,7 @@ describe("scenarios", () => {
     expect(aHeard).toHaveLength(1);
     expect(bHeard).toEqual([
       {
-        ops: [{ isPatch: true, do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
+        ops: [{ do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
         emission: { isSideEffect: true },
       },
     ]);
@@ -359,7 +359,7 @@ describe("scenarios", () => {
     expect(bHeard).toHaveLength(2);
     expect(bHeard[1]?.emission).toEqual({ isSideEffect: false, meta: {} });
     expect(bHeard[1]?.ops).toEqual([
-      { isPatch: true, do: { op: "replace", path: ["items", 0, "gain"], value: 2 }, undo: { op: "replace", path: ["items", 0, "gain"], value: 1 } },
+      { do: { op: "replace", path: ["items", 0, "gain"], value: 2 }, undo: { op: "replace", path: ["items", 0, "gain"], value: 1 } },
     ]);
     expect(a.op.unwrap().items).toEqual([]);
     expect(b.op.unwrap().items).toEqual([{ id: "x", gain: 2 }]);

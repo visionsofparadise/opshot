@@ -48,7 +48,7 @@ describe("hasOwnEnumerableFunction", () => {
 });
 
 describe("isTrackable", () => {
-	it("admits plain data and clean classes; excludes facades, ignored, frozen, and dirty clean classes", () => {
+	it("admits plain data, clean classes, and facades; excludes ignored, frozen, and dirty clean classes", () => {
 		class Clean {
 			x = 1;
 		}
@@ -71,7 +71,7 @@ describe("isTrackable", () => {
 		expect(isTrackable(new Clean())).toBe(true);
 		expect(isTrackable(new Arrowed())).toBe(false);
 		expect(isTrackable(new Private())).toBe(false);
-		expect(isTrackable(new TrackedMap())).toBe(false);
+		expect(isTrackable(new TrackedMap())).toBe(true);
 		expect(isTrackable(ignore({ a: 1 }))).toBe(false);
 		expect(isTrackable(Object.freeze({ a: 1 }))).toBe(false);
 		expect(isTrackable(unsafeTrack(new Arrowed()))).toBe(true);

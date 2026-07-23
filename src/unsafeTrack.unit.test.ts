@@ -84,7 +84,6 @@ describe("unsafeTrack stories", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toEqual([
 			{
-				isPatch: true,
 				do: { op: "replace", path: ["arrow", "count"], value: 5 },
 				undo: { op: "replace", path: ["arrow", "count"], value: 0 },
 			},

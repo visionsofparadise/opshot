@@ -1,41 +1,10 @@
 import { memo, useMemo, type FC } from "react";
 import { isState } from "../isState";
-import { getTrackedMapData, setTrackedMapData } from "../tracked/trackedMap";
-import { getTrackedSetData, setTrackedSetData } from "../tracked/trackedSet";
-import { isTrackedWrapper } from "../tracked/trackedWrapper";
 import { constructorName } from "../valtio/boundary";
 import { classifyValue } from "../valtio/classify";
 import { useRetrackAll } from "./tracking";
 
-interface FacadePathSegment {
-	readonly facadeSlot: number;
-	readonly pairIndex: 0 | 1;
-}
-
-type PropPath = Array<string | number | FacadePathSegment>;
-type FacadePair = readonly [unknown, unknown?];
-
-const hasTrackedBrand = (value: object): boolean => isTrackedWrapper(value);
-
-const getFacadePairIndex = (value: object): 0 | 1 | undefined => {
-	if (!hasTrackedBrand(value)) return undefined;
-
-	const tag: unknown = Reflect.get(value, Symbol.toStringTag);
-
-	if (tag === "TrackedMap") return 1;
-	if (tag === "TrackedSet") return 0;
-
-	return undefined;
-};
-
-const getFacadeData = (value: object): ReadonlyArray<FacadePair | null> | undefined => {
-	const tag: unknown = Reflect.get(value, Symbol.toStringTag);
-
-	if (tag === "TrackedMap") return getTrackedMapData(value);
-	if (tag === "TrackedSet") return getTrackedSetData(value);
-
-	return undefined;
-};
+type PropPath = Array<string | number>;
 
 const isPlainPrototype = (value: object): boolean => {
 	const prototype = Reflect.getPrototypeOf(value);
@@ -75,21 +44,7 @@ function findStatePaths(value: unknown, maxDepth: number, path: PropPath = [], p
 
 	ancestors.add(value);
 
-	const pairIndex = getFacadePairIndex(value);
-
-	if (hasTrackedBrand(value)) {
-		const data = getFacadeData(value);
-
-		if (pairIndex !== undefined && data !== undefined) {
-			for (let facadeSlot = 0; facadeSlot < data.length; facadeSlot++) {
-				const pair = data[facadeSlot];
-
-				if (pair === null || pair === undefined) continue;
-
-				findStatePaths(pair[pairIndex], maxDepth, [...path, { facadeSlot, pairIndex }], paths, ancestors);
-			}
-		}
-	} else if (Array.isArray(value)) {
+	if (Array.isArray(value)) {
 		const foundCount = paths.length;
 
 		value.forEach((item, index) => {
@@ -121,19 +76,7 @@ function getAtPath(object: unknown, path: PropPath): unknown {
 	for (const segment of path) {
 		if (current === null || current === undefined) return undefined;
 
-		if (typeof segment === "object") {
-			if (typeof current !== "object" || !hasTrackedBrand(current)) return undefined;
-
-			const data = getFacadeData(current);
-
-			if (data === undefined) return undefined;
-
-			const pair = data[segment.facadeSlot];
-
-			current = pair === null || pair === undefined ? undefined : pair[segment.pairIndex];
-		} else {
-			current = (current as Record<string | number, unknown>)[segment];
-		}
+		current = (current as Record<string | number, unknown>)[segment];
 	}
 
 	return current;
@@ -147,43 +90,6 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 	if (head === undefined) throw new Error("setAtPath: non-empty path yielded no head segment");
 
 	const tail = path.slice(1);
-
-	if (typeof head === "object") {
-		if (typeof object !== "object" || object === null || !hasTrackedBrand(object)) {
-			throw new Error("opshot: retrack substitution expected a tracked collection at a facade path segment");
-		}
-
-		if (getFacadePairIndex(object) !== head.pairIndex) throw new Error("opshot: retrack substitution found a mismatched facade path segment");
-
-		const clone = Object.create(Reflect.getPrototypeOf(object)) as object;
-
-		Object.defineProperties(clone, Object.getOwnPropertyDescriptors(object));
-
-		if (head.pairIndex === 1) {
-			const data = getTrackedMapData<unknown, unknown>(object);
-			const pair = data[head.facadeSlot];
-
-			if (pair === null || pair === undefined) throw new Error("opshot: retrack substitution found an empty facade slot");
-
-			const updatedData = [...data];
-
-			updatedData[head.facadeSlot] = [pair[0], setAtPath(pair[1], tail, value)];
-			setTrackedMapData(clone, updatedData);
-		} else {
-			const data = getTrackedSetData<unknown>(object);
-			const pair = data[head.facadeSlot];
-
-			if (pair === null || pair === undefined) throw new Error("opshot: retrack substitution found an empty facade slot");
-
-			const updatedData = [...data];
-
-			updatedData[head.facadeSlot] = [setAtPath(pair[0], tail, value)];
-			setTrackedSetData(clone, updatedData);
-		}
-
-		return clone as T;
-	}
-
 	const current = (object as Record<string | number, unknown>)[head];
 	const updated = setAtPath(current, tail, value);
 

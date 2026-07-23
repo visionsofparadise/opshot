@@ -1,15 +1,4 @@
-import { assertMutableFacade } from "./trackedCollection";
-import { brandTrackedPrototype } from "./trackedWrapper";
-
-const writeDate = (date: TrackedDate, mutate: (value: Date) => number): number => {
-	assertMutableFacade(date, "epochMs");
-
-	const epochMs = mutate(new Date(getTrackedDateEpoch(date)));
-
-	setTrackedDateEpoch(date, epochMs);
-
-	return epochMs;
-};
+import { assertMutableFacade } from "./facadeGuard";
 
 const setLegacyYear = (date: Date, year: unknown): number => {
 	const setYear: unknown = Reflect.get(date, "setYear");
@@ -55,6 +44,16 @@ export class TrackedDate {
 
 	private readDate(): Date {
 		return new Date(this.epochMs);
+	}
+
+	private write(mutate: (value: Date) => number): number {
+		assertMutableFacade(this, "epochMs");
+
+		const epochMs = mutate(this.readDate());
+
+		this.epochMs = epochMs;
+
+		return epochMs;
 	}
 
 	toString(): string {
@@ -163,67 +162,67 @@ export class TrackedDate {
 
 	setYear(year: number): number;
 	setYear(year: unknown): number {
-		return writeDate(this, (date) => setLegacyYear(date, year));
+		return this.write((date) => setLegacyYear(date, year));
 	}
 
 	setTime(...args: [time: number]): number {
-		return writeDate(this, (date) => date.setTime(...args));
+		return this.write((date) => date.setTime(...args));
 	}
 
 	setMilliseconds(...args: [milliseconds: number]): number {
-		return writeDate(this, (date) => date.setMilliseconds(...args));
+		return this.write((date) => date.setMilliseconds(...args));
 	}
 
 	setUTCMilliseconds(...args: [milliseconds: number]): number {
-		return writeDate(this, (date) => date.setUTCMilliseconds(...args));
+		return this.write((date) => date.setUTCMilliseconds(...args));
 	}
 
 	setSeconds(...args: [seconds: number, milliseconds?: number]): number {
-		return writeDate(this, (date) => date.setSeconds(...args));
+		return this.write((date) => date.setSeconds(...args));
 	}
 
 	setUTCSeconds(...args: [seconds: number, milliseconds?: number]): number {
-		return writeDate(this, (date) => date.setUTCSeconds(...args));
+		return this.write((date) => date.setUTCSeconds(...args));
 	}
 
 	setMinutes(...args: [minutes: number, seconds?: number, milliseconds?: number]): number {
-		return writeDate(this, (date) => date.setMinutes(...args));
+		return this.write((date) => date.setMinutes(...args));
 	}
 
 	setUTCMinutes(...args: [minutes: number, seconds?: number, milliseconds?: number]): number {
-		return writeDate(this, (date) => date.setUTCMinutes(...args));
+		return this.write((date) => date.setUTCMinutes(...args));
 	}
 
 	setHours(...args: [hours: number, minutes?: number, seconds?: number, milliseconds?: number]): number {
-		return writeDate(this, (date) => date.setHours(...args));
+		return this.write((date) => date.setHours(...args));
 	}
 
 	setUTCHours(...args: [hours: number, minutes?: number, seconds?: number, milliseconds?: number]): number {
-		return writeDate(this, (date) => date.setUTCHours(...args));
+		return this.write((date) => date.setUTCHours(...args));
 	}
 
 	setDate(...args: [dateValue: number]): number {
-		return writeDate(this, (date) => date.setDate(...args));
+		return this.write((date) => date.setDate(...args));
 	}
 
 	setUTCDate(...args: [dateValue: number]): number {
-		return writeDate(this, (date) => date.setUTCDate(...args));
+		return this.write((date) => date.setUTCDate(...args));
 	}
 
 	setMonth(...args: [month: number, dateValue?: number]): number {
-		return writeDate(this, (date) => date.setMonth(...args));
+		return this.write((date) => date.setMonth(...args));
 	}
 
 	setUTCMonth(...args: [month: number, dateValue?: number]): number {
-		return writeDate(this, (date) => date.setUTCMonth(...args));
+		return this.write((date) => date.setUTCMonth(...args));
 	}
 
 	setFullYear(...args: [year: number, month?: number, dateValue?: number]): number {
-		return writeDate(this, (date) => date.setFullYear(...args));
+		return this.write((date) => date.setFullYear(...args));
 	}
 
 	setUTCFullYear(...args: [year: number, month?: number, dateValue?: number]): number {
-		return writeDate(this, (date) => date.setUTCFullYear(...args));
+		return this.write((date) => date.setUTCFullYear(...args));
 	}
 
 	toUTCString(): string {
@@ -247,17 +246,4 @@ export class TrackedDate {
 	declare readonly [Symbol.toStringTag]: "TrackedDate";
 }
 
-export const getTrackedDateEpoch = (date: object): number => {
-	const epochMs: unknown = Reflect.get(date, "epochMs");
-
-	if (typeof epochMs !== "number") throw new Error("opshot: TrackedDate facade has invalid epochMs backing");
-
-	return epochMs;
-};
-
-export const setTrackedDateEpoch = (date: object, epochMs: number): void => {
-	if (!Reflect.set(date, "epochMs", epochMs)) throw new Error("opshot: TrackedDate epochMs backing could not be replaced");
-};
-
 Object.defineProperty(TrackedDate.prototype, Symbol.toStringTag, { value: "TrackedDate", enumerable: false, configurable: false, writable: false });
-brandTrackedPrototype(TrackedDate.prototype);
