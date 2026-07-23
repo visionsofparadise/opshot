@@ -1,24 +1,33 @@
-import type { Meta } from "./createMeta";
-import { createGroupState, type InitialProperties, type Initializer, type State, type StateListener } from "./createState";
+import { createMutableState } from "./createMutableState";
+import type { GroupListener } from "./emitter";
 
-export interface Group<In extends object = {}, Out extends object = {}> {
-	createState<T extends object>(initializer: Initializer<T, In, Out> | InitialProperties<T>): State<T, In, Out>;
-	subscribe(listener: StateListener<object, In, Out>): () => void;
+export interface Group {
+	createState<T extends object>(properties: T): T;
 }
 
-export function createGroup<In extends object = {}, Out extends object = {}>(meta?: Meta<In, Out>): Group<In, Out> {
-	const listeners = new Set<StateListener<object, In, Out>>();
+const groupListenersByGroup = new WeakMap<Group, Set<GroupListener>>();
 
-	return {
-		createState<T extends object>(initializer: Initializer<T, In, Out> | InitialProperties<T>): State<T, In, Out> {
-			return createGroupState(initializer, listeners, meta);
-		},
-		subscribe(listener: StateListener<object, In, Out>): () => void {
-			listeners.add(listener);
+export function isGroup(value: unknown): value is Group {
+	return typeof value === "object" && value !== null && groupListenersByGroup.has(value as Group);
+}
 
-			return () => {
-				listeners.delete(listener);
-			};
+export function getGroupListeners(group: Group): Set<GroupListener> {
+	const listeners = groupListenersByGroup.get(group);
+
+	if (listeners === undefined) throw new Error("opshot: unknown group");
+
+	return listeners;
+}
+
+export function createGroup(): Group {
+	const listeners = new Set<GroupListener>();
+	const group: Group = {
+		createState<T extends object>(properties: T): T {
+			return createMutableState(properties, group);
 		},
 	};
+
+	groupListenersByGroup.set(group, listeners);
+
+	return group;
 }

@@ -1,17 +1,18 @@
+import { transact } from "../transact";
 // @vitest-environment jsdom
 
 import { act, render, screen } from "@testing-library/react";
 import { createElement, type FC } from "react";
 
-import { createState, type State } from "../createState";
-import { retrack } from "../react/retrack";
+import { createMutableState } from "../createMutableState";
+import { scope } from "../react/scope";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { classifyValue } from "../valtio/classify";
 import { catalog, type CatalogEntry } from "./valueCatalog";
 
-type NestedState = State<{ label: number }>;
+type NestedState = { label: number };
 
 type Verdict = "found" | "throws" | "skipped";
 
@@ -38,8 +39,8 @@ const walkVerdict = (container: unknown): Verdict => {
 
 const injectState = (container: object, state: NestedState): void => {
 	if (Array.isArray(container)) container.push(state);
-	else if (container instanceof TrackedMap) container.set("nested", state.op.unsafeMutable);
-	else if (container instanceof TrackedSet) container.add(state.op.unsafeMutable);
+	else if (container instanceof TrackedMap) container.set("nested", state);
+	else if (container instanceof TrackedSet) container.add(state);
 	else if (container instanceof Map) container.set("nested", state);
 	else if (container instanceof Set) container.add(state);
 	else Reflect.set(container, "nested", state);
@@ -78,7 +79,7 @@ const findLabelled = (root: unknown): { label: number } | undefined => {
 const buildProbe = (): { Probe: FC<{ holder: unknown }>; renders: { count: number } } => {
 	const renders = { count: 0 };
 
-	const Probe = retrack<{ holder: unknown }>(({ holder }) => {
+	const Probe = scope<{ holder: unknown }>(({ holder }) => {
 		renders.count += 1;
 
 		const found = findLabelled(holder);
@@ -89,7 +90,7 @@ const buildProbe = (): { Probe: FC<{ holder: unknown }>; renders: { count: numbe
 	return { Probe, renders };
 };
 
-const retrackApplies = (entry: CatalogEntry): boolean => {
+const scopeApplies = (entry: CatalogEntry): boolean => {
 	if (entry.lane === "registeredCopy") return false;
 
 	const value = entry.create();
@@ -106,7 +107,7 @@ const retrackApplies = (entry: CatalogEntry): boolean => {
 };
 
 const runRetrackRow = async (entry: CatalogEntry): Promise<void> => {
-	const nested = createState<{ label: number }>({ label: 0 });
+	const nested = createMutableState<{ label: number }>({ label: 0 });
 	const container = entry.name === "reactElement" ? createElement("div", { nested }) : entry.create();
 
 	if (entry.name !== "reactElement") injectState(container as object, nested);
@@ -120,7 +121,7 @@ const runRetrackRow = async (entry: CatalogEntry): Promise<void> => {
 		console.error = (): void => undefined;
 
 		try {
-			expect(() => render(createElement(Probe, { holder: container }))).toThrow(/retrack found a state/);
+			expect(() => render(createElement(Probe, { holder: container }))).toThrow(/scope found a state/);
 		} finally {
 			console.error = consoleError;
 		}
@@ -135,8 +136,8 @@ const runRetrackRow = async (entry: CatalogEntry): Promise<void> => {
 	const before = renders.count;
 
 	await act(async () => {
-		nested.mutate((mutable) => {
-			mutable.label = 1;
+		transact(nested, () => {
+			nested.label = 1;
 		});
 	});
 
@@ -149,14 +150,14 @@ const runRetrackRow = async (entry: CatalogEntry): Promise<void> => {
 	}
 };
 
-describe("value matrix retrack walk", () => {
-	const applicable = catalog.filter(retrackApplies);
+describe("value matrix scope walk", () => {
+	const applicable = catalog.filter(scopeApplies);
 
 	for (const entry of applicable) it(entry.name, async () => runRetrackRow(entry));
 
 	it("traverses a TrackedMap key and discovers a nested state", async () => {
-		const key = createState({ label: 0 });
-		const map = new TrackedMap<object, string>([[key.op.unsafeMutable, "value"]]);
+		const key = createMutableState({ label: 0 });
+		const map = new TrackedMap<object, string>([[key, "value"]]);
 		const { Probe, renders } = buildProbe();
 
 		render(createElement(Probe, { holder: map }));
@@ -166,8 +167,8 @@ describe("value matrix retrack walk", () => {
 		const before = renders.count;
 
 		await act(async () => {
-			key.mutate((mutable) => {
-				mutable.label = 1;
+			transact(key, () => {
+				key.label = 1;
 			});
 		});
 

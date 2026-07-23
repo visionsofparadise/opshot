@@ -1,17 +1,20 @@
 import { createProxy, isChanged } from "proxy-compare";
+import { snapshot } from "valtio/vanilla";
 
-import { createState, type Emission, type State } from "../createState";
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
+import { createMutableState } from "../createMutableState";
 import { applyOps } from "../ops/applyOps";
-import type { Op, Operation } from "../ops/operation";
+import { type Op, type Operation } from "../ops/operation";
 import { TrackedDate } from "./trackedDate";
 
 const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
 
-const recordAll = (state: State<object>): Array<{ ops: Array<Op>; emission: Emission }> => {
-	const heard = new Array<{ ops: Array<Op>; emission: Emission }>();
+const recordAll = (state: object): Array<{ ops: Array<Op>; meta: unknown }> => {
+	const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
 
-	state.op.subscribe((_state, ops, emission) => {
-		heard.push({ ops, emission });
+	subscribe(state, (ops, meta) => {
+		heard.push({ ops: [...ops], meta });
 	});
 
 	return heard;
@@ -163,18 +166,18 @@ describe("TrackedDate facade", () => {
 	});
 
 	it("records date reads through epochMs and changes the facade generation on mutation", () => {
-		const state = createState({ when: new TrackedDate(0) });
-		const before = state.op.unwrap();
+		const state = createMutableState({ when: new TrackedDate(0) });
+		const before = snapshot(state);
 		const affected = new WeakMap();
 		const renderState = createProxy(before, affected, new WeakMap(), new WeakMap());
 
 		expect(renderState.when.getTime()).toBe(0);
 
-		state.mutate((mutable) => {
-			mutable.when.setTime(1);
+		transact(state, () => {
+			state.when.setTime(1);
 		});
 
-		const after = state.op.unwrap();
+		const after = snapshot(state);
 
 		expect(after.when).not.toBe(before.when);
 		expect(after.when.getTime()).toBe(1);
@@ -182,17 +185,17 @@ describe("TrackedDate facade", () => {
 	});
 
 	it("rejects snapshot and tracking-wrapper setters before changing epochMs", () => {
-		const state = createState({ when: new TrackedDate(0) });
-		const snapshot = state.op.unwrap();
-		const renderState = createProxy(snapshot, new WeakMap(), new WeakMap(), new WeakMap());
+		const state = createMutableState({ when: new TrackedDate(0) });
+		const frozen = snapshot(state);
+		const renderState = createProxy(frozen, new WeakMap(), new WeakMap(), new WeakMap());
 
-		for (const date of [snapshot.when, renderState.when]) {
+		for (const date of [frozen.when, renderState.when]) {
 			expect(() => date.setTime(1)).toThrow("opshot: cannot mutate a tracked collection snapshot");
 			expect(() => date.setYear(25)).toThrow("opshot: cannot mutate a tracked collection snapshot");
 		}
 
-		expect(snapshot.when.getTime()).toBe(0);
-		expect(state.op.unwrap().when.getTime()).toBe(0);
+		expect(frozen.when.getTime()).toBe(0);
+		expect(state.when.getTime()).toBe(0);
 	});
 
 	it("retains full function after a minimal clean-class clone", () => {
@@ -212,11 +215,11 @@ describe("TrackedDate facade", () => {
 
 describe("TrackedDate atomic emission", () => {
 	it("emits a scalar epochMs replacement pair", () => {
-		const state = createState({ when: new TrackedDate(Date.UTC(2020, 0, 1)) });
+		const state = createMutableState({ when: new TrackedDate(Date.UTC(2020, 0, 1)) });
 		const heard = recordAll(state);
 
-		state.mutate((mutable) => {
-			mutable.when.setUTCFullYear(2024);
+		transact(state, () => {
+			state.when.setUTCFullYear(2024);
 		});
 
 		const pair = heard[0]?.ops[0];
@@ -224,7 +227,7 @@ describe("TrackedDate atomic emission", () => {
 		if (!pair) throw new Error("the epoch pair was not heard");
 
 		expect(heard[0]?.ops).toHaveLength(1);
-		expect(heard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
+		expect(heard[0]?.meta).toBeUndefined();
 		expect(pair.do.op).toBe("replace");
 		expect(pair.do.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.do)).toBe(Date.UTC(2024, 0, 1));
@@ -234,11 +237,11 @@ describe("TrackedDate atomic emission", () => {
 	});
 
 	it("applies and inverts epochMs replacement through generic replay", () => {
-		const state = createState({ when: new TrackedDate(0) });
+		const state = createMutableState({ when: new TrackedDate(0) });
 		const heard = recordAll(state);
 
-		state.mutate((mutable) => {
-			mutable.when.setTime(1);
+		transact(state, () => {
+			state.when.setTime(1);
 		});
 
 		const pair = heard[0]?.ops[0];
@@ -246,9 +249,9 @@ describe("TrackedDate atomic emission", () => {
 		if (!pair) throw new Error("the epoch pair was not heard");
 
 		applyOps(state, [pair.undo]);
-		expect(state.op.unwrap().when.getTime()).toBe(0);
+		expect(state.when.getTime()).toBe(0);
 
 		applyOps(state, [pair.do]);
-		expect(state.op.unwrap().when.getTime()).toBe(1);
+		expect(state.when.getTime()).toBe(1);
 	});
 });

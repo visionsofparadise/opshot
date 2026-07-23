@@ -1,6 +1,8 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
 
+import { getRegisteredWrapperTarget } from "./react/wrapperRegistry";
+
 const targetRegistryKey = Symbol.for("opshot.targets");
 const identityTokenRegistryKey = Symbol.for("opshot.identityTokens");
 
@@ -46,6 +48,14 @@ export function resolveIdentity(value: unknown): unknown {
 
 		if (untracked !== null && untracked !== current) {
 			current = untracked;
+
+			continue;
+		}
+
+		const wrapperTarget = getRegisteredWrapperTarget(current);
+
+		if (wrapperTarget !== undefined && wrapperTarget !== current) {
+			current = wrapperTarget;
 
 			continue;
 		}

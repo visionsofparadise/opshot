@@ -3,8 +3,6 @@ import { resolveIdentity } from "../identity";
 const internTable = new WeakMap<WeakKey, number>();
 let nextInternId = 0;
 
-// Registered symbols never reach here (addressOf routes them by Symbol.keyFor); every
-// value that does is an identity-typed WeakKey: an object, a function, or a local symbol.
 const internIdentity = (key: object | symbol): number => {
 	const resolved = resolveIdentity(key);
 

@@ -1,12 +1,13 @@
-import { stateBrand, type State } from "./createState";
-import { hasOwn } from "./utils/hasOwn";
+import { unstable_getInternalStates } from "valtio/vanilla";
 
-export function isState(value: unknown): value is State<object> {
-	if (typeof value !== "object" || value === null || !hasOwn(value, "op")) return false;
+import { unwrapWrapper } from "./react/resolveWrapper";
 
-	const handle = value.op;
+const { proxyStateMap } = unstable_getInternalStates();
 
-	if (typeof handle !== "object" || handle === null || !hasOwn(handle, stateBrand)) return false;
+export function isState(value: unknown): value is object {
+	const resolved = unwrapWrapper(value);
 
-	return handle[stateBrand] === true;
+	if (typeof resolved !== "object" || resolved === null) return false;
+
+	return proxyStateMap.has(resolved);
 }

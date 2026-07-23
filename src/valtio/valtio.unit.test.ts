@@ -464,7 +464,7 @@ describe("createHandler seam: throwing defineProperty/setPrototypeOf traps", () 
           defineProperty(target, prop, descriptor) {
             if (setDepth > 0 || isInitializing()) return Reflect.defineProperty(target, prop, descriptor);
 
-            throw new Error("opshot: defineProperty is not supported on tracked state; define properties in the createState literal");
+            throw new Error("opshot: defineProperty is not supported on tracked state; define properties in the createMutableState literal");
           },
           setPrototypeOf() {
             throw new Error("opshot: setPrototypeOf is not supported on tracked state");
@@ -946,16 +946,17 @@ describe("opshot boundary dead-region guard", () => {
     const { proxy: freshProxy, snapshot: freshSnapshot } = await import("valtio/vanilla");
     const source = freshProxy({ value: 1 });
     const preInstallSnapshot = freshSnapshot(source);
-    const { createState } = await import("../createState");
+    const { createMutableState } = await import("../createMutableState");
+    const { transact } = await import("../transact");
     const reused = freshSnapshot(source);
-    const destination = createState<{ item: unknown }>({ item: null });
+    const destination = createMutableState<{ item: unknown }>({ item: null });
 
     targetRegistry = Reflect.get(globalThis, Symbol.for("opshot.targets"));
     identityTokenRegistry = Reflect.get(globalThis, Symbol.for("opshot.identityTokens"));
     reusedPreInstallSnapshot = reused === preInstallSnapshot;
     donatePreInstallSnapshot = () => {
-      destination.mutate((mutable) => {
-        mutable.item = preInstallSnapshot;
+      transact(destination, () => {
+        destination.item = preInstallSnapshot;
       });
     };
   });

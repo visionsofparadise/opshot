@@ -1,5 +1,6 @@
-import type { State } from "../createState";
+import { resolveEmitterTarget } from "../emitter";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
+import { transact } from "../transact";
 import { getValueOriginal, isOperation, type Operation, type ReplaceOperation, type AddOperation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 
@@ -242,22 +243,18 @@ const applyPlain = (parent: object, segment: unknown, operation: Operation): voi
 	);
 };
 
-const applyOperations = (root: object, operations: ReadonlyArray<Operation>): void => {
+export function applyOperations(root: object, operations: ReadonlyArray<Operation>): void {
 	for (const operation of operations) {
 		const terminal = resolveTerminal(root, operation.path);
 
 		applyPlain(terminal.parent, terminal.segment, operation);
 	}
-};
+}
 
-export function applyOps<T extends object, In extends object = {}, Out extends object = {}>(
-	state: State<T, In, Out>,
-	operations: ReadonlyArray<Operation>,
-	...meta: {} extends In ? [meta?: In] : [meta: In]
-): void {
+export function applyOps(state: object, operations: ReadonlyArray<Operation>, meta?: unknown): void {
 	for (const operation of operations) assertApplicable(operation);
 
-	state.mutate((mutable) => {
-		applyOperations(mutable, operations);
-	}, ...meta);
+	transact(state, () => {
+		applyOperations(resolveEmitterTarget(state), operations);
+	}, meta);
 }

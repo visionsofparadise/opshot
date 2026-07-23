@@ -1,6 +1,6 @@
+import { createChannel } from "../createChannel";
 import { createGroup } from "../createGroup";
-import { createMeta } from "../createMeta";
-import { createState, type Emission, type State } from "../createState";
+import { createMutableState } from "../createMutableState";
 import {
 	TrackedDate,
 	TrackedMap,
@@ -11,7 +11,9 @@ import {
 	type RemoveOperation,
 	type ReplaceOperation,
 } from "../index";
-import { useTrackedState } from "../react/useTrackedState";
+import { useMutableState } from "../react/useMutableState";
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
 
 interface Doc {
 	count: number;
@@ -23,19 +25,11 @@ interface DocMeta {
 	replay?: boolean;
 }
 
-interface RequiredMeta {
-	source: string;
-}
-
 const makeDoc = (): Doc => ({ count: 0, view: "list" });
-const docMeta = createMeta<DocMeta>();
-const docGroup = createGroup(docMeta);
-const requiredMeta = createMeta<RequiredMeta>();
-const requiredGroup = createGroup(requiredMeta);
+const docGroup = createGroup();
+const docChannel = createChannel<DocMeta>();
+const defaultedChannel = createChannel<{ replay: boolean; transactionKey?: string }>({ replay: false });
 
-// The settled type surface, pinned with expectTypeOf/@ts-expect-error inside real test blocks. tsc
-// checks every line via `npm run check`, and an unused @ts-expect-error is itself a tsc error, so the
-// pins are self-verifying. The final block is the one runtime assertion.
 describe("typing", () => {
 	it("exports the frozen-path three-verb operation surface from the package root", () => {
 		expectTypeOf<Operation>().toEqualTypeOf<AddOperation | ReplaceOperation | RemoveOperation>();
@@ -73,86 +67,80 @@ describe("typing", () => {
 		expect(Object.keys(date)).toEqual(["epochMs"]);
 	});
 
-	it("pins explicit <T> to the {} meta defaults, not the token's types", () => {
-		const withToken = createState<Doc>(makeDoc, docMeta);
+	it("types createMutableState as the live object T", () => {
+		const state = createMutableState<Doc>(makeDoc());
 
-		expectTypeOf(withToken).toEqualTypeOf<State<Doc, {}, {}>>();
+		expectTypeOf(state).toEqualTypeOf<Doc>();
+		expectTypeOf(state.count).toEqualTypeOf<number>();
 
-		// write side goes unchecked under the {} slot -- a bogus meta key compiles
-		withToken.mutate((mutable) => void mutable, { bogusKey: 123 });
-
-		withToken.op.subscribe((_state, _ops, emission) => {
-			if (emission.isSideEffect) return;
-
-			// @ts-expect-error property replay does not exist on {}
-			void emission.meta.replay;
-		});
-
-		withToken.op.subscribe((_state, _ops, emission: Emission<DocMeta>) => {
-			if (emission.isSideEffect) return;
-
-			expectTypeOf(emission.meta.replay).toEqualTypeOf<boolean | undefined>();
+		state.count = 1;
+		transact(state, () => {
+			state.view = "detail";
 		});
 	});
 
-	it("refuses explicit <T> with a required-field token", () => {
-		// @ts-expect-error Meta<RequiredMeta> does not pass the {}-defaulted slot
-		createState<Doc>(makeDoc, requiredMeta);
+	it("types plain subscribe as raw transport meta", () => {
+		const state = createMutableState(makeDoc());
+
+		subscribe(state, (ops, meta) => {
+			expectTypeOf(ops).toEqualTypeOf<ReadonlyArray<{ readonly do: Operation; readonly undo: Operation }>>();
+			expectTypeOf(meta).toEqualTypeOf<unknown>();
+		});
 	});
 
-	it("infers meta from the token when <T> is left open", () => {
-		const tokenState = createState(makeDoc, docMeta);
-		const requiredState = createState(makeDoc, requiredMeta);
+	it("types channel subscribe with the isTransaction provenance frame", () => {
+		const state = createMutableState(makeDoc());
 
-		expectTypeOf(tokenState).toEqualTypeOf<State<Doc, DocMeta, DocMeta>>();
-		expectTypeOf(requiredState).toEqualTypeOf<State<Doc, RequiredMeta, RequiredMeta>>();
+		docChannel.subscribe(state, (ops, context) => {
+			expectTypeOf(ops).items.toMatchTypeOf<{ readonly do: Operation; readonly undo: Operation }>();
 
-		tokenState.mutate((mutable) => void mutable);
-
-		// @ts-expect-error meta is required when In carries a required field
-		requiredState.mutate((mutable) => void mutable);
-		requiredState.mutate((mutable) => void mutable, { source: "user" });
-
-		const prop: State<Doc> = tokenState;
-		void prop;
-
-		// @ts-expect-error required-meta mutate cannot satisfy optional-meta mutate
-		const bad: State<Doc> = requiredState;
-		void bad;
-	});
-
-	it("composes explicit <T> with a group or token in the single groupOrMeta slot (feedback item 2)", () => {
-		expectTypeOf(useTrackedState<Doc>).toBeCallableWith(makeDoc, docGroup);
-		expectTypeOf(useTrackedState<Doc>).toBeCallableWith(makeDoc, docMeta);
-		expectTypeOf(useTrackedState<Doc>).toBeCallableWith(makeDoc);
-	});
-
-	it("delivers merged meta from a state created with a token", () => {
-		const token = createMeta<{ replay: boolean }>({ replay: false });
-		const heard = new Array<{ replay: boolean }>();
-
-		const state = createState({ count: 0 }, token);
-
-		state.op.subscribe((_state, _ops, emission) => {
-			if (!emission.isSideEffect) heard.push(emission.meta);
+			if (context.isTransaction) {
+				expectTypeOf(context.meta).toEqualTypeOf<DocMeta>();
+				expectTypeOf(context.meta.replay).toEqualTypeOf<boolean | undefined>();
+			} else {
+				expectTypeOf(context.meta).toEqualTypeOf<unknown>();
+			}
 		});
 
-		state.mutate((mutable) => {
-			mutable.count += 1;
+		docChannel.transact(state, () => {
+			state.count = 1;
+		}, { transactionKey: "drag" });
+	});
+
+	it("types channel defaults merge as total M on the true arm", () => {
+		const state = createMutableState({ count: 0 });
+
+		defaultedChannel.subscribe(state, (_ops, context) => {
+			if (context.isTransaction) {
+				expectTypeOf(context.meta.replay).toEqualTypeOf<boolean>();
+			} else {
+				expectTypeOf(context.meta).toEqualTypeOf<unknown>();
+			}
+		});
+	});
+
+	it("composes useMutableState with an optional group", () => {
+		expectTypeOf(useMutableState<Doc>).toBeCallableWith(makeDoc());
+		expectTypeOf(useMutableState<Doc>).toBeCallableWith(makeDoc(), docGroup);
+	});
+
+	it("delivers merged meta from a defaulted channel at runtime", () => {
+		const heard = new Array<{ replay: boolean; transactionKey?: string }>();
+		const state = createMutableState({ count: 0 });
+
+		defaultedChannel.subscribe(state, (_ops, context) => {
+			if (context.isTransaction) heard.push(context.meta);
+		});
+
+		defaultedChannel.transact(state, () => {
+			state.count += 1;
 		});
 
 		expect(heard).toEqual([{ replay: false }]);
 	});
 });
 
-// The rejection half of the hook surface: a hook can't be invoked outside React and vitest has no
-// `.not.toBeCallableWith`, so these type-only pins live in a never-invoked function -- tsc still
-// checks every line, so an unused @ts-expect-error would fail the build.
 export function useHookTypeRejections(): void {
-	// @ts-expect-error Group<RequiredMeta> does not pass the {}-defaulted slot
-	useTrackedState<Doc>(makeDoc, requiredGroup);
-	// @ts-expect-error Meta<RequiredMeta> does not pass the {}-defaulted slot
-	useTrackedState<Doc>(makeDoc, requiredMeta);
-	// @ts-expect-error there is no third argument slot for a second binder
-	useTrackedState(makeDoc, docGroup, docMeta);
+	// @ts-expect-error there is no third argument slot
+	useMutableState(makeDoc(), docGroup, docChannel);
 }

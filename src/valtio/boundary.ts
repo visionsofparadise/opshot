@@ -7,7 +7,6 @@ import { classifyValue, hasOwnEnumerableFunction, isTrackable } from "./classify
 
 export { classifyValue, type ValueKind } from "./classify";
 
-// refSet is the only runtime marker ref() leaves on a value; valtio exposes it nowhere else.
 const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
 
 export interface DirectWriteGeneration {
@@ -506,7 +505,7 @@ export function installBoundary(): void {
 				defineProperty(target, prop, descriptor) {
 					if (setDepth > 0 || isInitializing()) return Reflect.defineProperty(target, prop, descriptor);
 
-					throw new Error("opshot: defineProperty is not supported on tracked state; define properties in the createState literal");
+					throw new Error("opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input");
 				},
 				setPrototypeOf() {
 					throw new Error("opshot: setPrototypeOf is not supported on tracked state");

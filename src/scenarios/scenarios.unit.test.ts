@@ -1,11 +1,13 @@
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
 import { createGroup, type Group } from "../createGroup";
-import { createState, type Emission, type State } from "../createState";
+import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
 import { type Op } from "../ops/operation";
 
 interface HistoryEntry {
-  state: State<object>;
+  state: object;
   ops: Array<Op>;
 }
 
@@ -42,11 +44,11 @@ const createRecorder = (group: Group): Recorder => {
     },
   };
 
-  group.subscribe((state, ops, emission: Emission<{ replay?: boolean }>) => {
-    if (emission.isSideEffect || emission.meta.replay === true) return;
+  subscribe(group, (state, ops, meta) => {
+    if ((meta as { replay?: boolean } | undefined)?.replay === true) return;
 
     stack.length = recorder.index + 1;
-    stack.push({ state, ops });
+    stack.push({ state, ops: [...ops] });
     recorder.index = stack.length - 1;
   });
 
@@ -106,10 +108,10 @@ const parameterGraph: Graph = {
   edges: [{ from: "output", to: "reverb" }],
 };
 
-const createGrade = (group: Group): State<Grade> => group.createState<Grade>(() => ({ exposure: 0 }));
+const createGrade = (group: Group): Grade => group.createState<Grade>({ exposure: 0 });
 
-const createGraph = (group: Group): State<Graph> =>
-  group.createState<Graph>(() => ({
+const createGraph = (group: Group): Graph =>
+  group.createState<Graph>({
     nodes: [
       { id: "input", parameters: { gain: 1 } },
       { id: "filter", parameters: { gain: 2 } },
@@ -119,7 +121,7 @@ const createGraph = (group: Group): State<Graph> =>
       { from: "input", to: "filter" },
       { from: "filter", to: "output" },
     ],
-  }));
+  });
 
 describe("scenarios", () => {
   it("forwards every op of a transaction in order with its transactionKey intact", () => {
@@ -127,18 +129,18 @@ describe("scenarios", () => {
     const grade = createGrade(group);
     const received = new Array<{ meta: Record<string, unknown>; ops: Array<Op> }>();
 
-    group.subscribe((_state, ops, emission) => {
-      if (!emission.isSideEffect) received.push({ meta: emission.meta, ops });
+    subscribe(group, (_state, ops, meta) => {
+      received.push({ meta: meta as Record<string, unknown>, ops: [...ops] });
     });
 
     for (const exposure of [1, 2, 3]) {
-      grade.mutate((mutable) => {
-        mutable.exposure = exposure;
+      transact(grade, () => {
+        grade.exposure = exposure;
       }, { transactionKey: "drag" });
     }
 
     expect(received).toHaveLength(3);
-    expect(received.every((emission) => emission.meta.transactionKey === "drag")).toBe(true);
+    expect(received.every((entry) => entry.meta.transactionKey === "drag")).toBe(true);
     expect(received.map((emission) => emission.ops)).toEqual([
       [{ do: { op: "replace", path: ["exposure"], value: 1 }, undo: { op: "replace", path: ["exposure"], value: 0 } }],
       [{ do: { op: "replace", path: ["exposure"], value: 2 }, undo: { op: "replace", path: ["exposure"], value: 1 } }],
@@ -151,54 +153,54 @@ describe("scenarios", () => {
     const graph = createGraph(group);
     const recorder = createRecorder(group);
 
-    expect(graph.op.unwrap()).toEqual(initialGraph);
+    expect(graph).toEqual(initialGraph);
 
-    graph.mutate((mutable) => {
-      mutable.nodes.push({ id: "reverb", parameters: { gain: 4 } });
-      mutable.edges.push({ from: "output", to: "reverb" });
+    transact(graph, () => {
+      graph.nodes.push({ id: "reverb", parameters: { gain: 4 } });
+      graph.edges.push({ from: "output", to: "reverb" });
     });
 
-    expect(graph.op.unwrap()).toEqual(pushedGraph);
+    expect(graph).toEqual(pushedGraph);
 
-    graph.mutate((mutable) => {
-      mutable.nodes.splice(1, 1);
-      mutable.edges.splice(0, 2);
+    transact(graph, () => {
+      graph.nodes.splice(1, 1);
+      graph.edges.splice(0, 2);
     });
 
-    expect(graph.op.unwrap()).toEqual(splicedGraph);
+    expect(graph).toEqual(splicedGraph);
 
-    graph.mutate((mutable) => {
-      const node = mutable.nodes[0];
+    transact(graph, () => {
+      const node = graph.nodes[0];
 
       if (node) node.parameters.gain = 99;
     });
 
-    expect(graph.op.unwrap()).toEqual(parameterGraph);
+    expect(graph).toEqual(parameterGraph);
     expect(recorder.stack).toHaveLength(3);
 
     recorder.undo();
 
-    expect(graph.op.unwrap()).toEqual(splicedGraph);
+    expect(graph).toEqual(splicedGraph);
 
     recorder.undo();
 
-    expect(graph.op.unwrap()).toEqual(pushedGraph);
+    expect(graph).toEqual(pushedGraph);
 
     recorder.undo();
 
-    expect(graph.op.unwrap()).toEqual(initialGraph);
+    expect(graph).toEqual(initialGraph);
 
     recorder.redo();
 
-    expect(graph.op.unwrap()).toEqual(pushedGraph);
+    expect(graph).toEqual(pushedGraph);
 
     recorder.redo();
 
-    expect(graph.op.unwrap()).toEqual(splicedGraph);
+    expect(graph).toEqual(splicedGraph);
 
     recorder.redo();
 
-    expect(graph.op.unwrap()).toEqual(parameterGraph);
+    expect(graph).toEqual(parameterGraph);
   });
 
   it("does not record its own replays, so the stack survives undo and redo", () => {
@@ -206,12 +208,12 @@ describe("scenarios", () => {
     const grade = createGrade(group);
     const recorder = createRecorder(group);
 
-    grade.mutate((mutable) => {
-      mutable.exposure = 1;
+    transact(grade, () => {
+      grade.exposure = 1;
     });
 
-    grade.mutate((mutable) => {
-      mutable.exposure = 2;
+    transact(grade, () => {
+      grade.exposure = 2;
     });
 
     expect(recorder.stack).toHaveLength(2);
@@ -231,7 +233,7 @@ describe("scenarios", () => {
 
     expect(recorder.stack).toHaveLength(2);
     expect(recorder.index).toBe(0);
-    expect(grade.op.unwrap().exposure).toBe(1);
+    expect(grade.exposure).toBe(1);
   });
 
   it("emits to a persistence subscriber for organic mutations and for replays alike", () => {
@@ -240,42 +242,42 @@ describe("scenarios", () => {
     const recorder = createRecorder(group);
     const persisted = new Array<Record<string, unknown>>();
 
-    grade.op.subscribe((_state, _ops, emission) => {
-      if (!emission.isSideEffect) persisted.push(emission.meta);
+    subscribe(grade, (_ops, meta) => {
+      persisted.push(meta as Record<string, unknown>);
     });
 
-    grade.mutate((mutable) => {
-      mutable.exposure = 1;
+    transact(grade, () => {
+      grade.exposure = 1;
     });
 
     recorder.undo();
     recorder.redo();
 
-    expect(persisted).toEqual([{}, { replay: true }, { replay: true }]);
+    expect(persisted).toEqual([undefined, { replay: true }, { replay: true }]);
   });
 
   it("completes the stream under entanglement: the sharer hears faithful side-effect ops for an owned write elsewhere", async () => {
     const shared = { x: 1 };
-    const a = createState({ box: shared });
-    const b = createState({ box: shared });
-    const aHeard = new Array<{ ops: Array<Op>; emission: Emission }>();
-    const bHeard = new Array<{ ops: Array<Op>; emission: Emission }>();
+    const a = createMutableState({ box: shared });
+    const b = createMutableState({ box: shared });
+    const aHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+    const bHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
 
-    a.op.subscribe((_state, ops, emission) => {
-      aHeard.push({ ops, emission });
+    subscribe(a, (ops, meta) => {
+      aHeard.push({ ops: [...ops], meta });
     });
-    b.op.subscribe((_state, ops, emission) => {
-      bHeard.push({ ops, emission });
+    subscribe(b, (ops, meta) => {
+      bHeard.push({ ops: [...ops], meta });
     });
 
-    a.mutate((mutable) => {
-      mutable.box.x = 2;
+    transact(a, () => {
+      a.box.x = 2;
     });
 
     expect(aHeard).toEqual([
       {
         ops: [{ do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
-        emission: { isSideEffect: false, meta: {} },
+        meta: undefined,
       },
     ]);
     expect(bHeard).toHaveLength(0);
@@ -286,10 +288,10 @@ describe("scenarios", () => {
     expect(bHeard).toEqual([
       {
         ops: [{ do: { op: "replace", path: ["box", "x"], value: 2 }, undo: { op: "replace", path: ["box", "x"], value: 1 } }],
-        emission: { isSideEffect: true },
+        meta: undefined,
       },
     ]);
-    expect(b.op.unwrap().box.x).toBe(2);
+    expect(b.box.x).toBe(2);
   });
 
   it("moves an element between states with both streams correct and the source detached", async () => {
@@ -298,29 +300,29 @@ describe("scenarios", () => {
       gain: number;
     }
 
-    const a = createState<{ items: Array<Item> }>({ items: [{ id: "x", gain: 1 }] });
-    const b = createState<{ items: Array<Item> }>({ items: [] });
-    const aHeard = new Array<{ ops: Array<Op>; emission: Emission }>();
-    const bHeard = new Array<{ ops: Array<Op>; emission: Emission }>();
+    const a = createMutableState<{ items: Array<Item> }>({ items: [{ id: "x", gain: 1 }] });
+    const b = createMutableState<{ items: Array<Item> }>({ items: [] });
+    const aHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+    const bHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
 
-    a.op.subscribe((_state, ops, emission) => {
-      aHeard.push({ ops, emission });
+    subscribe(a, (ops, meta) => {
+      aHeard.push({ ops: [...ops], meta });
     });
-    b.op.subscribe((_state, ops, emission) => {
-      bHeard.push({ ops, emission });
+    subscribe(b, (ops, meta) => {
+      bHeard.push({ ops: [...ops], meta });
     });
 
     let moved: Item | undefined;
 
-    a.mutate((mutable) => {
-      [moved] = mutable.items.splice(0, 1);
+    transact(a, () => {
+      [moved] = a.items.splice(0, 1);
     });
-    b.mutate((mutable) => {
-      if (moved) mutable.items.push(moved);
+    transact(b, () => {
+      if (moved) b.items.push(moved);
     });
 
     expect(aHeard).toHaveLength(1);
-    expect(aHeard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
+    expect(aHeard[0]?.meta).toBeUndefined();
     expect(aHeard[0]?.ops).toHaveLength(1);
     expect(aHeard[0]?.ops[0]?.do).toMatchObject({ op: "replace", path: ["items"] });
     expect(aHeard[0]?.ops[0] && "value" in aHeard[0].ops[0].do ? aHeard[0].ops[0].do.value : undefined).toEqual([]);
@@ -333,7 +335,7 @@ describe("scenarios", () => {
 		expect(sourceUndo[0]).toMatchObject({ op: "replace", path: ["items"] });
 		expect(sourceUndo[0] && "value" in sourceUndo[0] ? sourceUndo[0].value : undefined).toEqual([{ id: "x", gain: 1 }]);
     expect(bHeard).toHaveLength(1);
-    expect(bHeard[0]?.emission).toEqual({ isSideEffect: false, meta: {} });
+    expect(bHeard[0]?.meta).toBeUndefined();
     const destinationOps = bHeard[0]?.ops;
 
 		if (!destinationOps) throw new Error("the destination operations were not heard");
@@ -347,8 +349,8 @@ describe("scenarios", () => {
     expect(aHeard).toHaveLength(1);
     expect(bHeard).toHaveLength(1);
 
-    b.mutate((mutable) => {
-      const item = mutable.items[0];
+    transact(b, () => {
+      const item = b.items[0];
 
       if (item) item.gain = 2;
     });
@@ -357,28 +359,28 @@ describe("scenarios", () => {
 
     expect(aHeard).toHaveLength(1);
     expect(bHeard).toHaveLength(2);
-    expect(bHeard[1]?.emission).toEqual({ isSideEffect: false, meta: {} });
+    expect(bHeard[1]?.meta).toBeUndefined();
     expect(bHeard[1]?.ops).toEqual([
       { do: { op: "replace", path: ["items", 0, "gain"], value: 2 }, undo: { op: "replace", path: ["items", 0, "gain"], value: 1 } },
     ]);
-    expect(a.op.unwrap().items).toEqual([]);
-    expect(b.op.unwrap().items).toEqual([{ id: "x", gain: 2 }]);
+    expect(a.items).toEqual([]);
+    expect(b.items).toEqual([{ id: "x", gain: 2 }]);
   });
 
   it("hears nothing from a standalone state the group never created", () => {
     const group = createGroup();
     const grade = createGrade(group);
-    const selection = createState<{ nodeId: string | undefined }>(() => ({ nodeId: undefined }));
+    const selection = createMutableState<{ nodeId: string | undefined }>({ nodeId: undefined });
     const recorder = createRecorder(group);
 
-    selection.mutate((mutable) => {
-      mutable.nodeId = "filter";
+    transact(selection, () => {
+      selection.nodeId = "filter";
     });
 
     expect(recorder.stack).toHaveLength(0);
 
-    grade.mutate((mutable) => {
-      mutable.exposure = 1;
+    transact(grade, () => {
+      grade.exposure = 1;
     });
 
     const entry = recorder.stack[0];

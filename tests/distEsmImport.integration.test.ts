@@ -21,13 +21,17 @@ describe.skipIf(!hasDist)("built package imports in a real node ESM context", ()
 		const exports = importedExports("index.js");
 
 		expect(exports).toContain("applyOps");
-		expect(exports).toContain("createState");
+		expect(exports).toContain("createMutableState");
+		expect(exports).toContain("transact");
+		expect(exports).toContain("subscribe");
+		expect(exports).toContain("createChannel");
 	});
 
 	it("loads dist/react.js and exposes its public surface", () => {
 		const exports = importedExports("react.js");
 
-		expect(exports).toContain("retrack");
-		expect(exports).toContain("useTrackedState");
+		expect(exports).toContain("scope");
+		expect(exports).toContain("useMutableState");
+		expect(exports).toContain("useGroup");
 	});
 });

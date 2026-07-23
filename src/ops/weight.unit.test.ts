@@ -50,7 +50,6 @@ describe("weighValue", () => {
 		const liveOnly = new TrackedMap<number, number>([[2, 20]]);
 		const budget = Number.MAX_SAFE_INTEGER;
 
-		// Tombstones keep slot length, so a deleted entry still charges array/index structure weight.
 		expect(weighValue(withTombstone, budget)).toBeGreaterThan(weighValue(liveOnly, budget));
 		expect(weighValue(liveOnly, budget)).toBeGreaterThan(NODE_WEIGHT);
 	});

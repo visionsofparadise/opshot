@@ -2,7 +2,6 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 
 import { isUnsafeTracked } from "../unsafeTrack";
 
-// refSet is the only runtime marker ref() leaves on a value; valtio exposes it nowhere else.
 const { refSet } = unstable_getInternalStates();
 
 export type ValueKind = "plain" | "plainArray" | "arraySubclass" | "cleanClass" | "privateClass" | "nativeClass";

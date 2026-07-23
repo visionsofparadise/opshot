@@ -1,18 +1,20 @@
-import { createState } from "../createState";
+import { transact } from "../transact";
+import { subscribe } from "../subscribe";
+import {createMutableState} from "../createMutableState";
 import { cloneValue } from "./cloneValue";
-import type { Operation } from "./operation";
+import { type Operation } from "./operation";
 import { createOperationPath } from "./path";
 
 const readWholeValueUndo = (value: object): object => {
-	const state = createState<{ value: object | null }>({ value });
+	const state = createMutableState<{ value: object | null }>({ value });
 	let undo: Operation | undefined;
 
-	state.op.subscribe((_state, ops) => {
+	subscribe(state, (ops) => {
 		undo = ops[0]?.undo;
 	});
 
-	state.mutate((mutable) => {
-		mutable.value = null;
+	transact(state, () => {
+		state.value = null;
 	});
 
 	if (undo?.op !== "replace") throw new Error("expected a whole-value replace undo");

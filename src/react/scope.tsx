@@ -1,8 +1,15 @@
-import { memo, useMemo, type FC } from "react";
+import { memo, useEffect, useReducer, useRef, type FC } from "react";
+import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
+
 import { isState } from "../isState";
 import { constructorName } from "../valtio/boundary";
 import { classifyValue } from "../valtio/classify";
-import { useRetrackAll } from "./tracking";
+import { createBoundary, type Boundary } from "./boundary";
+import { unwrapWrapper } from "./resolveWrapper";
+
+export interface ScopeOptions {
+	readonly maxDepth?: number;
+}
 
 type PropPath = Array<string | number>;
 
@@ -22,12 +29,12 @@ const assertSubstitutableContainer = (container: object): void => {
 	const className = constructorName(container.constructor);
 
 	if (kind === "arraySubclass") {
-		throw new Error(`opshot: retrack found a state inside ${className}, an array subclass whose prototype can't survive substitution. Move the state to a plain array, or ignore() the ${className}.`);
+		throw new Error(`opshot: scope found a state inside ${className}, an array subclass whose prototype can't survive substitution. Move the state to a plain array, or ignore() the ${className}.`);
 	}
 
 	const hidden = kind === "privateClass" ? "private fields" : "internal slots";
 
-	throw new Error(`opshot: retrack found a state inside ${className}, whose ${hidden} can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`);
+	throw new Error(`opshot: scope found a state inside ${className}, whose ${hidden} can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`);
 };
 
 function findStatePaths(value: unknown, maxDepth: number, path: PropPath = [], paths: Array<PropPath> = [], ancestors = new Set<object>()): Array<PropPath> {
@@ -56,7 +63,6 @@ function findStatePaths(value: unknown, maxDepth: number, path: PropPath = [], p
 		const foundCount = paths.length;
 
 		for (const [key, propertyValue] of Object.entries(value)) {
-			// React stamps fiber refs onto DOM nodes under __react-prefixed keys; descending one would drag the fiber graph into the walk.
 			if (key.startsWith("__react")) continue;
 
 			findStatePaths(propertyValue, maxDepth, [...path, key], paths, ancestors);
@@ -111,7 +117,7 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 		const className = constructorName((object as object).constructor);
 
 		throw new Error(
-			`opshot: retrack found a state behind the accessor "${String(head)}" on ${className}, which can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`,
+			`opshot: scope found a state behind the accessor "${String(head)}" on ${className}, which can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`,
 		);
 	}
 
@@ -123,29 +129,88 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 	return clone as T;
 }
 
-export interface RetrackOptions {
-	readonly maxDepth?: number;
-}
+const sourcesKey = (sources: Array<object>): string => `${sources.length}:${sources.map((source) => getVersion(source)).join(",")}`;
 
-export function retrack<P extends object>(component: FC<P>, options?: RetrackOptions): FC<P> {
-	const componentName = component.displayName ?? component.name;
+export function scope<P extends object>(Component: FC<P>, options?: ScopeOptions): FC<P> {
 	const maxDepth = options?.maxDepth ?? 10;
+	const Scoped: FC<P> = (props) => {
+		const boundaryRef = useRef<Boundary | undefined>(undefined);
 
-	const Retracked: FC<P> = (props) => {
-		const snapshotPaths = useMemo(() => findStatePaths(props, maxDepth), [props]);
-		const staleStates = useMemo(() => snapshotPaths.map((path) => getAtPath(props, path)).filter(isState), [props, snapshotPaths]);
-		const freshStates = useRetrackAll(staleStates);
+		boundaryRef.current ??= createBoundary();
 
-		const freshProps = useMemo(() => {
-			if (freshStates === staleStates) return props;
+		const boundary = boundaryRef.current;
+		const [, bump] = useReducer((value: number) => value + 1, 0);
 
-			return snapshotPaths.reduce<P>((acc, path, index) => setAtPath(acc, path, freshStates[index]), props);
-		}, [props, snapshotPaths, staleStates, freshStates]);
+		boundary.resetReads();
 
-		return component(freshProps);
+		const paths = findStatePaths(props, maxDepth);
+		const sources: Array<object> = [];
+		let nextProps = props;
+		let changed = false;
+
+		for (const path of paths) {
+			const value = getAtPath(props, path);
+
+			if (!isState(value)) continue;
+
+			const source = unwrapWrapper(value);
+
+			if (typeof source !== "object" || source === null) continue;
+
+			const wrapped = boundary.wrap(source);
+
+			if (!sources.includes(source)) sources.push(source);
+
+			if (wrapped !== value) {
+				nextProps = setAtPath(nextProps, path, wrapped);
+				changed = true;
+			}
+		}
+
+		const renderedProps = changed ? nextProps : props;
+		const versionsAtRender = sources.map((source) => getVersion(source));
+
+		useEffect(() => {
+			const unsubscribes = sources.map((source) =>
+				valtioSubscribe(
+					source,
+					() => {
+						boundary.evictChangedTargets();
+
+						if (boundary.readsChanged(source)) bump();
+					},
+					true,
+				),
+			);
+
+			let shouldBump = false;
+
+			for (let index = 0; index < sources.length; index += 1) {
+				const source = sources[index];
+				const captured = versionsAtRender[index];
+
+				if (source === undefined || captured === undefined) continue;
+
+				if (getVersion(source) !== captured) {
+					boundary.evictChangedTargets();
+
+					if (boundary.readsChanged(source)) shouldBump = true;
+				}
+			}
+
+			if (shouldBump) bump();
+
+			return () => {
+				for (const unsubscribe of unsubscribes) unsubscribe();
+			};
+		}, [sourcesKey(sources), versionsAtRender.join(","), boundary]);
+
+		return Component(renderedProps);
 	};
 
-	Retracked.displayName = `retrack(${componentName === "" ? "Anonymous" : componentName})`;
+	const baseName = Component.displayName ?? Component.name;
 
-	return memo(Retracked);
+	Scoped.displayName = `scope(${baseName === "" ? "Component" : baseName})`;
+
+	return memo(Scoped);
 }

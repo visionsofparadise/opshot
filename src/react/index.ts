@@ -1,3 +1,3 @@
-export { retrack, type RetrackOptions } from "./retrack";
+export { scope, type ScopeOptions } from "./scope";
 export { useGroup } from "./useGroup";
-export { useTrackedState } from "./useTrackedState";
+export { useMutableState } from "./useMutableState";

@@ -1,13 +1,14 @@
+import { transact } from "../transact";
 import { snapshot } from "valtio/vanilla";
 
-import { createState, type State } from "../createState";
+import { createMutableState } from "../createMutableState";
 import { resolveIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
 import { diffSnapshots } from "../ops/diff";
 import { type Op } from "../ops/operation";
 import { addressOf } from "./address";
 
-const undo = <T extends object>(state: State<T>, ops: Array<Op>): void => {
+const undo = <T extends object>(state: T, ops: Array<Op>): void => {
 	applyOps(
 		state,
 		ops.map((op) => op.undo).reverse(),
@@ -69,15 +70,15 @@ describe("addressOf", () => {
 	});
 
 	it("interns the same object once across raw, proxy, snapshot, and undo handles", () => {
-		const state = createState<{ item: { label: string }; sibling: number }>(() => ({ item: { label: "a" }, sibling: 0 }));
-		const proxied = state.op.unsafeMutable as { item: { label: string }; sibling: number };
+		const state = createMutableState<{ item: { label: string }; sibling: number }>({ item: { label: "a" }, sibling: 0 });
+		const proxied = state as { item: { label: string }; sibling: number };
 
 		const addressProxy = addressOf(proxied.item);
 		const snapA = snapshot(proxied) as { item: { label: string }; sibling: number };
 		const addressSnapA = addressOf(snapA.item);
 
-		state.mutate((mutable) => {
-			mutable.sibling = 1;
+		transact(state, () => {
+			state.sibling = 1;
 		});
 
 		const snapB = snapshot(proxied) as { item: { label: string }; sibling: number };

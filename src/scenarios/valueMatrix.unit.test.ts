@@ -1,13 +1,17 @@
-import { createState, type State } from "../createState";
+import { snapshot } from "valtio/vanilla";
+
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
+import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
-import type { Op } from "../ops/operation";
+import { type Op } from "../ops/operation";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { catalog, type CatalogEntry, type OperationLane } from "./valueCatalog";
 
-type ValueState = State<{ value: unknown }>;
+type ValueState = { value: unknown };
 
 const PROBE = "opshotProbe";
 
@@ -33,8 +37,8 @@ const firstDataKey = (value: unknown): string | undefined => {
 const recordOwned = (state: ValueState): Array<Array<Op>> => {
 	const heard = new Array<Array<Op>>();
 
-	state.op.subscribe((_state, ops, emission) => {
-		if (!emission.isSideEffect) heard.push(ops);
+	subscribe(state, (ops) => {
+		heard.push([...ops]);
 	});
 
 	return heard;
@@ -115,7 +119,7 @@ const attachAtCreate: Scenario = {
 	applies: () => true,
 	run: (entry) => {
 		const value = entry.create();
-		const attach = (): ValueState => createState<{ value: unknown }>({ value });
+		const attach = (): ValueState => createMutableState<{ value: unknown }>({ value });
 
 		if (entry.lane === "throwsAtAttach") {
 			expect(attach).toThrow(/Options:/);
@@ -131,7 +135,7 @@ const attachAtCreate: Scenario = {
 
 		const state = attach();
 
-		expect("value" in state.op.unwrap()).toBe(true);
+		expect("value" in state).toBe(true);
 	},
 };
 
@@ -139,11 +143,11 @@ const attachViaMutate: Scenario = {
 	name: "attach-via-mutate",
 	applies: () => true,
 	run: (entry) => {
-		const state = createState<{ value?: unknown }>({});
+		const state = createMutableState<{ value?: unknown }>({});
 		const value = entry.create();
 		const attach = (): void => {
-			state.mutate((mutable) => {
-				mutable.value = value;
+			transact(state, () => {
+				state.value = value;
 			});
 		};
 
@@ -161,7 +165,7 @@ const attachViaMutate: Scenario = {
 
 		attach();
 
-		expect("value" in state.op.unwrap()).toBe(true);
+		expect("value" in state).toBe(true);
 	},
 };
 
@@ -171,53 +175,53 @@ const opsAndReplay: Scenario = {
 	run: (entry) => {
 		const operationLane = getOperationLane(entry);
 		const value = entry.create();
-		const state = createState<{ value: unknown }>({ value });
+		const state = createMutableState<{ value: unknown }>({ value });
 		const heard = recordOwned(state);
 
 		if (operationLane === "cyclic") {
 			expect(() => {
-				state.mutate((mutable) => {
-					driveInterior(mutable.value as object);
+				transact(state, () => {
+					driveInterior(state.value as object);
 				});
 			}).toThrow(/cyclic value/);
 
 			return;
 		}
 
-		const before = state.op.unwrap().value;
+		const before = state.value;
 		const usesFacade = operationLane === "collectionKeyInterior" || before instanceof TrackedMap || before instanceof TrackedSet || before instanceof TrackedDate;
 		const beforeFacade = usesFacade ? readFacade(before) : undefined;
 		const beforeMapKey = operationLane === "collectionKeyInterior" ? getMapKey(before) : undefined;
 
-		state.mutate((mutable) => {
+		transact(state, () => {
 			switch (operationLane) {
 				case "collectionKeyInterior":
-					driveMapKey(mutable.value);
+					driveMapKey(state.value);
 					break;
 				case "sparseArray":
-					driveSparseArray(mutable.value);
+					driveSparseArray(state.value);
 					break;
 				case "equalContentReplacement":
-					mutable.value = { value: 1 };
+					state.value = { value: 1 };
 					break;
 				case "sameTargetInterior":
-					(mutable.value as { value: number }).value = 2;
+					(state.value as { value: number }).value = 2;
 					break;
 				case "trackedInterior":
-					if (mutable.value instanceof TrackedMap || mutable.value instanceof TrackedSet || mutable.value instanceof TrackedDate) {
-						driveFacade(mutable.value);
+					if (state.value instanceof TrackedMap || state.value instanceof TrackedSet || state.value instanceof TrackedDate) {
+						driveFacade(state.value);
 					} else {
-						driveInterior(mutable.value as object);
+						driveInterior(state.value as object);
 					}
 					break;
 				case "replaceValue":
-					mutable.value = "__probe__";
+					state.value = "__probe__";
 					break;
 		}
 		});
 
 		const ops = heard.flat();
-		const mutated = state.op.unwrap().value;
+		const mutated = state.value;
 
 		expect(ops.length).toBeGreaterThan(0);
 
@@ -267,7 +271,7 @@ const opsAndReplay: Scenario = {
 			[...ops].reverse().map((op) => op.undo),
 		);
 
-		const restored = state.op.unwrap().value;
+		const restored = state.value;
 
 		if (usesFacade) expect(readFacade(restored)).toEqual(beforeFacade);
 		else expect(restored).toEqual(before);
@@ -292,7 +296,7 @@ const opsAndReplay: Scenario = {
 			ops.map((op) => op.do),
 		);
 
-		const replayed = state.op.unwrap().value;
+		const replayed = state.value;
 
 		if (usesFacade) expect(readFacade(replayed)).toEqual(readFacade(mutated));
 		else expect(replayed).toEqual(mutated);
@@ -318,8 +322,8 @@ const unwrap: Scenario = {
 	applies: (entry) => entry.lane === "tracked" || entry.lane === "ignored" || entry.lane === "autoIgnored" || entry.lane === "leaf",
 	run: (entry) => {
 		const value = entry.create();
-		const state = createState<{ value: unknown }>({ value });
-		const unwrapped = state.op.unwrap().value;
+		const state = createMutableState<{ value: unknown }>({ value });
+		const unwrapped = state.value;
 
 		if (entry.lane === "tracked") {
 			expect(unwrapped).toEqual(value);
@@ -341,9 +345,9 @@ const snapshotWrite: Scenario = {
 	applies: (entry) => entry.lane !== "throwsAtAttach" && entry.lane !== "registeredCopy" && firstDataKey(entry.create()) !== undefined,
 	run: (entry) => {
 		const value = entry.create();
-		const state = createState<{ value: unknown }>({ value });
+		const state = createMutableState<{ value: unknown }>({ value });
 		const key = firstDataKey(value)!;
-		const snapshotValue = state.op.unwrap().value as Record<string, unknown>;
+		const snapshotValue = snapshot(state).value as Record<string, unknown>;
 
 		const write = (): void => {
 			snapshotValue[key] = 999;
@@ -364,14 +368,14 @@ const watchdogReport: Scenario = {
 	},
 	run: async (entry) => {
 		const value = entry.create();
-		const state = createState<{ value: unknown }>({ value });
+		const state = createMutableState<{ value: unknown }>({ value });
 		const heard = new Array<Array<Op>>();
 
-		state.op.subscribe((_state, ops, emission) => {
-			if (emission.isSideEffect) heard.push(ops);
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
 		});
 
-		const rootValue: unknown = Reflect.get(state.op.unsafeMutable, "value");
+		const rootValue: unknown = Reflect.get(state, "value");
 
 		if (getOperationLane(entry) === "collectionKeyInterior") {
 			driveMapKey(rootValue);
@@ -400,14 +404,14 @@ const facadeContents: Scenario = {
 	run: (entry) => {
 		const facade = entry.create();
 		const original = getFirstFacadeContent(facade);
-		const state = createState<{ value: unknown }>({ value: facade });
+		const state = createMutableState<{ value: unknown }>({ value: facade });
 		const heard = recordOwned(state);
-		const snapshotContent = getFirstFacadeContent(state.op.unwrap().value);
+		const snapshotContent = getFirstFacadeContent(state.value);
 
 		if (entry.contentsLane === "ignored") expect(snapshotContent).toBe(original);
 
-		state.mutate((mutable) => {
-			const content = getFirstFacadeContent(mutable.value);
+		transact(state, () => {
+			const content = getFirstFacadeContent(state.value);
 
 			if (typeof content !== "object" || content === null) throw new Error("facade contents lane did not produce an object");
 
@@ -415,7 +419,7 @@ const facadeContents: Scenario = {
 		});
 
 		expect(heard).toHaveLength(0);
-		expect(getFirstFacadeContent(state.op.unwrap().value)).toBe(original);
+		expect(getFirstFacadeContent(state.value)).toBe(original);
 	},
 };
 
@@ -436,8 +440,6 @@ describe("value matrix", () => {
 	}
 
 	it("exercises every catalog entry in a lane-appropriate scenario beyond the universal attach pair", () => {
-		// The two attach scenarios apply to everything, so require a behavioral scenario too -- except
-		// throwsAtAttach, which legitimately never gets past attach in the node matrix.
 		const behavioral = [opsAndReplay, unwrap, snapshotWrite, watchdogReport];
 
 		for (const entry of catalog) {

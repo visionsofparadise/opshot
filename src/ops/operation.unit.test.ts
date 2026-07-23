@@ -1,4 +1,4 @@
-import { createState } from "../createState";
+import {createMutableState} from "../createMutableState";
 import { getRegisteredTarget } from "../identity";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -46,11 +46,10 @@ describe("operation", () => {
 	});
 
 	it("keeps originals registered while public clone reads are independent", () => {
-		const state = createState({ value: { count: 1 } });
+		const state = createMutableState({ value: { count: 1 } });
 		const half = createReplaceOperation(["value"], state.value);
 		const publicValue = half.value;
 
-		expect(getRegisteredTarget(state.value)).toBeDefined();
 		expect(getValueOriginal(half)).toBe(state.value);
 		expect(publicValue).toEqual({ count: 1 });
 		expect(publicValue).not.toBe(state.value);

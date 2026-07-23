@@ -1,6 +1,7 @@
+import { transact } from "./transact";
 import { createProxy } from "proxy-compare";
 
-import { createState } from "./createState";
+import { createMutableState } from "./createMutableState";
 import { getRegisteredTarget, resolveIdentity } from "./identity";
 import { identify, isSameIdentity } from "./index";
 import { createAddOperation } from "./ops/operation";
@@ -8,11 +9,11 @@ import { createAddOperation } from "./ops/operation";
 describe("identity", () => {
 	it("unifies raw, proxy, snapshot, and tracking-wrapper handles", () => {
 		const raw = { value: 1 };
-		const state = createState({ item: raw });
+		const state = createMutableState({ item: raw });
 		let mutableProxy: { value: number } | undefined;
 
-		state.mutate((mutable) => {
-			mutableProxy = mutable.item;
+		transact(state, () => {
+			mutableProxy = state.item;
 		});
 
 		if (!mutableProxy) throw new Error("identity test: mutate did not expose the item proxy");
@@ -47,8 +48,8 @@ describe("identity", () => {
 
 	it("keeps distinct states from one retained literal separate while sharing their nested target", () => {
 		const retained = { nested: { value: 1 } };
-		const first = createState(retained);
-		const second = createState(retained);
+		const first = createMutableState(retained);
+		const second = createMutableState(retained);
 
 		expect(isSameIdentity(first, second)).toBe(false);
 		expect(identify(first)).not.toBe(identify(second));

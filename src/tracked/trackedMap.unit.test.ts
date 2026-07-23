@@ -1,15 +1,18 @@
-import { createState, type State } from "../createState";
+import { snapshot } from "valtio/vanilla";
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
+import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
-import type { Op, Operation } from "../ops/operation";
+import { type Op, type Operation } from "../ops/operation";
 import { addressOf } from "./address";
 import { TrackedDate } from "./trackedDate";
 import { TrackedMap } from "./trackedMap";
 
-const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
+const record = <T extends object>(state: T): Array<Array<Op>> => {
 	const heard = new Array<Array<Op>>();
 
-	state.op.subscribe((_snapshot, ops) => heard.push(ops));
+	subscribe(state, (ops) => heard.push([...ops]));
 
 	return heard;
 };
@@ -102,23 +105,23 @@ describe("TrackedMap", () => {
 
 	it("normalizes raw, proxy, and snapshot key handles by storage identity", () => {
 		const key = { id: 1 };
-		const state = createState({ map: new TrackedMap([[key, "selected"]]) });
+		const state = createMutableState({ map: new TrackedMap([[key, "selected"]]) });
 		const snapshotKey = [...state.map.keys()][0];
 
 		if (!snapshotKey) throw new Error("missing snapshot key");
 
-		state.mutate((mutable) => {
-			const proxyKey = [...mutable.map.keys()][0];
+		transact(state, () => {
+			const proxyKey = [...state.map.keys()][0];
 
 			if (!proxyKey) throw new Error("missing proxy key");
-			expect(mutable.map.get(key)).toBe("selected");
-			expect(mutable.map.get(snapshotKey)).toBe("selected");
-			expect(mutable.map.get(proxyKey)).toBe("selected");
-			mutable.map.set(snapshotKey, "updated");
+			expect(state.map.get(key)).toBe("selected");
+			expect(state.map.get(snapshotKey)).toBe("selected");
+			expect(state.map.get(proxyKey)).toBe("selected");
+			state.map.set(snapshotKey, "updated");
 		});
 
-		expect(state.op.unwrap().map.size).toBe(1);
-		expect(state.op.unwrap().map.get(key)).toBe("updated");
+		expect(state.map.size).toBe(1);
+		expect(state.map.get(key)).toBe("updated");
 	});
 
 	it("emits plain-data membership, replacement, and removal ops", () => {
@@ -127,13 +130,13 @@ describe("TrackedMap", () => {
 
 		for (let index = 0; index < 20; index++) map.set(`pad${index}`, pad);
 
-		const state = createState({ map });
+		const state = createMutableState({ map });
 		const heard = record(state);
 		const addr = addressOf("a");
 
-		state.mutate((mutable) => mutable.map.set("a", "1"));
-		state.mutate((mutable) => mutable.map.set("a", "2"));
-		state.mutate((mutable) => mutable.map.delete("a"));
+		transact(state, () => state.map.set("a", "1"));
+		transact(state, () => state.map.set("a", "2"));
+		transact(state, () => state.map.delete("a"));
 
 		expect(doPaths(heard[0])).toEqual(
 			expect.arrayContaining([
@@ -163,9 +166,8 @@ describe("TrackedMap", () => {
 	it("emits key and value interiors through slots", () => {
 		const key = { profile: { id: 1 } };
 		const value = { count: 1 };
-		// Heavy unchanged padding keeps interiors atomic so the path shape stays observable.
 		const pad = "x".repeat(5_000);
-		const state = createState({
+		const state = createMutableState({
 			map: new TrackedMap<object | string, object | string>([
 				[key, value],
 				["pad0", pad],
@@ -174,14 +176,14 @@ describe("TrackedMap", () => {
 		});
 		const heard = record(state);
 
-		state.mutate((mutable) => {
-			const mutableValue = mutable.map.get(key) as typeof value | undefined;
+		transact(state, () => {
+			const mutableValue = state.map.get(key) as typeof value | undefined;
 
 			if (!mutableValue) throw new Error("missing entry");
 			mutableValue.count = 2;
 		});
-		state.mutate((mutable) => {
-			const mutableKey = [...mutable.map.keys()][0] as typeof key;
+		transact(state, () => {
+			const mutableKey = [...state.map.keys()][0] as typeof key;
 
 			if (!mutableKey) throw new Error("missing key");
 			mutableKey.profile.id = 2;
@@ -192,7 +194,7 @@ describe("TrackedMap", () => {
 	});
 
 	it("round-trips clear and delete-readd through one collapsed container replace", () => {
-		const state = createState({
+		const state = createMutableState({
 			map: new TrackedMap([
 				["a", 1],
 				["b", 2],
@@ -200,10 +202,10 @@ describe("TrackedMap", () => {
 		});
 		const heard = record(state);
 
-		state.mutate((mutable) => {
-			mutable.map.clear();
-			mutable.map.set("b", 20);
-			mutable.map.set("a", 10);
+		transact(state, () => {
+			state.map.clear();
+			state.map.set("b", 20);
+			state.map.set("a", 10);
 		});
 
 		const ops = heard[0] ?? [];
@@ -214,7 +216,7 @@ describe("TrackedMap", () => {
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
-		expect([...state.op.unwrap().map]).toEqual([
+		expect([...state.map]).toEqual([
 			["a", 1],
 			["b", 2],
 		]);
@@ -222,7 +224,7 @@ describe("TrackedMap", () => {
 			state,
 			ops.map((pair) => pair.do),
 		);
-		expect([...state.op.unwrap().map]).toEqual([
+		expect([...state.map]).toEqual([
 			["b", 20],
 			["a", 10],
 		]);
@@ -231,7 +233,7 @@ describe("TrackedMap", () => {
 	it("preserves object-key identity and aliased values through replay", () => {
 		const key = { id: 1 };
 		const shared = { count: 1 };
-		const state = createState({
+		const state = createMutableState({
 			map: new TrackedMap([
 				[key, shared],
 				[{ id: 2 }, shared],
@@ -240,14 +242,14 @@ describe("TrackedMap", () => {
 		const selection = new Map([[identify(key), "selected"]]);
 		const heard = record(state);
 
-		state.mutate((mutable) => mutable.map.clear());
+		transact(state, () => state.map.clear());
 		const ops = heard[0] ?? [];
 		applyOps(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
 
-		const entries = [...state.op.unwrap().map];
+		const entries = [...state.map];
 
 		expect(entries[0]?.[0] && selection.get(identify(entries[0][0]))).toBe("selected");
 		expect(entries[0]?.[1]).toBe(entries[1]?.[1]);
@@ -255,11 +257,11 @@ describe("TrackedMap", () => {
 	});
 
 	it("recurses through nested arrays and facades on stable map values", () => {
-		const state = createState({ map: new TrackedMap([["a", { items: ["x"], when: new TrackedDate(0) }]]) });
+		const state = createMutableState({ map: new TrackedMap([["a", { items: ["x"], when: new TrackedDate(0) }]]) });
 		const heard = record(state);
 
-		state.mutate((mutable) => {
-			const value = mutable.map.get("a");
+		transact(state, () => {
+			const value = state.map.get("a");
 
 			if (!value) throw new Error("missing value");
 			value.items.push("y");
@@ -271,14 +273,14 @@ describe("TrackedMap", () => {
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
-		expect(state.op.unwrap().map.get("a")?.items).toEqual(["x"]);
-		expect(state.op.unwrap().map.get("a")?.when.getTime()).toBe(0);
+		expect(state.map.get("a")?.items).toEqual(["x"]);
+		expect(state.map.get("a")?.when.getTime()).toBe(0);
 		applyOps(
 			state,
 			ops.map((pair) => pair.do),
 		);
-		expect(state.op.unwrap().map.get("a")?.items).toEqual(["x", "y"]);
-		expect(state.op.unwrap().map.get("a")?.when.getTime()).toBe(1);
+		expect(state.map.get("a")?.items).toEqual(["x", "y"]);
+		expect(state.map.get("a")?.when.getTime()).toBe(1);
 	});
 
 	it("retains full function after a minimal clean-class clone", () => {
@@ -308,14 +310,14 @@ describe("TrackedMap", () => {
 	});
 
 	it("throws when mutating a snapshot copy", () => {
-		const state = createState({
-			map: new TrackedMap([
-				["a", 1],
-			]),
-		});
-		const snapshot = state.op.unwrap();
+	const state = createMutableState({
+		map: new TrackedMap([
+			["a", 1],
+		]),
+	});
+	const frozen = snapshot(state);
 
-		expect(() => snapshot.map.set("b", 2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
-		expect(snapshot.map.size).toBe(1);
+	expect(() => frozen.map.set("b", 2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
+	expect(frozen.map.size).toBe(1);
 	});
 });

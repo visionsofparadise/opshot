@@ -1,15 +1,17 @@
-import { createState, type State } from "./createState";
+import { subscribe } from "./subscribe";
+import { transact } from "./transact";
+import { createMutableState } from "./createMutableState";
 import { ignore } from "./ignore";
 import { applyOps } from "./ops/applyOps";
-import type { Op } from "./ops/operation";
+import { type Op } from "./ops/operation";
 import { isUnsafeTracked, unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 import { isTrackable } from "./valtio/classify";
 
-const recordOwned = <T extends object>(state: State<T>): Array<Array<Op>> => {
+const recordOwned = <T extends object>(state: T): Array<Array<Op>> => {
 	const heard = new Array<Array<Op>>();
 
-	state.op.subscribe((_state, ops, emission) => {
-		if (!emission.isSideEffect) heard.push(ops);
+	subscribe(state, (ops) => {
+		heard.push([...ops]);
 	});
 
 	return heard;
@@ -74,11 +76,11 @@ describe("unsafeTrack stories", () => {
 		}
 
 		const arrow = unsafeTrack(new Arrow());
-		const state = createState({ arrow });
+		const state = createMutableState({ arrow });
 		const heard = recordOwned(state);
 
-		state.mutate((mutable) => {
-			mutable.arrow.count = 5;
+		transact(state, () => {
+			state.arrow.count = 5;
 		});
 
 		expect(heard).toHaveLength(1);
@@ -88,12 +90,12 @@ describe("unsafeTrack stories", () => {
 				undo: { op: "replace", path: ["arrow", "count"], value: 0 },
 			},
 		]);
-		expect(state.op.unwrap().arrow.count).toBe(5);
+		expect(state.arrow.count).toBe(5);
 
 		heard.length = 0;
 
-		state.mutate((mutable) => {
-			mutable.arrow.bump();
+		transact(state, () => {
+			state.arrow.bump();
 		});
 
 		expect(heard).toHaveLength(0);
@@ -114,25 +116,25 @@ describe("unsafeTrack stories", () => {
 
 		expect(vault.reveal()).toBe(7);
 
-		const state = createState({ vault });
+		const state = createMutableState({ vault });
 		const heard = recordOwned(state);
 
-		state.mutate((mutable) => {
-			mutable.vault.label = "b";
+		transact(state, () => {
+			state.vault.label = "b";
 		});
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.[0]?.do).toMatchObject({ op: "replace", path: ["vault", "label"], value: "b" });
-		expect(state.op.unwrap().vault.label).toBe("b");
-		expect(() => state.op.unwrap().vault.reveal()).toThrow();
+		expect(state.vault.label).toBe("b");
+		expect(() => state.vault.reveal()).toThrow();
 		expect(vault.reveal()).toBe(7);
 
 		heard.length = 0;
 
 		const replacement = unsafeTrack(new Vault());
 
-		state.mutate((mutable) => {
-			mutable.vault = replacement;
+		transact(state, () => {
+			state.vault = replacement;
 		});
 
 		expect(heard).toHaveLength(1);
@@ -144,7 +146,7 @@ describe("unsafeTrack stories", () => {
 
 		applyOps(state, [replaceOp.undo]);
 
-		const restored = state.op.unwrap().vault;
+		const restored = state.vault;
 
 		expect(restored).toBeInstanceOf(Vault);
 		expect(restored.label).toBe("b");

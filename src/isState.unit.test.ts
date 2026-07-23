@@ -1,66 +1,47 @@
+import { createBoundary } from "./react/boundary";
 import { createGroup } from "./createGroup";
-import { createState, type State } from "./createState";
+import { createMutableState } from "./createMutableState";
 import { isState } from "./isState";
-
-interface Counter {
-  count: number;
-  increment: () => void;
-}
-
-const createCounter = (): State<Counter> =>
-  createState<Counter>((mutate) => ({
-    count: 0,
-    increment: () => {
-      mutate((mutable) => {
-        mutable.count += 1;
-      });
-    },
-  }));
-
-const createTrackedCounter = (): { state: State<Counter>; emissions: Array<State<object>> } => {
-  const group = createGroup();
-  const emissions = new Array<State<object>>();
-
-  group.subscribe((state) => {
-    emissions.push(state);
-  });
-
-  const state = group.createState<Counter>((mutate) => ({
-    count: 0,
-    increment: () => {
-      mutate((mutable) => {
-        mutable.count += 1;
-      });
-    },
-  }));
-
-  return { state, emissions };
-};
+import { subscribe } from "./subscribe";
+import { transact } from "./transact";
 
 describe("isState", () => {
-  it("recognizes states and rejects other values", () => {
-    expect(isState(createCounter())).toBe(true);
-    expect(isState({ count: 1 })).toBe(false);
-    expect(isState({ op: { unsafeMutable: 1 } })).toBe(false);
-    expect(isState(null)).toBe(false);
-    expect(isState(undefined)).toBe(false);
-    expect(isState("state")).toBe(false);
-  });
+	it("recognizes a live state and rejects other values", () => {
+		expect(isState(createMutableState({ count: 0 }))).toBe(true);
+		expect(isState({ count: 1 })).toBe(false);
+		expect(isState({ op: { unsafeMutable: 1 } })).toBe(false);
+		expect(isState(null)).toBe(false);
+		expect(isState(undefined)).toBe(false);
+		expect(isState("state")).toBe(false);
+	});
 
-  it("rejects a foreign object shaped like a state, which the old duck-check accepted", () => {
-    expect(isState({ op: { unsafeMutable: {} } })).toBe(false);
-  });
+	it("rejects a foreign object shaped like the old handle", () => {
+		expect(isState({ op: { unsafeMutable: {} } })).toBe(false);
+	});
 
-  it("keeps isState true on the fresh generation a subscriber receives after a mutation", () => {
-    const { state, emissions } = createTrackedCounter();
+	it("recognizes a versioned wrapper over a live state", () => {
+		const state = createMutableState({ count: 0 });
+		const wrapper = createBoundary().wrap(state);
 
-    state.increment();
+		expect(isState(wrapper)).toBe(true);
+		expect(wrapper).not.toBe(state);
+	});
 
-    const current = emissions[0];
+	it("keeps isState true on the live object a group subscriber receives", () => {
+		const group = createGroup();
+		const emissions = new Array<object>();
 
-    if (!current) throw new Error("the group heard no emission");
+		subscribe(group, (state) => {
+			emissions.push(state);
+		});
 
-    expect(current).not.toBe(state);
-    expect(isState(current)).toBe(true);
-  });
+		const state = group.createState({ count: 0 });
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(emissions[0]).toBe(state);
+		expect(isState(emissions[0])).toBe(true);
+	});
 });

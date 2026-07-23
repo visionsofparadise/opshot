@@ -1,258 +1,196 @@
 import { createGroup } from "./createGroup";
-import { createMeta } from "./createMeta";
-import { createState, type State } from "./createState";
+import { createChannel } from "./createChannel";
+import { createMutableState } from "./createMutableState";
 import { isSameIdentity } from "./identity";
 import { diffSnapshots } from "./ops/diff";
 import { type Op } from "./ops/operation";
+import { subscribe } from "./subscribe";
+import { transact } from "./transact";
 
 vi.mock(import("./ops/diff"), { spy: true });
 
 interface Counter {
-  count: number;
+	count: number;
 }
-
-interface Emission {
-  state: State<object>;
-  ops: Array<Op>;
-  meta: Record<string, unknown>;
-}
-
-const defineCounter = (): Counter => ({ count: 0 });
 
 describe("createGroup", () => {
-  it("hears every state it created, with the state reference and meta", () => {
-    const group = createGroup();
-    const emissions = new Array<Emission>();
+	it("hears every state it created, with the state reference and meta", () => {
+		const group = createGroup();
+		const emissions = new Array<{ state: object; ops: Array<Op>; meta: unknown }>();
 
-    group.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
-    });
+		subscribe(group, (state, ops, meta) => {
+			emissions.push({ state, ops: [...ops], meta });
+		});
 
-    const first = group.createState<Counter>(defineCounter);
-    const second = group.createState<Counter>(defineCounter);
+		const first = group.createState<Counter>({ count: 0 });
+		const second = group.createState<Counter>({ count: 0 });
 
-    first.mutate((mutable) => {
-      mutable.count = 1;
-    }, { transactionKey: "drag" });
+		transact(first, () => {
+			first.count = 1;
+		}, { transactionKey: "drag" });
 
-    second.mutate((mutable) => {
-      mutable.count = 2;
-    });
+		transact(second, () => {
+			second.count = 2;
+		});
 
-    const firstEmission = emissions[0];
-    const secondEmission = emissions[1];
+		expect(emissions).toHaveLength(2);
+		expect(emissions[0]?.state).toBe(first);
+		expect(isSameIdentity(first, emissions[0]!.state)).toBe(true);
+		expect(isSameIdentity(second, emissions[0]!.state)).toBe(false);
+		expect(emissions[0]?.ops).toEqual([
+			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+		]);
+		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
+		expect(emissions[1]?.state).toBe(second);
+		expect(emissions[1]?.meta).toBeUndefined();
+	});
 
-    if (!firstEmission || !secondEmission) throw new Error("the group did not hear both emissions");
+	it("carries the live state object to the listener", () => {
+		const group = createGroup();
+		const emissions = new Array<object>();
 
-    expect(emissions).toHaveLength(2);
-    expect(isSameIdentity(first, firstEmission.state)).toBe(true);
-    expect(isSameIdentity(second, firstEmission.state)).toBe(false);
-    expect(firstEmission.ops).toEqual([
-      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
-    ]);
-    expect(firstEmission.meta).toEqual({ transactionKey: "drag" });
-    expect(isSameIdentity(second, secondEmission.state)).toBe(true);
-    expect(secondEmission.meta).toEqual({});
-  });
+		subscribe(group, (state) => {
+			emissions.push(state);
+		});
 
-  it("carries the latest snapshot to the listener, not the proxy", () => {
-    const group = createGroup();
-    const emissions = new Array<Emission>();
+		const state = group.createState<Counter>({ count: 0 });
 
-    group.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
-    });
+		transact(state, () => {
+			state.count = 1;
+		});
 
-    const state = group.createState<Counter>(defineCounter);
+		expect(emissions[0]).toBe(state);
+		expect((emissions[0] as Counter).count).toBe(1);
+	});
 
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    });
+	it("does not hear a standalone state", () => {
+		const group = createGroup();
+		const emissions = new Array<Array<Op>>();
 
-    const received = emissions[0]?.state;
+		subscribe(group, (_state, ops) => {
+			emissions.push([...ops]);
+		});
 
-    if (!received) throw new Error("the group heard no emission");
+		const standalone = createMutableState<Counter>({ count: 0 });
+		const ownEmissions = new Array<Array<Op>>();
 
-    expect(received).not.toBe(state.op.unsafeMutable);
-    expect(received).not.toBe(state);
-    expect(isSameIdentity(state, received)).toBe(true);
-    expect(received).toEqual(expect.objectContaining({ count: 1 }));
-    expect(() => {
-      Object.assign(received, { count: 9 });
-    }).toThrow(TypeError);
-  });
+		subscribe(standalone, (ops) => {
+			ownEmissions.push([...ops]);
+		});
 
-  it("carries the snapshot its ops produced, not one a state listener wrote after them", () => {
-    const group = createGroup();
-    const emissions = new Array<Emission>();
+		transact(standalone, () => {
+			standalone.count = 1;
+		});
 
-    group.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
-    });
+		expect(emissions).toHaveLength(0);
+		expect(ownEmissions).toHaveLength(1);
+	});
 
-    const state = group.createState<Counter>(defineCounter);
-    let reentered = false;
+	it("isolates two groups", () => {
+		const first = createGroup();
+		const second = createGroup();
+		const firstEmissions = new Array<Array<Op>>();
+		const secondEmissions = new Array<Array<Op>>();
 
-    state.op.subscribe(() => {
-      if (reentered) return;
+		subscribe(first, (_state, ops) => firstEmissions.push([...ops]));
+		subscribe(second, (_state, ops) => secondEmissions.push([...ops]));
 
-      reentered = true;
+		const state = first.createState<Counter>({ count: 0 });
 
-      state.mutate((mutable) => {
-        mutable.count = 99;
-      });
-    });
+		transact(state, () => {
+			state.count = 1;
+		});
 
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    });
+		expect(firstEmissions).toHaveLength(1);
+		expect(secondEmissions).toHaveLength(0);
+	});
 
-    expect(emissions).toHaveLength(2);
-    expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
-    ]);
-    expect(emissions[0]?.state).toEqual(expect.objectContaining({ count: 1 }));
+	it("stops calling a listener after its remover runs", () => {
+		const group = createGroup();
+		const emissions = new Array<Array<Op>>();
+		const remove = subscribe(group, (_state, ops) => {
+			emissions.push([...ops]);
+		});
+		const state = group.createState<Counter>({ count: 0 });
 
-    expect(emissions[1]?.ops).toEqual([
-      { do: { op: "replace", path: ["count"], value: 99 }, undo: { op: "replace", path: ["count"], value: 1 } },
-    ]);
-    expect(emissions[1]?.state).toEqual(expect.objectContaining({ count: 99 }));
-    expect(state.op.unwrap().count).toBe(99);
-  });
+		remove();
+		transact(state, () => {
+			state.count = 1;
+		});
 
-  it("does not hear a standalone state", () => {
-    const group = createGroup();
-    const emissions = new Array<Emission>();
+		expect(emissions).toHaveLength(0);
+	});
 
-    group.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
-    });
+	it("a group listener turns emission on for every state it created, and its removal turns it off", () => {
+		const group = createGroup();
+		const first = group.createState<Counter>({ count: 0 });
+		const second = group.createState<Counter>({ count: 0 });
 
-    const standalone = createState<Counter>(defineCounter);
-    const ownEmissions = new Array<Array<Op>>();
+		vi.mocked(diffSnapshots).mockClear();
 
-    standalone.op.subscribe((_state, ops) => {
-      ownEmissions.push(ops);
-    });
+		transact(first, () => {
+			first.count = 1;
+		});
 
-    standalone.mutate((mutable) => {
-      mutable.count = 1;
-    });
+		expect(diffSnapshots).not.toHaveBeenCalled();
 
-    expect(emissions).toHaveLength(0);
-    expect(ownEmissions).toHaveLength(1);
-  });
+		const emissions = new Array<Array<Op>>();
+		const remove = subscribe(group, (_state, ops) => {
+			emissions.push([...ops]);
+		});
 
-  it("isolates two groups", () => {
-    const first = createGroup();
-    const second = createGroup();
-    const firstEmissions = new Array<Emission>();
-    const secondEmissions = new Array<Emission>();
+		transact(first, () => {
+			first.count = 2;
+		});
+		transact(second, () => {
+			second.count = 5;
+		});
 
-    first.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) firstEmissions.push({ state, ops, meta: emission.meta });
-    });
-    second.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) secondEmissions.push({ state, ops, meta: emission.meta });
-    });
+		expect(diffSnapshots).toHaveBeenCalledTimes(2);
+		expect(emissions).toHaveLength(2);
 
-    const state = first.createState<Counter>(defineCounter);
+		remove();
 
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    });
+		transact(first, () => {
+			first.count = 3;
+		});
 
-    expect(firstEmissions).toHaveLength(1);
-    expect(secondEmissions).toHaveLength(0);
-  });
+		expect(diffSnapshots).toHaveBeenCalledTimes(2);
+		expect(emissions).toHaveLength(2);
+		expect(first.count).toBe(3);
+	});
 
-  it("stops calling a listener after its remover runs", () => {
-    const group = createGroup();
-    const emissions = new Array<Emission>();
-    const remove = group.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
-    });
-    const state = group.createState<Counter>(defineCounter);
+	it("calls a group listener first whenever it subscribed, then state listeners in subscription order", () => {
+		const group = createGroup();
+		const order = new Array<string>();
+		const state = group.createState<Counter>({ count: 0 });
 
-    remove();
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    });
+		subscribe(state, () => order.push("first"));
+		subscribe(group, () => order.push("group"));
+		subscribe(state, () => order.push("second"));
 
-    expect(emissions).toHaveLength(0);
-  });
+		transact(state, () => {
+			state.count = 1;
+		});
 
-  it("a group listener turns emission on for every state it created, and its removal turns it off", () => {
-    const group = createGroup();
-    const first = group.createState<Counter>(defineCounter);
-    const second = group.createState<Counter>(defineCounter);
+		expect(order).toEqual(["group", "first", "second"]);
+	});
 
-    vi.mocked(diffSnapshots).mockClear();
+	it("delivers merged meta from a channel through a group subscriber", () => {
+		const channel = createChannel<{ replay: boolean; transactionKey?: string }>({ replay: false });
+		const group = createGroup();
+		const heard = new Array<{ replay: boolean; transactionKey?: string }>();
 
-    first.mutate((mutable) => {
-      mutable.count = 1;
-    });
+		channel.subscribe(group, (_state, _ops, context) => {
+			if (context.isTransaction) heard.push(context.meta);
+		});
 
-    expect(diffSnapshots).not.toHaveBeenCalled();
+		const state = group.createState({ count: 0 });
 
-    const emissions = new Array<Emission>();
-    const remove = group.subscribe((state, ops, emission) => {
-      if (!emission.isSideEffect) emissions.push({ state, ops, meta: emission.meta });
-    });
+		channel.transact(state, () => {
+			state.count = 1;
+		}, { transactionKey: "drag" });
 
-    first.mutate((mutable) => {
-      mutable.count = 2;
-    });
-    second.mutate((mutable) => {
-      mutable.count = 5;
-    });
-
-    expect(diffSnapshots).toHaveBeenCalledTimes(2);
-    expect(emissions).toHaveLength(2);
-
-    remove();
-
-    first.mutate((mutable) => {
-      mutable.count = 3;
-    });
-
-    expect(diffSnapshots).toHaveBeenCalledTimes(2);
-    expect(emissions).toHaveLength(2);
-    expect(first.op.unwrap().count).toBe(3);
-  });
-
-  it("calls a group listener first whenever it subscribed, then state listeners in subscription order", () => {
-    const group = createGroup();
-    const order = new Array<string>();
-
-    const state = group.createState<Counter>(defineCounter);
-
-    state.op.subscribe(() => order.push("first"));
-    group.subscribe(() => order.push("group"));
-    state.op.subscribe(() => order.push("second"));
-
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    });
-
-    expect(order).toEqual(["group", "first", "second"]);
-  });
-
-  it("delivers merged meta from a member state's mutate through a group token", () => {
-    const token = createMeta<{ replay: boolean; transactionKey?: string }>({ replay: false });
-    const group = createGroup(token);
-    const heard = new Array<{ replay: boolean; transactionKey?: string }>();
-
-    group.subscribe((_state, _ops, emission) => {
-      if (!emission.isSideEffect) heard.push(emission.meta);
-    });
-
-    const state = group.createState({ count: 0 });
-
-    state.mutate((mutable) => {
-      mutable.count = 1;
-    }, { transactionKey: "drag" });
-
-    expect(heard).toEqual([{ replay: false, transactionKey: "drag" }]);
-  });
+		expect(heard).toEqual([{ replay: false, transactionKey: "drag" }]);
+	});
 });

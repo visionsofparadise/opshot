@@ -1,6 +1,7 @@
 import { createElement } from "react";
+import { snapshot } from "valtio/vanilla";
 
-import { createState } from "../createState";
+import { createMutableState } from "../createMutableState";
 import { ignore } from "../ignore";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -65,7 +66,7 @@ const makeDeepCycle = (): unknown => {
 
 const makeReactElement = (): unknown => createElement("div", { id: "probe" }, "leaf");
 
-const makeRegisteredCopy = (): unknown => createState({ item: { value: 1 } }).item;
+const makeRegisteredCopy = (): unknown => snapshot(createMutableState({ item: { value: 1 } })).item;
 
 export const catalog: ReadonlyArray<CatalogEntry> = [
 	{ name: "number", lane: "tracked", create: () => 42 },

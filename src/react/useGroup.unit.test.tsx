@@ -2,38 +2,53 @@
 
 import { act, renderHook } from "@testing-library/react";
 
-import { createMeta } from "../createMeta";
+import { createChannel } from "../createChannel";
+import { transact } from "../transact";
 import { useGroup } from "./useGroup";
 
 describe("useGroup", () => {
-  it("returns the same group instance across re-renders", () => {
-    const { result, rerender } = renderHook(() => useGroup());
+	it("returns the same group instance across re-renders", () => {
+		const { result, rerender } = renderHook(() => useGroup());
 
-    const first = result.current;
+		const first = result.current;
 
-    rerender();
+		rerender();
 
-    expect(result.current).toBe(first);
-  });
+		expect(result.current).toBe(first);
+	});
 
-  it("delivers merged meta through a group created with a token", () => {
-    const token = createMeta<{ replay: boolean }>({ replay: false });
-    const heard = new Array<{ replay: boolean }>();
+	it("delivers channel meta through states minted from the group", () => {
+		const channel = createChannel<{ replay: boolean }>({ replay: false });
+		const heard = new Array<{ replay: boolean }>();
 
-    const { result } = renderHook(() => useGroup(token));
+		const { result } = renderHook(() => useGroup());
 
-    result.current.subscribe((_state, _ops, emission) => {
-      if (!emission.isSideEffect) heard.push(emission.meta);
-    });
+		channel.subscribe(result.current, (_state, _ops, context) => {
+			if (context.isTransaction) heard.push(context.meta);
+		});
 
-    const state = result.current.createState({ count: 0 });
+		const state = result.current.createState({ count: 0 });
 
-    act(() => {
-      state.mutate((mutable) => {
-        mutable.count += 1;
-      });
-    });
+		act(() => {
+			channel.transact(state, () => {
+				state.count += 1;
+			});
+		});
 
-    expect(heard).toEqual([{ replay: false }]);
-  });
+		expect(heard).toEqual([{ replay: false }]);
+		expect(state.count).toBe(1);
+	});
+
+	it("accepts free-function transact on a group-minted state", () => {
+		const { result } = renderHook(() => useGroup());
+		const state = result.current.createState({ count: 0 });
+
+		act(() => {
+			transact(state, () => {
+				state.count = 3;
+			});
+		});
+
+		expect(state.count).toBe(3);
+	});
 });

@@ -1,7 +1,7 @@
 export { type Snapshot } from "valtio/vanilla";
+export { createChannel, type Channel } from "./createChannel";
 export { createGroup, type Group } from "./createGroup";
-export { createMeta, type Meta } from "./createMeta";
-export { createState, type Emission, type InitialProperties, type Initializer, type Mutate, type OpshotHandle, type State, type StateListener } from "./createState";
+export { createMutableState } from "./createMutableState";
 export { identify, isSameIdentity } from "./identity";
 export { isState } from "./isState";
 export { applyOps } from "./ops/applyOps";
@@ -13,3 +13,5 @@ export { unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 export { TrackedDate } from "./tracked/trackedDate";
 export { TrackedMap } from "./tracked/trackedMap";
 export { TrackedSet } from "./tracked/trackedSet";
+export { subscribe, type Context, type GroupListener, type StateListener } from "./subscribe";
+export { transact } from "./transact";

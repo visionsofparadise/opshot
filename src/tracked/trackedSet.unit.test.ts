@@ -1,14 +1,18 @@
-import { createState, type State } from "../createState";
+import { snapshot } from "valtio/vanilla";
+
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
+import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { applyOps } from "../ops/applyOps";
-import type { Op, Operation } from "../ops/operation";
+import { type Op, type Operation } from "../ops/operation";
 import { addressOf } from "./address";
 import { TrackedSet } from "./trackedSet";
 
-const record = <T extends object>(state: State<T>): Array<Array<Op>> => {
+const record = <T extends object>(state: T): Array<Array<Op>> => {
 	const heard = new Array<Array<Op>>();
 
-	state.op.subscribe((_snapshot, ops) => heard.push(ops));
+	subscribe(state, (ops) => heard.push([...ops]));
 
 	return heard;
 };
@@ -46,22 +50,22 @@ describe("TrackedSet", () => {
 
 	it("normalizes raw, proxy, and snapshot members by storage identity", () => {
 		const member = { id: 1 };
-		const state = createState({ set: new TrackedSet([member]) });
+		const state = createMutableState({ set: new TrackedSet([member]) });
 		const snapshotMember = [...state.set][0];
 
 		if (!snapshotMember) throw new Error("missing snapshot member");
 
-		state.mutate((mutable) => {
-			const proxyMember = [...mutable.set][0];
+		transact(state, () => {
+			const proxyMember = [...state.set][0];
 
 			if (!proxyMember) throw new Error("missing proxy member");
-			expect(mutable.set.has(member)).toBe(true);
-			expect(mutable.set.has(snapshotMember)).toBe(true);
-			expect(mutable.set.has(proxyMember)).toBe(true);
-			mutable.set.add(snapshotMember);
+			expect(state.set.has(member)).toBe(true);
+			expect(state.set.has(snapshotMember)).toBe(true);
+			expect(state.set.has(proxyMember)).toBe(true);
+			state.set.add(snapshotMember);
 		});
 
-		expect(state.op.unwrap().set.size).toBe(1);
+		expect(state.set.size).toBe(1);
 	});
 
 	it("emits plain-data membership add and remove ops", () => {
@@ -72,11 +76,11 @@ describe("TrackedSet", () => {
 
 		const member = "member";
 		const addr = addressOf(member);
-		const state = createState({ set });
+		const state = createMutableState({ set });
 		const heard = record(state);
 
-		state.mutate((mutable) => mutable.set.add(member));
-		state.mutate((mutable) => mutable.set.delete(member));
+		transact(state, () => state.set.add(member));
+		transact(state, () => state.set.delete(member));
 
 		expect(doPaths(heard[0])).toEqual(
 			expect.arrayContaining([
@@ -101,11 +105,11 @@ describe("TrackedSet", () => {
 
 	it("emits member interiors through slots", () => {
 		const member = { profile: { count: 1 } };
-		const state = createState({ set: new TrackedSet([member]) });
+		const state = createMutableState({ set: new TrackedSet([member]) });
 		const heard = record(state);
 
-		state.mutate((mutable) => {
-			const current = [...mutable.set][0];
+		transact(state, () => {
+			const current = [...state.set][0];
 
 			if (!current) throw new Error("missing member");
 			current.profile.count = 2;
@@ -118,13 +122,13 @@ describe("TrackedSet", () => {
 	});
 
 	it("round-trips clear and reorder through one collapsed container replace", () => {
-		const state = createState({ set: new TrackedSet(["a", "b"]) });
+		const state = createMutableState({ set: new TrackedSet(["a", "b"]) });
 		const heard = record(state);
 
-		state.mutate((mutable) => {
-			mutable.set.clear();
-			mutable.set.add("b");
-			mutable.set.add("a");
+		transact(state, () => {
+			state.set.clear();
+			state.set.add("b");
+			state.set.add("a");
 		});
 
 		const ops = heard[0] ?? [];
@@ -135,28 +139,28 @@ describe("TrackedSet", () => {
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
-		expect([...state.op.unwrap().set]).toEqual(["a", "b"]);
+		expect([...state.set]).toEqual(["a", "b"]);
 		applyOps(
 			state,
 			ops.map((pair) => pair.do),
 		);
-		expect([...state.op.unwrap().set]).toEqual(["b", "a"]);
+		expect([...state.set]).toEqual(["b", "a"]);
 	});
 
 	it("preserves member identity through remove and restore", () => {
 		const member = { id: 1 };
 		const selection = new Map([[identify(member), "selected"]]);
-		const state = createState({ set: new TrackedSet([member]) });
+		const state = createMutableState({ set: new TrackedSet([member]) });
 		const heard = record(state);
 
-		state.mutate((mutable) => mutable.set.delete(member));
+		transact(state, () => state.set.delete(member));
 		const ops = heard[0] ?? [];
 		applyOps(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
 
-		const restored = [...state.op.unwrap().set][0];
+		const restored = [...state.set][0];
 
 		expect(restored && selection.get(identify(restored))).toBe("selected");
 		expect(restored && isSameIdentity(restored, member)).toBe(true);
@@ -180,10 +184,10 @@ describe("TrackedSet", () => {
 	});
 
 	it("throws when mutating a snapshot copy", () => {
-		const state = createState({ set: new TrackedSet([1]) });
-		const snapshot = state.op.unwrap();
+		const state = createMutableState({ set: new TrackedSet([1]) });
+		const frozen = snapshot(state);
 
-		expect(() => snapshot.set.add(2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
-		expect(snapshot.set.size).toBe(1);
+		expect(() => frozen.set.add(2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
+		expect(frozen.set.size).toBe(1);
 	});
 });
