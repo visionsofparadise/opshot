@@ -1,11 +1,12 @@
 import { snapshot } from "valtio/vanilla";
 
-import { subscribe } from "../subscribe";
-import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
+import { ignore } from "../ignore";
 import { applyOps } from "../ops/applyOps";
 import { type Op, type Operation } from "../ops/operation";
+import { subscribe } from "../subscribe";
+import { transact } from "../transact";
 import { addressOf } from "./address";
 import { TrackedSet } from "./trackedSet";
 
@@ -189,5 +190,30 @@ describe("TrackedSet", () => {
 
 		expect(() => frozen.set.add(2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
 		expect(frozen.set.size).toBe(1);
+	});
+
+	it("keeps an ignored member by reference and silent on its interior writes", () => {
+		class Point {
+			x = 1;
+		}
+
+		const member = ignore(new Point());
+		const state = createMutableState({ set: new TrackedSet([member]) });
+		const heard = record(state);
+		const held = [...state.set][0];
+
+		expect(held).toBe(member);
+
+		transact(state, () => {
+			const current = [...state.set][0];
+
+			if (typeof current !== "object" || current === null) throw new Error("missing member");
+
+			(current as { x: number }).x = 2;
+		});
+
+		expect(heard).toHaveLength(0);
+		expect([...state.set][0]).toBe(member);
+		expect(member.x).toBe(2);
 	});
 });

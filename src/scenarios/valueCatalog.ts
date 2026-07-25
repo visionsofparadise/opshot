@@ -1,23 +1,33 @@
 import { createElement } from "react";
-import { snapshot } from "valtio/vanilla";
 
-import { createMutableState } from "../createMutableState";
 import { ignore } from "../ignore";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { unsafeTrack } from "../unsafeTrack";
 
-export type Lane = "tracked" | "cyclic" | "throwsAtAttach" | "registeredCopy" | "autoIgnored" | "ignored" | "leaf";
-export type OperationLane = "collectionKeyInterior" | "sparseArray" | "equalContentReplacement" | "sameTargetInterior" | "none";
-export type ContentsLane = "ignored";
+export const behaviorNames = [
+	"attachesAtCreate",
+	"attachesByBareWrite",
+	"readBackIsRawReference",
+	"readBackResolvesToSameIdentity",
+	"emitsOnInteriorMutation",
+	"roundTripsFaithfully",
+	"methodsWork",
+	"methodInteriorWritesEmit",
+	"throwsOnCycleInTransact",
+] as const;
+
+export const scopeBehaviorNames = ["rendersOnChange", "walkThrows"] as const;
+
+export type BehaviorName = (typeof behaviorNames)[number];
+export type ScopeBehaviorName = (typeof scopeBehaviorNames)[number];
 
 export interface CatalogEntry {
 	readonly name: string;
-	readonly lane: Lane;
-	readonly operationLane?: OperationLane;
-	readonly contentsLane?: ContentsLane;
 	readonly create: () => unknown;
+	readonly expect: Record<BehaviorName, boolean>;
+	readonly scopeExpect?: Record<ScopeBehaviorName, boolean>;
 }
 
 class CleanPoint {
@@ -26,6 +36,14 @@ class CleanPoint {
 
 	sum(): number {
 		return this.x + this.y;
+	}
+}
+
+class CleanMutatingPoint {
+	x = 1;
+
+	bump(): void {
+		this.x += 1;
 	}
 }
 
@@ -39,6 +57,29 @@ class ArrowPoint {
 
 class PrivateBox {
 	#secret = 1;
+
+	reveal(): number {
+		return this.#secret;
+	}
+}
+
+class PrivatePublicBox {
+	#secret = 1;
+	public x = 0;
+
+	reveal(): number {
+		return this.#secret;
+	}
+}
+
+class PrivatePublicCycle {
+	#secret = 1;
+	public x = 0;
+	public self: PrivatePublicCycle;
+
+	constructor() {
+		this.self = this;
+	}
 
 	reveal(): number {
 		return this.#secret;
@@ -66,30 +107,169 @@ const makeDeepCycle = (): unknown => {
 
 const makeReactElement = (): unknown => createElement("div", { id: "probe" }, "leaf");
 
-const makeRegisteredCopy = (): unknown => snapshot(createMutableState({ item: { value: 1 } })).item;
+const primitive = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: true,
+	readBackResolvesToSameIdentity: false,
+	emitsOnInteriorMutation: true,
+	roundTripsFaithfully: true,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
 
-export const catalog: ReadonlyArray<CatalogEntry> = [
-	{ name: "number", lane: "tracked", create: () => 42 },
-	{ name: "string", lane: "tracked", create: () => "hello" },
-	{ name: "boolean", lane: "tracked", create: () => true },
-	{ name: "null", lane: "tracked", create: () => null },
-	{ name: "undefinedValue", lane: "tracked", create: () => undefined },
-	{ name: "NaN", lane: "tracked", create: () => Number.NaN },
-	{ name: "negativeZero", lane: "tracked", create: () => -0 },
-	{ name: "bigintValue", lane: "tracked", create: () => 10n },
-	{ name: "symbolValue", lane: "tracked", create: () => Symbol("catalog") },
-	{ name: "plainObject", lane: "tracked", create: () => ({ a: 1, b: 2 }) },
-	{ name: "equalContentDifferentTarget", lane: "tracked", operationLane: "equalContentReplacement", create: () => ({ value: 1 }) },
-	{ name: "sameTargetInteriorMutation", lane: "tracked", operationLane: "sameTargetInterior", create: () => ({ value: 1 }) },
-	{ name: "nestedPlainObject", lane: "tracked", create: () => ({ a: { b: { c: 1 } } }) },
-	{ name: "plainArray", lane: "tracked", create: () => [1, 2, 3] },
-	{ name: "nestedArray", lane: "tracked", create: () => [[1], [2, 3]] },
-	{ name: "nullPrototypeObject", lane: "tracked", create: () => Object.assign(Object.create(null) as object, { a: 1 }) },
-	{ name: "objectWithGetter", lane: "tracked", create: () => ({ base: 2, get derived(): number { return 1; } }) },
-	{ name: "symbolKeyedProp", lane: "tracked", create: () => ({ a: 1, [Symbol("ride")]: 2 }) },
+const trackedData = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: false,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: true,
+	roundTripsFaithfully: true,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const trackedWithMutatingMethods = {
+	...trackedData,
+	methodInteriorWritesEmit: true,
+} satisfies Record<BehaviorName, boolean>;
+
+const cyclic = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: false,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: false,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: true,
+} satisfies Record<BehaviorName, boolean>;
+
+const autoIgnoredFrozen = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: true,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: false,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const rejected = {
+	attachesAtCreate: false,
+	attachesByBareWrite: false,
+	readBackIsRawReference: false,
+	readBackResolvesToSameIdentity: false,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: false,
+	methodsWork: false,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const rejectedEmptyMethods = {
+	...rejected,
+	methodsWork: true,
+} satisfies Record<BehaviorName, boolean>;
+
+const ignored = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: true,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: true,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const leafFunction = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: true,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: true,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const leafFrozen = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: true,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: false,
+	methodsWork: true,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const unsafePrivate = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: false,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: true,
+	roundTripsFaithfully: true,
+	methodsWork: false,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: false,
+} satisfies Record<BehaviorName, boolean>;
+
+const unsafePrivateCycle = {
+	attachesAtCreate: true,
+	attachesByBareWrite: true,
+	readBackIsRawReference: false,
+	readBackResolvesToSameIdentity: true,
+	emitsOnInteriorMutation: false,
+	roundTripsFaithfully: false,
+	methodsWork: false,
+	methodInteriorWritesEmit: false,
+	throwsOnCycleInTransact: true,
+} satisfies Record<BehaviorName, boolean>;
+
+const scopeRenders = { rendersOnChange: true, walkThrows: false } satisfies Record<ScopeBehaviorName, boolean>;
+const scopeThrows = { rendersOnChange: false, walkThrows: true } satisfies Record<ScopeBehaviorName, boolean>;
+const scopeInert = { rendersOnChange: false, walkThrows: false } satisfies Record<ScopeBehaviorName, boolean>;
+
+export const catalog = [
+	{ name: "number", create: () => 42, expect: primitive },
+	{ name: "string", create: () => "hello", expect: primitive },
+	{ name: "boolean", create: () => true, expect: primitive },
+	{ name: "null", create: () => null, expect: primitive },
+	{ name: "undefinedValue", create: () => undefined, expect: primitive },
+	{ name: "NaN", create: () => Number.NaN, expect: primitive },
+	{ name: "negativeZero", create: () => -0, expect: primitive },
+	{ name: "bigintValue", create: () => 10n, expect: primitive },
+	{ name: "symbolValue", create: () => Symbol("catalog"), expect: primitive },
+	{ name: "plainObject", create: () => ({ a: 1, b: 2 }), expect: trackedData, scopeExpect: scopeRenders },
+	{ name: "nestedPlainObject", create: () => ({ a: { b: { c: 1 } } }), expect: trackedData, scopeExpect: scopeRenders },
+	{ name: "plainArray", create: () => [1, 2, 3], expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{ name: "nestedArray", create: () => [[1], [2, 3]], expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{ name: "nullPrototypeObject", create: () => Object.assign(Object.create(null) as object, { a: 1 }), expect: trackedData, scopeExpect: scopeRenders },
+	{
+		name: "objectWithGetter",
+		create: () => ({
+			base: 2,
+			get derived(): number {
+				return 1;
+			},
+		}),
+		expect: trackedData,
+		scopeExpect: scopeRenders,
+	},
+	{ name: "symbolKeyedProp", create: () => ({ a: 1, [Symbol("ride")]: 2 }), expect: trackedData, scopeExpect: scopeRenders },
 	{
 		name: "nonEnumerableProp",
-		lane: "tracked",
 		create: () => {
 			const object: Record<string, unknown> = { a: 1 };
 
@@ -97,11 +277,11 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 
 			return object;
 		},
+		expect: trackedData,
+		scopeExpect: scopeRenders,
 	},
 	{
 		name: "sparseArray",
-		lane: "tracked",
-		operationLane: "sparseArray",
 		create: () => {
 			const array = [1];
 
@@ -109,59 +289,71 @@ export const catalog: ReadonlyArray<CatalogEntry> = [
 
 			return array;
 		},
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
 	},
-	{ name: "storedUndefinedArray", lane: "tracked", create: () => [1, undefined, 3] },
+	{ name: "storedUndefinedArray", create: () => [1, undefined, 3], expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
 	{
 		name: "sharedDag",
-		lane: "tracked",
 		create: () => {
 			const shared = { n: 1 };
 
 			return { left: shared, right: shared };
 		},
+		expect: trackedData,
+		scopeExpect: scopeRenders,
 	},
-	{ name: "selfCycle", lane: "cyclic", create: makeSelfCycle },
-	{ name: "deepCycle", lane: "cyclic", create: makeDeepCycle },
-	{ name: "frozenPlainObject", lane: "autoIgnored", create: () => Object.freeze({ a: 1 }) },
-	{ name: "rawMap", lane: "throwsAtAttach", create: () => new Map([["a", 1]]) },
-	{ name: "rawSet", lane: "throwsAtAttach", create: () => new Set([1, 2]) },
-	{ name: "rawDate", lane: "throwsAtAttach", create: () => new Date(0) },
-	{ name: "cleanClassInstance", lane: "tracked", create: () => new CleanPoint() },
-	{ name: "cleanArrowClassInstance", lane: "throwsAtAttach", create: () => new ArrowPoint() },
-	{ name: "unsafeTrackedCleanArrowClass", lane: "tracked", create: () => unsafeTrack(new ArrowPoint()) },
-	{ name: "privateFieldClassInstance", lane: "throwsAtAttach", create: () => new PrivateBox() },
-	{ name: "arraySubclass", lane: "throwsAtAttach", create: () => new ArraySubclass() },
-	{ name: "mapSubclass", lane: "throwsAtAttach", create: () => new MapSubclass() },
-	{ name: "regExp", lane: "throwsAtAttach", create: () => /catalog/g },
-	{ name: "errorValue", lane: "throwsAtAttach", create: () => new Error("catalog") },
-	{ name: "promise", lane: "throwsAtAttach", create: () => Promise.resolve(1) },
-	{ name: "url", lane: "throwsAtAttach", create: () => new URL("https://example.com") },
-	{ name: "urlSearchParams", lane: "throwsAtAttach", create: () => new URLSearchParams("a=1") },
-	{ name: "typedArray", lane: "throwsAtAttach", create: () => new Uint8Array([1, 2, 3]) },
-	{ name: "arrayBuffer", lane: "throwsAtAttach", create: () => new ArrayBuffer(8) },
-	{ name: "dataView", lane: "throwsAtAttach", create: () => new DataView(new ArrayBuffer(8)) },
-	{ name: "weakMap", lane: "throwsAtAttach", create: () => new WeakMap() },
-	{ name: "weakSet", lane: "throwsAtAttach", create: () => new WeakSet() },
-	{ name: "ignoredMap", lane: "ignored", create: () => ignore(new Map([["a", 1]])) },
-	{ name: "ignoredClassInstance", lane: "ignored", create: () => ignore(new CleanPoint()) },
-	{ name: "ignoredCycle", lane: "ignored", create: () => ignore(makeSelfCycle() as object) },
-	{ name: "registeredCopyDonation", lane: "registeredCopy", operationLane: "none", create: makeRegisteredCopy },
-	{ name: "trackedMap", lane: "tracked", create: () => new TrackedMap<string, number>([["a", 1]]) },
+	{ name: "selfCycle", create: makeSelfCycle, expect: cyclic, scopeExpect: scopeRenders },
+	{ name: "deepCycle", create: makeDeepCycle, expect: cyclic, scopeExpect: scopeRenders },
+	{ name: "frozenPlainObject", create: () => Object.freeze({ a: 1 }), expect: autoIgnoredFrozen },
+	{ name: "rawMap", create: () => new Map([["a", 1]]), expect: rejected, scopeExpect: scopeInert },
+	{ name: "rawSet", create: () => new Set([1, 2]), expect: rejected, scopeExpect: scopeInert },
+	{ name: "rawDate", create: () => new Date(0), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "cleanClassInstance", create: () => new CleanPoint(), expect: trackedData, scopeExpect: scopeRenders },
+	{ name: "cleanMutatingClassInstance", create: () => new CleanMutatingPoint(), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{ name: "cleanArrowClassInstance", create: () => new ArrowPoint(), expect: rejected, scopeExpect: scopeRenders },
+	{ name: "unsafeTrackedCleanArrowClass", create: () => unsafeTrack(new ArrowPoint()), expect: trackedData, scopeExpect: scopeRenders },
+	{ name: "privateFieldClassInstance", create: () => new PrivateBox(), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "unsafeTrackedPrivateClass", create: () => unsafeTrack(new PrivatePublicBox()), expect: unsafePrivate, scopeExpect: scopeThrows },
+	{ name: "unsafeTrackedPrivateCycle", create: () => unsafeTrack(new PrivatePublicCycle()), expect: unsafePrivateCycle, scopeExpect: scopeThrows },
+	{ name: "arraySubclass", create: () => new ArraySubclass(), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "mapSubclass", create: () => new MapSubclass(), expect: rejected, scopeExpect: scopeInert },
+	{ name: "regExp", create: () => /catalog/g, expect: rejected, scopeExpect: scopeThrows },
+	{ name: "errorValue", create: () => new Error("catalog"), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "promise", create: () => Promise.resolve(1), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
+	{ name: "url", create: () => new URL("https://example.com"), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "urlSearchParams", create: () => new URLSearchParams("a=1"), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "typedArray", create: () => new Uint8Array([1, 2, 3]), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "arrayBuffer", create: () => new ArrayBuffer(8), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "dataView", create: () => new DataView(new ArrayBuffer(8)), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
+	{ name: "weakMap", create: () => new WeakMap(), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
+	{ name: "weakSet", create: () => new WeakSet(), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
+	{ name: "ignoredMap", create: () => ignore(new Map([["a", 1]])), expect: ignored, scopeExpect: scopeInert },
+	{ name: "ignoredClassInstance", create: () => ignore(new CleanPoint()), expect: ignored, scopeExpect: scopeRenders },
+	{ name: "ignoredCycle", create: () => ignore(makeSelfCycle() as object), expect: ignored, scopeExpect: scopeRenders },
+	{ name: "trackedMap", create: () => new TrackedMap<string, number>([["a", 1]]), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
 	{
 		name: "trackedMapObjectKeys",
-		lane: "tracked",
-		operationLane: "collectionKeyInterior",
 		create: () => new TrackedMap<{ id: number }, string>([[{ id: 1 }, "one"]]),
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
 	},
-	{ name: "trackedSet", lane: "tracked", create: () => new TrackedSet<number>([1, 2]) },
+	{ name: "trackedSet", create: () => new TrackedSet<number>([1, 2]), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
 	{
 		name: "trackedSetIgnoredMember",
-		lane: "tracked",
-		contentsLane: "ignored",
 		create: () => new TrackedSet([ignore(new CleanPoint())]),
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
 	},
-	{ name: "trackedDate", lane: "tracked", create: () => new TrackedDate(0) },
-	{ name: "namedFunction", lane: "leaf", create: () => function named(): number { return 1; } },
-	{ name: "arrowFunction", lane: "leaf", create: () => () => 1 },
-	{ name: "reactElement", lane: "leaf", operationLane: "none", create: makeReactElement },
-];
+	{ name: "trackedDate", create: () => new TrackedDate(0), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{
+		name: "namedFunction",
+		create: () =>
+			function named(): number {
+				return 1;
+			},
+		expect: leafFunction,
+	},
+	{ name: "arrowFunction", create: () => () => 1, expect: leafFunction },
+	{ name: "reactElement", create: makeReactElement, expect: leafFrozen },
+] satisfies ReadonlyArray<CatalogEntry>;

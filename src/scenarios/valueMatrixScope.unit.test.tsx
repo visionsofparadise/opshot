@@ -1,4 +1,3 @@
-import { transact } from "../transact";
 // @vitest-environment jsdom
 
 import { act, render, screen } from "@testing-library/react";
@@ -6,44 +5,47 @@ import { createElement, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { scope } from "../react/scope";
-import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
-import { classifyValue } from "../valtio/classify";
-import { catalog, type CatalogEntry } from "./valueCatalog";
+import { transact } from "../transact";
+import { catalog, scopeBehaviorNames, type ScopeBehaviorName } from "./valueCatalog";
 
 type NestedState = { label: number };
 
-type Verdict = "found" | "throws" | "skipped";
-
-const walkVerdict = (container: unknown): Verdict => {
-	if (container === null || typeof container === "function") return "skipped";
-	if (typeof container !== "object") return "skipped";
-	if ("$$typeof" in container) return "skipped";
-
-	if (container instanceof Map || container instanceof Set) return "skipped";
-	if (container instanceof TrackedMap || container instanceof TrackedSet) return "found";
-
+const injectState = (container: object, state: NestedState): boolean => {
 	if (Array.isArray(container)) {
-		const prototype = Object.getPrototypeOf(container) as object | null;
+		const index = container.length;
 
-		return prototype === Array.prototype || prototype === null ? "found" : "throws";
+		container.push(state);
+
+		return container[index] === state;
 	}
 
-	const prototype = Object.getPrototypeOf(container) as object | null;
+	if (container instanceof TrackedMap) {
+		container.set("nested", state);
 
-	if (prototype === Object.prototype || prototype === null) return "found";
+		return container.get("nested") === state;
+	}
 
-	return classifyValue(container) === "cleanClass" ? "found" : "throws";
-};
+	if (container instanceof TrackedSet) {
+		container.add(state);
 
-const injectState = (container: object, state: NestedState): void => {
-	if (Array.isArray(container)) container.push(state);
-	else if (container instanceof TrackedMap) container.set("nested", state);
-	else if (container instanceof TrackedSet) container.add(state);
-	else if (container instanceof Map) container.set("nested", state);
-	else if (container instanceof Set) container.add(state);
-	else Reflect.set(container, "nested", state);
+		return container.has(state);
+	}
+
+	if (container instanceof Map) {
+		container.set("nested", state);
+
+		return container.get("nested") === state;
+	}
+
+	if (container instanceof Set) {
+		container.add(state);
+
+		return container.has(state);
+	}
+
+	return Reflect.set(container, "nested", state);
 };
 
 const findLabelled = (root: unknown): { label: number } | undefined => {
@@ -90,70 +92,124 @@ const buildProbe = (): { Probe: FC<{ holder: unknown }>; renders: { count: numbe
 	return { Probe, renders };
 };
 
-const scopeApplies = (entry: CatalogEntry): boolean => {
-	if (entry.lane === "registeredCopy") return false;
+const isApplicable = (create: () => unknown): boolean => {
+	const value = create();
 
-	const value = entry.create();
+	if (value === null || typeof value !== "object") return false;
 
-	if (value === null) return false;
-
-	const type = typeof value;
-
-	if (type !== "object" && type !== "function") return false;
-	if (value instanceof Date || value instanceof TrackedDate) return false;
-	if (Object.isFrozen(value) && !("$$typeof" in (value as object))) return false;
-
-	return true;
+	return injectState(value, createMutableState({ label: 0 }));
 };
 
-const runRetrackRow = async (entry: CatalogEntry): Promise<void> => {
-	const nested = createMutableState<{ label: number }>({ label: 0 });
-	const container = entry.name === "reactElement" ? createElement("div", { nested }) : entry.create();
-
-	if (entry.name !== "reactElement") injectState(container as object, nested);
-
-	const verdict = walkVerdict(container);
-	const { Probe, renders } = buildProbe();
-
-	if (verdict === "throws") {
-		const consoleError = console.error;
-
-		console.error = (): void => undefined;
-
+const scenarios = {
+	rendersOnChange: async (create) => {
 		try {
-			expect(() => render(createElement(Probe, { holder: container }))).toThrow(/scope found a state/);
-		} finally {
-			console.error = consoleError;
+			const nested = createMutableState<NestedState>({ label: 0 });
+			const container = create();
+
+			if (container === null || typeof container !== "object") return false;
+			if (!injectState(container, nested)) return false;
+
+			const { Probe, renders } = buildProbe();
+
+			const consoleError = console.error;
+
+			console.error = (): void => undefined;
+
+			try {
+				render(createElement(Probe, { holder: container }));
+			} catch {
+				return false;
+			} finally {
+				console.error = consoleError;
+			}
+
+			if (screen.getByTestId("out").textContent !== "0") return false;
+
+			const before = renders.count;
+
+			await act(async () => {
+				transact(nested, () => {
+					nested.label = 1;
+				});
+			});
+
+			return screen.getByTestId("out").textContent === "1" && renders.count > before;
+		} catch {
+			return false;
 		}
+	},
 
-		return;
-	}
+	walkThrows: (create) => {
+		try {
+			const nested = createMutableState<NestedState>({ label: 0 });
+			const container = create();
 
-	render(createElement(Probe, { holder: container }));
+			if (container === null || typeof container !== "object") return false;
+			if (!injectState(container, nested)) return false;
 
-	expect(screen.getByTestId("out").textContent).toBe("0");
+			const { Probe } = buildProbe();
+			const consoleError = console.error;
 
-	const before = renders.count;
+			console.error = (): void => undefined;
 
-	await act(async () => {
-		transact(nested, () => {
-			nested.label = 1;
-		});
+			try {
+				render(createElement(Probe, { holder: container }));
+
+				return false;
+			} catch {
+				return true;
+			} finally {
+				console.error = consoleError;
+			}
+		} catch {
+			return false;
+		}
+	},
+} satisfies Record<ScopeBehaviorName, (create: () => unknown) => boolean | Promise<boolean>>;
+
+describe("value matrix scope", () => {
+	it("scopeExpect completeness both directions", () => {
+		for (const entry of catalog) {
+			const applicable = isApplicable(entry.create);
+
+			if (applicable) expect(entry.scopeExpect, `${entry.name} applicable`).toBeDefined();
+			else expect(entry.scopeExpect, `${entry.name} inapplicable`).toBeUndefined();
+		}
 	});
 
-	if (verdict === "found") {
-		expect(screen.getByTestId("out").textContent).toBe("1");
-		expect(renders.count).toBeGreaterThan(before);
-	} else {
+	for (const entry of catalog) {
+		if (!isApplicable(entry.create)) continue;
+
+		for (const name of scopeBehaviorNames) {
+			it(`${entry.name} / ${name}`, async () => {
+				const expected = entry.scopeExpect?.[name];
+
+				expect(expected, `${entry.name} missing scopeExpect.${name}`).toBeDefined();
+				expect(await scenarios[name](entry.create)).toBe(expected);
+			});
+		}
+	}
+
+	it("skips a state nested in React element props", async () => {
+		const nested = createMutableState<NestedState>({ label: 0 });
+		const element = createElement("div", { nested });
+		const { Probe, renders } = buildProbe();
+
+		render(createElement(Probe, { holder: element }));
+
+		expect(screen.getByTestId("out").textContent).toBe("0");
+
+		const before = renders.count;
+
+		await act(async () => {
+			transact(nested, () => {
+				nested.label = 1;
+			});
+		});
+
 		expect(screen.getByTestId("out").textContent).toBe("0");
 		expect(renders.count).toBe(before);
-	}
-};
-
-describe("value matrix scope walk", () => {
-	const applicable = catalog.filter(scopeApplies);
-
-	for (const entry of applicable) it(entry.name, async () => runRetrackRow(entry));
+	});
 
 	it("traverses a TrackedMap key and discovers a nested state", async () => {
 		const key = createMutableState({ label: 0 });

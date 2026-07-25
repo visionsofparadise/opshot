@@ -1,12 +1,13 @@
 import { snapshot } from "valtio/vanilla";
 
-import { subscribe } from "../subscribe";
-import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
+import { isSameIdentity } from "../identity";
+import { subscribe } from "../subscribe";
 import { addressOf } from "../tracked/address";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
+import { transact } from "../transact";
 import { applyOps } from "./applyOps";
 import { diffSnapshots } from "./diff";
 import { type Op, type Operation } from "./operation";
@@ -49,6 +50,25 @@ describe("diffSnapshots: atomic flat paths", () => {
 
 		expect(ops.map((pair) => pair.do.path)).toEqual([["retained", "count"], ["replaced"]]);
 		expect(readValue(ops[1]?.do ?? { op: "remove", path: [] })).toEqual({ count: 2 });
+	});
+
+	it("compares leaves with Object.is so NaN equals NaN and 0 differs from -0", () => {
+		expect(diffSnapshots({ n: Number.NaN }, { n: Number.NaN })).toEqual([]);
+		expect(diffSnapshots({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([{ op: "replace", path: ["z"], value: -0 }]);
+	});
+
+	it("emits a whole-value replace when equal content lands on a different target", () => {
+		const state = createMutableState({ value: { count: 1 } });
+		const heard = record(state);
+		const before = state.value;
+
+		transact(state, () => {
+			state.value = { count: 1 };
+		});
+
+		expect(heard[0]).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ op: "replace", path: ["value"] });
+		expect(isSameIdentity(before, state.value)).toBe(false);
 	});
 
 	it("rejects primitive, unsupported, and incompatible roots", () => {

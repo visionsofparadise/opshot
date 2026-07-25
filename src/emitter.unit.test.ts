@@ -13,6 +13,8 @@ import { type Op } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
 
+type CyclicNode = { n: number; self?: CyclicNode };
+
 vi.mock(import("./ops/diff"), { spy: true });
 
 describe("emitter", () => {
@@ -167,5 +169,24 @@ describe("emitter", () => {
 		emitBareFlush(record.target);
 
 		expect(diffSnapshots).not.toHaveBeenCalled();
+	});
+
+	it("augments a bare-flush cycle error naming transact as the catchable lane", async () => {
+		const state = createMutableState<{ node: CyclicNode }>({ node: { n: 1 } });
+
+		subscribe(state, () => undefined);
+
+		state.node.self = state.node;
+		await Promise.resolve();
+		await Promise.resolve();
+
+		state.node.n = 2;
+
+		expect(() => {
+			emitBareFlush(state);
+		}).toThrow(/transact/);
+
+		await Promise.resolve();
+		await Promise.resolve();
 	});
 });

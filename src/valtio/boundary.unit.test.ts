@@ -674,6 +674,18 @@ describe("boundary: ignore lane", () => {
     expect(emissions).toHaveLength(1);
     expect(state.box).toBe(kept);
   });
+
+  it("allows writes through a snapshot copy of an ignored value", () => {
+    const lookup = ignore(new Map<string, number>([["a", 1]]));
+    const state = createMutableState({ lookup });
+    const snap = snapshot(state);
+
+    expect(() => {
+      snap.lookup.set("b", 2);
+    }).not.toThrow();
+    expect(lookup.get("b")).toBe(2);
+    expect(state.lookup).toBe(lookup);
+  });
 });
 
 describe("boundary: accessor preservation", () => {
