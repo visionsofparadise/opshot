@@ -33,7 +33,6 @@
     "lint:verbose": "eslint .",
     "lint:fix": "eslint . --fix",
     "unit": "vitest run unit",
-    "integration": "vitest run integration",
     "build": "tsup --config tsup.config.ts"
   },
   "peerDependencies": {
