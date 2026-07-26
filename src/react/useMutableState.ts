@@ -28,12 +28,16 @@ export function useMutableState<T extends object>(properties: T, group?: Group):
 			if (boundary.readsChanged(proxy)) bump();
 		};
 
-		const unsubscribe = valtioSubscribe(proxy, onSignal, true);
+		return valtioSubscribe(proxy, onSignal, true);
+	}, [proxy, boundary]);
 
-		if (getVersion(proxy) !== versionAtRender) onSignal();
+	useEffect(() => {
+		if (getVersion(proxy) === versionAtRender) return;
 
-		return unsubscribe;
-	}, [proxy, boundary, versionAtRender]);
+		boundary.evictChangedTargets();
+
+		if (boundary.readsChanged(proxy)) bump();
+	});
 
 	return wrapper;
 }

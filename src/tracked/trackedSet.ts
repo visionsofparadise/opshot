@@ -1,3 +1,4 @@
+import { installBoundary } from "../valtio/boundary";
 import { addressOf } from "./address";
 import { assertMutableFacade } from "./facadeGuard";
 import { iterateSlots } from "./iterateSlots";
@@ -9,6 +10,8 @@ export class TrackedSet<T> {
 	private count: number;
 
 	constructor(values?: Iterable<T>) {
+		installBoundary();
+
 		this.slots = [];
 		this.index = {};
 		this.count = 0;

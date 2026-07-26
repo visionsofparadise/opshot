@@ -1,7 +1,8 @@
-import { memo, useEffect, useReducer, useRef, type FC } from "react";
+import { createElement, memo, useEffect, useReducer, useRef, type ComponentType, type FC } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { isState } from "../isState";
-import { constructorName } from "../valtio/boundary";
+import { addressOf } from "../tracked/address";
+import { constructorName } from "../utils/constructorName";
 import { classifyValue } from "../valtio/classify";
 import { createBoundary, type Boundary } from "./boundary";
 import { unwrapWrapper } from "./resolveWrapper";
@@ -142,9 +143,9 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 }
 
 const sourcesKey = (sources: Array<object>): string =>
-	`${sources.length}:${sources.map((source) => getVersion(source)).join(",")}`;
+	`${sources.length}:${sources.map((source) => addressOf(source)).join(",")}`;
 
-export function scope<P extends object>(Component: FC<P>, options?: ScopeOptions): FC<P> {
+export function scope<P extends object>(Component: ComponentType<P>, options?: ScopeOptions): FC<P> {
 	const maxDepth = options?.maxDepth ?? 10;
 	const Scoped: FC<P> = (props) => {
 		const boundaryRef = useRef<Boundary | undefined>(undefined);
@@ -196,6 +197,12 @@ export function scope<P extends object>(Component: FC<P>, options?: ScopeOptions
 				),
 			);
 
+			return () => {
+				for (const unsubscribe of unsubscribes) unsubscribe();
+			};
+		}, [sourcesKey(sources), boundary]);
+
+		useEffect(() => {
 			let shouldBump = false;
 
 			for (let index = 0; index < sources.length; index += 1) {
@@ -212,18 +219,14 @@ export function scope<P extends object>(Component: FC<P>, options?: ScopeOptions
 			}
 
 			if (shouldBump) bump();
+		});
 
-			return () => {
-				for (const unsubscribe of unsubscribes) unsubscribe();
-			};
-		}, [sourcesKey(sources), versionsAtRender.join(","), boundary]);
-
-		return Component(renderedProps);
+		return createElement(Component, renderedProps);
 	};
 
-	const baseName = Component.displayName ?? Component.name;
+	const baseName: unknown = Component.displayName ?? Component.name;
 
-	Scoped.displayName = `scope(${baseName === "" ? "Component" : baseName})`;
+	Scoped.displayName = `scope(${typeof baseName === "string" && baseName !== "" ? baseName : "Component"})`;
 
 	return memo(Scoped);
 }

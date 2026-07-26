@@ -1,13 +1,34 @@
 // @vitest-environment jsdom
 
 import { act, render, screen } from "@testing-library/react";
-import { memo, useEffect, type FC } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { TrackedMap } from "../tracked/trackedMap";
 import { isWrapper } from "./boundary";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
+
+const valtioSubscribeCounts = vi.hoisted(() => ({ subscribes: 0, unsubscribes: 0 }));
+
+vi.mock("valtio/vanilla", async () => {
+	const actual = await vi.importActual<typeof import("valtio/vanilla")>("valtio/vanilla");
+	const actualSubscribe = actual.subscribe;
+
+	return {
+		...actual,
+		subscribe: (...args: Parameters<typeof actualSubscribe>) => {
+			valtioSubscribeCounts.subscribes += 1;
+
+			const unsubscribe = actualSubscribe(...args);
+
+			return () => {
+				valtioSubscribeCounts.unsubscribes += 1;
+				unsubscribe();
+			};
+		},
+	};
+});
 
 describe("scope", () => {
 	it("rerenders a scoped child when a read prop field changes", () => {
@@ -53,6 +74,44 @@ describe("scope", () => {
 
 		expect(childRenders).toBe(2);
 		expect(screen.getByTestId("value").textContent).toBe("2");
+	});
+
+	it("heals mutations that land before passive subscription attach", () => {
+		let boundaryRenders = 0;
+
+		const Mutator: FC<{ state: { count: number } }> = ({ state }) => {
+			const mutated = useRef(false);
+
+			useLayoutEffect(() => {
+				if (mutated.current) return;
+
+				mutated.current = true;
+				state.count = 7;
+			});
+
+			return null;
+		};
+
+		const Boundary = scope<{ state: { count: number } }>(({ state }) => {
+			boundaryRenders += 1;
+
+			return (
+				<div>
+					<span data-testid="early">{state.count}</span>
+					<Mutator state={state} />
+				</div>
+			);
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0 });
+
+			return <Boundary state={state} />;
+		};
+
+		render(<Parent />);
+		expect(screen.getByTestId("early").textContent).toBe("7");
+		expect(boundaryRenders).toBe(2);
 	});
 
 	it("free-rider: unwrapped child reads ride the scoped boundary", () => {
@@ -166,6 +225,79 @@ describe("scope", () => {
 		expect(parentRenders).toBe(3);
 		expect(childRenders).toBe(2);
 		expect(screen.getByTestId("x").textContent).toBe("9");
+	});
+
+	it("subscribes once per source set rather than once per render", () => {
+		const state = createMutableState({ count: 0, other: 0 });
+		let renders = 0;
+
+		const View = scope<{ state: { count: number; other: number } }>(({ state: scoped }) => {
+			renders += 1;
+
+			return <span data-testid="count">{scoped.count}</span>;
+		});
+
+		valtioSubscribeCounts.subscribes = 0;
+		valtioSubscribeCounts.unsubscribes = 0;
+
+		render(<View state={state} />);
+		expect(renders).toBe(1);
+		expect(valtioSubscribeCounts.subscribes).toBe(1);
+
+		for (let next = 1; next <= 5; next += 1) {
+			act(() => {
+				state.count = next;
+			});
+		}
+
+		expect(renders).toBe(6);
+		expect(screen.getByTestId("count").textContent).toBe("5");
+		expect(valtioSubscribeCounts.subscribes).toBe(1);
+		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
+
+		act(() => {
+			state.other = 1;
+		});
+
+		expect(renders).toBe(6);
+		expect(valtioSubscribeCounts.subscribes).toBe(1);
+		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
+	});
+
+	it("renders a memoized component as an element and keeps it updating", () => {
+		let renders = 0;
+		let stateRef: { count: number } | undefined;
+
+		const Inner = memo<{ state: { count: number } }>(({ state }) => {
+			renders += 1;
+
+			return <span data-testid="memo-count">{state.count}</span>;
+		});
+
+		const View = scope(Inner);
+
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0 });
+
+			useEffect(() => {
+				stateRef = state;
+			});
+
+			return <View state={state} />;
+		};
+
+		render(<Parent />);
+		expect(screen.getByTestId("memo-count").textContent).toBe("0");
+		expect(renders).toBe(1);
+
+		act(() => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.count = 3;
+		});
+
+		expect(renders).toBe(2);
+		expect(screen.getByTestId("memo-count").textContent).toBe("3");
 	});
 
 	it("respects maxDepth and does not wrap states beyond it", () => {

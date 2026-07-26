@@ -2,7 +2,7 @@ import { createMutableState } from "./createMutableState";
 import type { GroupListener } from "./emitter";
 
 export interface Group {
-	createState<T extends object>(properties: T): T;
+	createMutableState<T extends object>(properties: T): T;
 }
 
 const groupListenersByGroup = new WeakMap<Group, Set<GroupListener>>();
@@ -22,7 +22,7 @@ export function getGroupListeners(group: Group): Set<GroupListener> {
 export function createGroup(): Group {
 	const listeners = new Set<GroupListener>();
 	const group: Group = {
-		createState<T extends object>(properties: T): T {
+		createMutableState<T extends object>(properties: T): T {
 			return createMutableState(properties, group);
 		},
 	};

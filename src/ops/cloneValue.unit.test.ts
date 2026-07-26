@@ -143,4 +143,33 @@ describe("cloneValue", () => {
 		expect(cloned).toEqual([1, 2, 3]);
 		expect(Reflect.ownKeys(cloned as object)).toEqual(["0", "1", "2", "length"]);
 	});
+
+	it("preserves a null prototype on a cloned array", () => {
+		const value: Array<number> = [1, 2, 3];
+
+		Reflect.setPrototypeOf(value, null);
+
+		const cloned = cloneValue(value, new WeakMap(), createOperationPath(["value"]));
+
+		expect(Array.isArray(cloned)).toBe(true);
+		expect(Reflect.getPrototypeOf(cloned as object)).toBeNull();
+		expect(Array.from({ length: 3 }, (_, index) => (cloned as Array<number>)[index])).toEqual([1, 2, 3]);
+	});
+
+	it("preserves a non-writable data property", () => {
+		const value = {};
+
+		Object.defineProperty(value, "locked", {
+			value: { count: 1 },
+			writable: false,
+			enumerable: true,
+			configurable: true,
+		});
+
+		const cloned = cloneValue(value, new WeakMap(), createOperationPath(["value"]));
+		const descriptor = Reflect.getOwnPropertyDescriptor(cloned as object, "locked");
+
+		expect(descriptor?.writable).toBe(false);
+		expect(descriptor?.value).toEqual({ count: 1 });
+	});
 });

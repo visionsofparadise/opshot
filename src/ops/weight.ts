@@ -51,11 +51,7 @@ const weigh = (value: unknown, state: WeightState): void => {
 
 			if (state.weight > state.budget) return;
 		}
-
-		return;
 	}
-
-	addWeight(state, LEAF_WEIGHT);
 };
 
 export const weighValue = (value: unknown, budget: number): number => {

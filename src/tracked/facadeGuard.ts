@@ -1,8 +1,5 @@
 import { getUntracked } from "proxy-compare";
 import { getRegisteredTarget } from "../identity";
-import { installBoundary } from "../valtio/boundary";
-
-installBoundary();
 
 export const assertMutableFacade = (facade: object, mutationKey: PropertyKey): void => {
 	const facadeSource = getUntracked(facade);

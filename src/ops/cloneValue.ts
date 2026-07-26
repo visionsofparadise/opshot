@@ -43,9 +43,7 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 	const array = isPlainArray(value);
 	const clone: object = array ? [] : {};
 
-	if (!array) {
-		Reflect.setPrototypeOf(clone, Reflect.getPrototypeOf(value));
-	}
+	Reflect.setPrototypeOf(clone, Reflect.getPrototypeOf(value));
 
 	for (const key of Reflect.ownKeys(value)) {
 		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
@@ -56,7 +54,6 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 			Object.defineProperty(clone, key, {
 				...descriptor,
 				value: cloneValue(descriptor.value, memo, path),
-				writable: true,
 			});
 		} else {
 			Object.defineProperty(clone, key, descriptor);

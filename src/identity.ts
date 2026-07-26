@@ -2,35 +2,11 @@ import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredWrapperTarget } from "./react/wrapperRegistry";
 
-const targetRegistryKey = Symbol.for("opshot.targets");
-const identityTokenRegistryKey = Symbol.for("opshot.identityTokens");
-
-const fallbackTargetRegistry = new WeakMap<object, object>();
-const fallbackIdentityTokenRegistry = new WeakMap<object, object>();
-
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
-const isRegistry = (value: unknown): value is WeakMap<object, object> =>
-	value instanceof WeakMap && Object.getPrototypeOf(value) === WeakMap.prototype;
 
-const getGlobalRegistry = (key: symbol, fallback: WeakMap<object, object>): WeakMap<object, object> => {
-	try {
-		const existing: unknown = Reflect.get(globalThis, key);
-
-		if (isRegistry(existing)) return existing;
-
-		const registry = new WeakMap<object, object>();
-
-		if (!Reflect.defineProperty(globalThis, key, { value: registry })) return fallback;
-
-		return registry;
-	} catch {
-		return fallback;
-	}
-};
-
-const targetRegistry = getGlobalRegistry(targetRegistryKey, fallbackTargetRegistry);
-const identityTokenRegistry = getGlobalRegistry(identityTokenRegistryKey, fallbackIdentityTokenRegistry);
+const targetRegistry = new WeakMap<object, object>();
+const identityTokenRegistry = new WeakMap<object, object>();
 const { proxyStateMap } = unstable_getInternalStates();
 
 export function registerSnapshotCopy(copy: object, target: object): void {

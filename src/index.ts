@@ -1,4 +1,3 @@
-export { type Snapshot } from "valtio/vanilla";
 export { createChannel, type Channel } from "./createChannel";
 export { createGroup, type Group } from "./createGroup";
 export { createMutableState } from "./createMutableState";
@@ -19,5 +18,9 @@ export { unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 export { TrackedDate } from "./tracked/trackedDate";
 export { TrackedMap } from "./tracked/trackedMap";
 export { TrackedSet } from "./tracked/trackedSet";
-export { subscribe, type Context, type GroupListener, type StateListener } from "./subscribe";
+export { type GroupListener, type StateListener } from "./emitter";
+export { subscribe, type Context } from "./subscribe";
 export { transact } from "./transact";
+export { scope, type ScopeOptions } from "./react/scope";
+export { useGroup } from "./react/useGroup";
+export { useMutableState } from "./react/useMutableState";

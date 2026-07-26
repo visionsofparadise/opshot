@@ -40,6 +40,9 @@ jobs:
          - name: Run unit tests
            run: npm run unit
 
+         - name: Run integration tests
+           run: npm run integration
+
          - name: Configure git
            run: |
               git config user.name "github-actions[bot]"

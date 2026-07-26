@@ -59,18 +59,26 @@ export function hasOwnEnumerableFunction(value: object): boolean {
 	return false;
 }
 
-export function isTrackable(value: unknown): boolean {
-	if (typeof value !== "object" || value === null) return false;
+export type AdmissionLane = "track" | "leaf" | "reject";
 
-	if (refSet.has(value) || Object.isFrozen(value)) return false;
+export function admissionLane(value: unknown): AdmissionLane {
+	if (typeof value !== "object" || value === null) return "leaf";
 
-	if (isUnsafeTracked(value)) return true;
+	if (refSet.has(value)) return "leaf";
+
+	if (isUnsafeTracked(value)) return "track";
 
 	const kind = classifyValue(value);
 
-	if (kind === "plain" || kind === "plainArray") return true;
+	if ((kind === "plain" || kind === "plainArray" || kind === "cleanClass") && Object.isFrozen(value)) return "leaf";
 
-	if (kind === "cleanClass" && !hasOwnEnumerableFunction(value)) return true;
+	if (kind === "plain" || kind === "plainArray") return "track";
 
-	return false;
+	if (kind === "cleanClass" && !hasOwnEnumerableFunction(value)) return "track";
+
+	return "reject";
+}
+
+export function isTrackable(value: unknown): boolean {
+	return admissionLane(value) === "track";
 }

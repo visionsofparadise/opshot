@@ -116,10 +116,10 @@ const parameterGraph: Graph = {
 	edges: [{ from: "output", to: "reverb" }],
 };
 
-const createGrade = (group: Group): Grade => group.createState<Grade>({ exposure: 0 });
+const createGrade = (group: Group): Grade => group.createMutableState<Grade>({ exposure: 0 });
 
 const createGraph = (group: Group): Graph =>
-	group.createState<Graph>({
+	group.createMutableState<Graph>({
 		nodes: [
 			{ id: "input", parameters: { gain: 1 } },
 			{ id: "filter", parameters: { gain: 2 } },

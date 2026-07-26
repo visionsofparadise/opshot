@@ -27,7 +27,7 @@ describe("useGroup", () => {
 			if (context.isTransaction) heard.push(context.meta);
 		});
 
-		const state = result.current.createState({ count: 0 });
+		const state = result.current.createMutableState({ count: 0 });
 
 		act(() => {
 			channel.transact(state, () => {
@@ -41,7 +41,7 @@ describe("useGroup", () => {
 
 	it("accepts free-function transact on a group-minted state", () => {
 		const { result } = renderHook(() => useGroup());
-		const state = result.current.createState({ count: 0 });
+		const state = result.current.createMutableState({ count: 0 });
 
 		act(() => {
 			transact(state, () => {

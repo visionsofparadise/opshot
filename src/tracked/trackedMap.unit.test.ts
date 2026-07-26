@@ -329,4 +329,31 @@ describe("TrackedMap", () => {
 		expect(() => frozen.map.set("b", 2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
 		expect(frozen.map.size).toBe(1);
 	});
+
+	it("installs the boundary from its constructor, before any createMutableState call", async () => {
+		vi.resetModules();
+
+		const { TrackedMap: FreshTrackedMap } = await import("./trackedMap");
+		const { proxy: freshProxy } = await import("valtio/vanilla");
+
+		const map = new FreshTrackedMap<string, number>([["a", 1]]);
+
+		map.set("b", 2);
+
+		expect(map.size).toBe(2);
+		expect([...map]).toEqual([
+			["a", 1],
+			["b", 2],
+		]);
+
+		expect(() => freshProxy({ member: new Map() })).toThrow("opshot: Map cannot be tracked");
+
+		const { createMutableState: freshCreate } = await import("../createMutableState");
+		const state = freshCreate({ map });
+
+		state.map.set("c", 3);
+
+		expect(state.map.size).toBe(3);
+		expect(state.map.get("c")).toBe(3);
+	});
 });

@@ -217,7 +217,7 @@ describe("Boundary wrapper", () => {
 		expect(boundary.readsChanged(state)).toBe(true);
 	});
 
-	it("does not record a pure prototype-method lookup as a data read", () => {
+	it("keeps a prototype-method lookup from ever comparing changed", () => {
 		class Counter {
 			count = 0;
 
@@ -234,6 +234,27 @@ describe("Boundary wrapper", () => {
 
 		void wrapper.bump;
 		state.count = 9;
+		expect(boundary.readsChanged(state)).toBe(false);
+	});
+
+	it("records a nested object read only through a prototype method, so unread siblings stay silent", () => {
+		class Counter {
+			count = 0;
+
+			other = 0;
+
+			read(): number {
+				return this.count;
+			}
+		}
+
+		const state = createLive({ counter: new Counter() });
+		const boundary = createBoundary();
+		const wrapper = boundary.wrap(state);
+
+		void wrapper.counter.read;
+
+		state.counter.other = 9;
 		expect(boundary.readsChanged(state)).toBe(false);
 	});
 

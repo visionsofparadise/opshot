@@ -377,8 +377,8 @@ describe("grouped createMutableState", () => {
 			emissions.push({ state, ops: [...ops], meta });
 		});
 
-		const first = group.createState({ count: 0 });
-		const second = group.createState({ count: 0 });
+		const first = group.createMutableState({ count: 0 });
+		const second = group.createMutableState({ count: 0 });
 
 		transact(
 			first,

@@ -22,8 +22,8 @@ describe("createGroup", () => {
 			emissions.push({ state, ops: [...ops], meta });
 		});
 
-		const first = group.createState<Counter>({ count: 0 });
-		const second = group.createState<Counter>({ count: 0 });
+		const first = group.createMutableState<Counter>({ count: 0 });
+		const second = group.createMutableState<Counter>({ count: 0 });
 
 		transact(
 			first,
@@ -57,7 +57,7 @@ describe("createGroup", () => {
 			emissions.push(state);
 		});
 
-		const state = group.createState<Counter>({ count: 0 });
+		const state = group.createMutableState<Counter>({ count: 0 });
 
 		transact(state, () => {
 			state.count = 1;
@@ -99,7 +99,7 @@ describe("createGroup", () => {
 		subscribe(first, (_state, ops) => firstEmissions.push([...ops]));
 		subscribe(second, (_state, ops) => secondEmissions.push([...ops]));
 
-		const state = first.createState<Counter>({ count: 0 });
+		const state = first.createMutableState<Counter>({ count: 0 });
 
 		transact(state, () => {
 			state.count = 1;
@@ -115,7 +115,7 @@ describe("createGroup", () => {
 		const remove = subscribe(group, (_state, ops) => {
 			emissions.push([...ops]);
 		});
-		const state = group.createState<Counter>({ count: 0 });
+		const state = group.createMutableState<Counter>({ count: 0 });
 
 		remove();
 		transact(state, () => {
@@ -127,8 +127,8 @@ describe("createGroup", () => {
 
 	it("a group listener turns emission on for every state it created, and its removal turns it off", () => {
 		const group = createGroup();
-		const first = group.createState<Counter>({ count: 0 });
-		const second = group.createState<Counter>({ count: 0 });
+		const first = group.createMutableState<Counter>({ count: 0 });
+		const second = group.createMutableState<Counter>({ count: 0 });
 
 		vi.mocked(diffSnapshots).mockClear();
 
@@ -167,7 +167,7 @@ describe("createGroup", () => {
 	it("calls a group listener first whenever it subscribed, then state listeners in subscription order", () => {
 		const group = createGroup();
 		const order = new Array<string>();
-		const state = group.createState<Counter>({ count: 0 });
+		const state = group.createMutableState<Counter>({ count: 0 });
 
 		subscribe(state, () => order.push("first"));
 		subscribe(group, () => order.push("group"));
@@ -189,7 +189,7 @@ describe("createGroup", () => {
 			if (context.isTransaction) heard.push(context.meta);
 		});
 
-		const state = group.createState({ count: 0 });
+		const state = group.createMutableState({ count: 0 });
 
 		channel.transact(
 			state,

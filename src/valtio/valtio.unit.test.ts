@@ -916,8 +916,6 @@ describe("facade and identity probes", () => {
 });
 
 describe("opshot boundary dead-region guard", () => {
-	let targetRegistry: unknown;
-	let identityTokenRegistry: unknown;
 	let reusedPreInstallSnapshot = false;
 	let donatePreInstallSnapshot: (() => void) | undefined;
 	let restoreCanProxy: (() => void) | undefined;
@@ -949,28 +947,14 @@ describe("opshot boundary dead-region guard", () => {
 
 		vi.resetModules();
 
-		class RejectingWeakMap extends WeakMap<object, object> {
-			override set(_key: object, _value: object): this {
-				throw new Error("registry subclass must not be used");
-			}
-		}
-
-		for (const key of [Symbol.for("opshot.targets"), Symbol.for("opshot.identityTokens")]) {
-			if (!Reflect.defineProperty(globalThis, key, { value: new RejectingWeakMap(), configurable: true })) {
-				throw new Error("identity registry test: could not seed the global registry key");
-			}
-		}
-
 		const { proxy: freshProxy, snapshot: freshSnapshot } = await import("valtio/vanilla");
 		const source = freshProxy({ value: 1 });
 		const preInstallSnapshot = freshSnapshot(source);
 		const { createMutableState } = await import("../createMutableState");
 		const { transact } = await import("../transact");
-		const reused = freshSnapshot(source);
 		const destination = createMutableState<{ item: unknown }>({ item: null });
+		const reused = freshSnapshot(source);
 
-		targetRegistry = Reflect.get(globalThis, Symbol.for("opshot.targets"));
-		identityTokenRegistry = Reflect.get(globalThis, Symbol.for("opshot.identityTokens"));
 		reusedPreInstallSnapshot = reused === preInstallSnapshot;
 		donatePreInstallSnapshot = () => {
 			transact(destination, () => {
@@ -983,18 +967,6 @@ describe("opshot boundary dead-region guard", () => {
 		restoreCreateSnapshot?.();
 		restoreCreateHandler?.();
 		restoreCanProxy?.();
-	});
-
-	it("rejects WeakMap subclasses and installs bare global registries", () => {
-		expect(targetRegistry).toBeInstanceOf(WeakMap);
-		expect(identityTokenRegistry).toBeInstanceOf(WeakMap);
-
-		if (!(targetRegistry instanceof WeakMap) || !(identityTokenRegistry instanceof WeakMap)) {
-			throw new Error("identity registry test: expected WeakMap registries");
-		}
-
-		expect(Object.getPrototypeOf(targetRegistry)).toBe(WeakMap.prototype);
-		expect(Object.getPrototypeOf(identityTokenRegistry)).toBe(WeakMap.prototype);
 	});
 
 	it("registers a reused pre-install snapshot before rejecting its donation", () => {

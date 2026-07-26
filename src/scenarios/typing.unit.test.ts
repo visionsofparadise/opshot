@@ -33,17 +33,16 @@ const defaultedChannel = createChannel<{ replay: boolean; transactionKey?: strin
 describe("typing", () => {
 	it("exports the frozen-path three-verb operation surface from the package root", () => {
 		expectTypeOf<Operation>().toEqualTypeOf<AddOperation | ReplaceOperation | RemoveOperation>();
-		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<unknown>>();
+		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<string | number>>();
 	});
 
 	it("types address components entirely inside flat paths", () => {
-		const key = { id: 1 };
-		const operation: Operation = { op: "replace", path: ["map", key, "id"], value: 2 };
+		const operation: Operation = { op: "replace", path: ["items", "o3", "id"], value: 2 };
 
 		if (operation.op !== "replace") throw new Error("expected a replace operation");
 
 		expectTypeOf(operation.path).toEqualTypeOf<OperationPath>();
-		expect(operation.path).toEqual(["map", key, "id"]);
+		expect(operation.path).toEqual(["items", "o3", "id"]);
 	});
 
 	it("hides facade backing from package-root class types while retaining runtime data properties", () => {

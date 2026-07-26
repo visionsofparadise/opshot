@@ -1,23 +1,24 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener, type GroupListener, type StateListener } from "./emitter";
 
-export type { GroupListener, StateListener } from "./emitter";
-export type { Op } from "./ops/operation";
-
 export type Context<M> =
 	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
 
 export function subscribe(group: Group, listener: GroupListener): () => void;
 export function subscribe(state: object, listener: StateListener): () => void;
 export function subscribe(target: object | Group, listener: StateListener | GroupListener): () => void {
-	if (isGroup(target)) return addGroupListener(getGroupListeners(target), listener as GroupListener);
+	if (isGroup(target)) {
+		return addGroupListener(getGroupListeners(target), (state, ops, meta) => {
+			(listener as GroupListener)(state, ops, unwrapTransportMeta(meta));
+		});
+	}
 
 	return addStateListener(target, (ops, meta) => {
 		(listener as StateListener)(ops, unwrapTransportMeta(meta));
 	});
 }
 
-const channelStampBrand: unique symbol = Symbol("opshot.channelStamp");
+const channelStampBrand: unique symbol = Symbol.for("opshot.channelStamp");
 
 export interface ChannelStamp {
 	readonly [channelStampBrand]: object;

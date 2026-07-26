@@ -86,8 +86,7 @@ Reactivity is **eventually consistent**: a mutation bumps a reducer at the mutat
 ## Creating state
 
 ```tsx
-import { ignore, type Ignored } from "opshot";
-import { useMutableState } from "opshot/react";
+import { ignore, useMutableState, type Ignored } from "opshot";
 
 interface PlayerState {
 	position: number;
@@ -135,25 +134,28 @@ Two regimes: **tracked** (records what changed — ops) and **ignored** (present
 
 ```ts
 counter.index = new Map();
-// Error: opshot: Map cannot be tracked (its state lives in internal slots).
-// Options: use TrackedMap for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.
+// Error: opshot: Map cannot be tracked (its state lives in internal slots). Options:
+// - use TrackedMap for a tracked equivalent
+// - unsafeTrack(value) to track it lossily
+// - ignore(value) to store it by reference, untracked
 
 counter.job = new UploadJob();
-// Error: opshot: UploadJob cannot be tracked (its state is hidden in private fields).
-// Options: unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.
+// Error: opshot: UploadJob cannot be tracked (its state is hidden in private fields). Options:
+// - unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state
+// - ignore(value) to store it by reference, untracked
 ```
 
 The throw is synchronous at the assigning line (or at `createMutableState` when the literal carries the value), and the message carries the fix. There is no silent lane — nothing is stored raw to misbehave later, far from the cause.
 
-| Lane                  | Values                                                                                                       | Treatment                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
-| Tracked automatically | plain objects, plain arrays, primitives, clean class instances (no own-enumerable functions)                 | proxied, diffed, fine-grained ops                              |
-| Admitted by rule      | frozen plain objects; symbol-keyed and non-enumerable properties; functions; own getters                     | present, no ops (rules below)                                  |
-| Declaration required  | `Map`/`Set`/`Date`, classes with own-enumerable functions or hidden state, array subclasses, everything else | throws until you pick a facade, `unsafeTrack()`, or `ignore()` |
+| Lane                  | Values                                                                                                                    | Treatment                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Tracked automatically | plain objects, plain arrays, primitives, clean class instances (no own-enumerable functions)                              | proxied, diffed, fine-grained ops                              |
+| Admitted by rule      | frozen plain objects, plain arrays, and clean classes; symbol-keyed and non-enumerable properties; functions; own getters | present, no ops (rules below)                                  |
+| Declaration required  | `Map`/`Set`/`Date`, classes with own-enumerable functions or hidden state, array subclasses, everything else              | throws until you pick a facade, `unsafeTrack()`, or `ignore()` |
 
 The admitted-by-rule lane holds values that carry an in-band declaration of their own:
 
-- **Frozen plain objects** are auto-ignored: `Object.freeze` declares immutability, so there is nothing to miss. (A shallow-frozen root with mutable children is the caveat — the children are shared, and writes to them are on you.)
+- **Frozen plain objects, plain arrays, and clean classes** are auto-ignored: `Object.freeze` declares immutability, so there is nothing to miss. (A shallow-frozen root with mutable children is the caveat — the children are shared, and writes to them are on you.)
 - **Symbol-keyed and non-enumerable properties** ride along: present, never walked, never diffed. The symbol key and the enumerable flag are the language's own not-data markers.
 - **Functions** are identity leaves: domain methods and function fields never produce interior ops, and replacing one is a tracked identity replace.
 - **Own getters** stay live: a getter declares derived, so it recomputes and emits no ops.
@@ -417,8 +419,7 @@ A group creates states and hears every op from the states it created: one stream
 
 ```tsx
 import { useEffect } from "react";
-import { subscribe } from "opshot";
-import { useGroup, useMutableState } from "opshot/react";
+import { subscribe, useGroup, useMutableState } from "opshot";
 
 const Editor = () => {
 	// A lifetime-stable group.

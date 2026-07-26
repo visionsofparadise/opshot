@@ -1,9 +1,9 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emitter";
 import { applyOps as standaloneApplyOps } from "./ops/applyOps";
-import { stampChannelMeta, toChannelContext, type Context, type Op } from "./subscribe";
+import { stampChannelMeta, toChannelContext, type Context } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
-import type { Operation } from "./ops/operation";
+import type { Op, Operation } from "./ops/operation";
 
 export interface Channel<M extends object> {
 	transact(state: object, mutate: () => void, meta?: Partial<M>): void;

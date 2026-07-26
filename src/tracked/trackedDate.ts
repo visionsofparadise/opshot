@@ -1,3 +1,4 @@
+import { installBoundary } from "../valtio/boundary";
 import { assertMutableFacade } from "./facadeGuard";
 
 const setLegacyYear = (date: Date, year: unknown): number => {
@@ -50,6 +51,8 @@ export class TrackedDate {
 	private epochMs: number;
 
 	constructor(...args: DateConstructorArgs) {
+		installBoundary();
+
 		this.epochMs = constructDate(args).getTime();
 	}
 

@@ -180,6 +180,11 @@ export function createBoundary(): Boundary {
 				const value: unknown = Reflect.get(liveProxy, prop, liveProxy);
 				const wrapper = wrapperBox.current;
 
+				const used = getUsage(partition.affected, liveProxy);
+
+				recordKey(used, KEYS_PROPERTY, prop);
+				ensureBaseline(partition, liveProxy);
+
 				if (typeof value === "function") {
 					const method = getPrototypeMethod(storageTarget, prop);
 
@@ -187,11 +192,6 @@ export function createBoundary(): Boundary {
 						return bindMethodToWrapper(wrapper, method);
 					}
 				}
-
-				const used = getUsage(partition.affected, liveProxy);
-
-				recordKey(used, KEYS_PROPERTY, prop);
-				ensureBaseline(partition, liveProxy);
 
 				if (!isObjectLike(value)) return value;
 

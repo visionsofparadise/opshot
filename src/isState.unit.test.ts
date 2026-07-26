@@ -35,7 +35,7 @@ describe("isState", () => {
 			emissions.push(state);
 		});
 
-		const state = group.createState({ count: 0 });
+		const state = group.createMutableState({ count: 0 });
 
 		transact(state, () => {
 			state.count = 1;

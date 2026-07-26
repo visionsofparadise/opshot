@@ -20,15 +20,17 @@ describe("weighValue", () => {
 		expect(weighValue("", Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
 	});
 
-	it("treats ignore()d objects and functions as flat identity leaves", () => {
+	it("charges zero for identity leaves: functions, ignore()d values, and frozen objects", () => {
 		const ignored = ignore({ nested: { text: "x".repeat(1_000) }, more: { a: 1, b: 2, c: 3 } });
 		const largeFunction = Object.assign(() => undefined, {
 			cache: { values: Array.from({ length: 100 }, (_, index) => index) },
 		});
+		const frozen = Object.freeze({ nested: { text: "x".repeat(1_000) }, more: { a: 1, b: 2, c: 3 } });
 
-		expect(weighValue(ignored, Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
-		expect(weighValue(largeFunction, Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
-		expect(weighValue({ held: ignored }, Number.MAX_SAFE_INTEGER)).toBe(NODE_WEIGHT + KEY_WEIGHT + LEAF_WEIGHT);
+		expect(weighValue(ignored, Number.MAX_SAFE_INTEGER)).toBe(0);
+		expect(weighValue(largeFunction, Number.MAX_SAFE_INTEGER)).toBe(0);
+		expect(weighValue(frozen, Number.MAX_SAFE_INTEGER)).toBe(0);
+		expect(weighValue({ held: ignored }, Number.MAX_SAFE_INTEGER)).toBe(NODE_WEIGHT + KEY_WEIGHT);
 	});
 
 	it("counts a shared DAG subtree once", () => {

@@ -99,7 +99,7 @@ describe("emitter", () => {
 
 	it("fires group listeners before own listeners", () => {
 		const group = createGroup();
-		const state = group.createState({ count: 0 });
+		const state = group.createMutableState({ count: 0 });
 		const order = new Array<string>();
 
 		addStateListener(state, () => {

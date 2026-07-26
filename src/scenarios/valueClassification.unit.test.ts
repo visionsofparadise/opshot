@@ -127,7 +127,7 @@ const witnesses: ReadonlyArray<Witness> = [
 		create: () => new MapSubclass(),
 		kind: "nativeClass",
 		trackable: false,
-		remedies: ["unsafeTrack", "ignore"],
+		remedies: ["trackedMap", "unsafeTrack", "ignore"],
 	},
 	{
 		name: "regExp",
@@ -200,6 +200,13 @@ const witnesses: ReadonlyArray<Witness> = [
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{ name: "frozenPlainObject", create: () => Object.freeze({ a: 1 }), kind: "plain", trackable: false },
+	{ name: "frozenCleanClass", create: () => Object.freeze(new CleanPoint()), kind: "cleanClass", trackable: false },
+	{
+		name: "frozenCleanArrowClass",
+		create: () => Object.freeze(new ArrowPoint()),
+		kind: "cleanClass",
+		trackable: false,
+	},
 	{ name: "ignoredValue", create: () => ignore({ a: 1 }), kind: "plain", trackable: false },
 	{
 		name: "unsafeTrackedCleanArrowClass",
@@ -211,6 +218,12 @@ const witnesses: ReadonlyArray<Witness> = [
 		name: "unsafeTrackedPrivateClass",
 		create: () => unsafeTrack(new PrivateBox()),
 		kind: "privateClass",
+		trackable: true,
+	},
+	{
+		name: "frozenUnsafeTrackedValue",
+		create: () => unsafeTrack(Object.freeze({ a: 1 })),
+		kind: "plain",
 		trackable: true,
 	},
 	{

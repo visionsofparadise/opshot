@@ -326,6 +326,7 @@ export const catalog = [
 	{ name: "selfCycle", create: makeSelfCycle, expect: cyclic, scopeExpect: scopeRenders },
 	{ name: "deepCycle", create: makeDeepCycle, expect: cyclic, scopeExpect: scopeRenders },
 	{ name: "frozenPlainObject", create: () => Object.freeze({ a: 1 }), expect: autoIgnoredFrozen },
+	{ name: "frozenCleanClass", create: () => Object.freeze(new CleanPoint()), expect: autoIgnoredFrozen },
 	{ name: "rawMap", create: () => new Map([["a", 1]]), expect: rejected, scopeExpect: scopeInert },
 	{ name: "rawSet", create: () => new Set([1, 2]), expect: rejected, scopeExpect: scopeInert },
 	{ name: "rawDate", create: () => new Date(0), expect: rejected, scopeExpect: scopeThrows },

@@ -1,5 +1,7 @@
 import { ref } from "valtio/vanilla";
 
-export const ignore: typeof ref = ref;
+declare const ignoredMarker: unique symbol;
 
-export type Ignored<T extends object> = ReturnType<typeof ignore<T>>;
+export type Ignored<T extends object> = T & { readonly [ignoredMarker]: true };
+
+export const ignore = ref as <T extends object>(value: T) => Ignored<T>;

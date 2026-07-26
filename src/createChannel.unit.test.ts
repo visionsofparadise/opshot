@@ -140,7 +140,7 @@ describe("createChannel", () => {
 			if (context.isTransaction) heard.push({ state, meta: context.meta });
 		});
 
-		const state = group.createState({ count: 0 });
+		const state = group.createMutableState({ count: 0 });
 
 		channel.transact(
 			state,

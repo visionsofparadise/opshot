@@ -1,3 +1,4 @@
+import { createChannel } from "./createChannel";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { type Op } from "./ops/operation";
@@ -26,7 +27,7 @@ describe("subscribe", () => {
 
 	it("subscribes and unsubscribes a group listener", () => {
 		const group = createGroup();
-		const state = group.createState({ count: 0 });
+		const state = group.createMutableState({ count: 0 });
 		const heard = new Array<object>();
 		const stop = subscribe(group, (emitted) => {
 			heard.push(emitted);
@@ -60,5 +61,30 @@ describe("subscribe", () => {
 		);
 
 		expect(heard).toEqual([{ a: 1 }]);
+	});
+
+	it("delivers a group listener the caller's meta verbatim, never the channel stamp", async () => {
+		const channel = createChannel<{ actor: string }>();
+		const group = createGroup();
+		const heard = new Array<unknown>();
+
+		subscribe(group, (_state, _ops, meta) => {
+			heard.push(meta);
+		});
+
+		const state = group.createMutableState({ count: 0 });
+
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ actor: "matt" },
+		);
+
+		state.count = 2;
+		await Promise.resolve();
+
+		expect(heard).toEqual([{ actor: "matt" }, undefined]);
 	});
 });
