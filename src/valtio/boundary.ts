@@ -380,9 +380,6 @@ const rejectionError = (
 	}
 };
 
-/**
- * snapCache must seed BEFORE the property walk (snapshot identity depends on it), and child recursion must call THIS function by name -- the default recurses by its own name and would rebuild children without the added accessor branch.
- */
 const createSnapshotPreservingAccessors = <T extends object>(target: T, version: number): T => {
 	const cached = snapCache.get(target);
 

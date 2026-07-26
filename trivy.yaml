@@ -1,0 +1,13 @@
+scan:
+  scanners:
+    - vuln
+    - secret
+    - misconfig
+  skip-dirs:
+    - node_modules
+    - dist
+    - out
+    - build
+    - coverage
+    - scratch
+    - .git

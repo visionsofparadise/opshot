@@ -4,5 +4,13 @@
 	"gitignore": true,
 	"absolute": true,
 	"reporters": ["json"],
-	"ignore": ["**/archive/**", "**/*.test.ts", "**/*.test.tsx", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"]
+	"ignore": [
+		"**/archive/**",
+		"**/.*/**",
+		"**/*.test.ts",
+		"**/*.test.tsx",
+		"package-lock.json",
+		"pnpm-lock.yaml",
+		"yarn.lock"
+	]
 }

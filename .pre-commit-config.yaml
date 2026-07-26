@@ -1,0 +1,39 @@
+# Critical gate: commit message, secrets, and config validity.
+# Install once per clone: python -m pre_commit install -t pre-commit -t commit-msg
+#
+# Every hook is provisioned by pre-commit itself, so a fresh clone is guarded
+# without agent-lint, Node, or any local tooling installed. agent-lint neither
+# runs nor is required by this gate; it reports a missing config on a repo that
+# needs one.
+
+repos:
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.22.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ["@commitlint/config-conventional"]
+
+  # Trivy publishes no pre-commit hook of its own, and the third-party mirrors are
+  # unmaintained — the wrong thing to pin a supply-chain scanner to. The binary is
+  # PATH-provisioned per device; pre-commit fails closed when it is absent.
+  - repo: local
+    hooks:
+      - id: trivy
+        name: trivy fs
+        language: system
+        entry: trivy
+        args: [fs, --config, trivy.yaml, --exit-code, "1", "."]
+        pass_filenames: false
+        always_run: true
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.35.0
+    hooks:
+      - id: check-github-workflows
+      - id: check-github-actions
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
