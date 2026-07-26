@@ -1,6 +1,5 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
-
 import { getRegisteredWrapperTarget } from "./react/wrapperRegistry";
 
 const targetRegistryKey = Symbol.for("opshot.targets");
@@ -9,8 +8,10 @@ const identityTokenRegistryKey = Symbol.for("opshot.identityTokens");
 const fallbackTargetRegistry = new WeakMap<object, object>();
 const fallbackIdentityTokenRegistry = new WeakMap<object, object>();
 
-const isObjectLike = (value: unknown): value is object => value !== null && (typeof value === "object" || typeof value === "function");
-const isRegistry = (value: unknown): value is WeakMap<object, object> => value instanceof WeakMap && Object.getPrototypeOf(value) === WeakMap.prototype;
+const isObjectLike = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
+const isRegistry = (value: unknown): value is WeakMap<object, object> =>
+	value instanceof WeakMap && Object.getPrototypeOf(value) === WeakMap.prototype;
 
 const getGlobalRegistry = (key: symbol, fallback: WeakMap<object, object>): WeakMap<object, object> => {
 	try {
@@ -40,30 +41,30 @@ export function getRegisteredTarget(copy: object): object | undefined {
 	return targetRegistry.get(copy);
 }
 
+export function peelIdentityLayer(current: object): object | undefined {
+	const untracked = getUntracked(current);
+
+	if (untracked !== null && untracked !== current) return untracked;
+
+	const wrapperTarget = getRegisteredWrapperTarget(current);
+
+	if (wrapperTarget !== undefined && wrapperTarget !== current) return wrapperTarget;
+
+	const registeredTarget = targetRegistry.get(current);
+
+	if (registeredTarget !== undefined && registeredTarget !== current) return registeredTarget;
+
+	return undefined;
+}
+
 export function resolveIdentity(value: unknown): unknown {
 	let current = value;
 
 	while (isObjectLike(current)) {
-		const untracked = getUntracked(current);
+		const peeled = peelIdentityLayer(current);
 
-		if (untracked !== null && untracked !== current) {
-			current = untracked;
-
-			continue;
-		}
-
-		const wrapperTarget = getRegisteredWrapperTarget(current);
-
-		if (wrapperTarget !== undefined && wrapperTarget !== current) {
-			current = wrapperTarget;
-
-			continue;
-		}
-
-		const registeredTarget = targetRegistry.get(current);
-
-		if (registeredTarget !== undefined && registeredTarget !== current) {
-			current = registeredTarget;
+		if (peeled !== undefined) {
+			current = peeled;
 
 			continue;
 		}

@@ -1,9 +1,8 @@
 import { useEffect, useReducer, useState } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
-
-import type { Group } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { createBoundary, type Boundary } from "./boundary";
+import type { Group } from "../createGroup";
 
 interface MutableStateHolder<T extends object> {
 	readonly proxy: T;

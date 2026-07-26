@@ -1,12 +1,9 @@
 import { proxy } from "valtio/vanilla";
-
 import { getGroupListeners, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emitter";
 import { assertSafeDataPaths, installBoundary, registerTrackedRoot } from "./valtio/boundary";
 
 installBoundary();
-
-export type { Group } from "./createGroup";
 
 export function createMutableState<T extends object>(properties: T, group?: Group): T {
 	assertSafeDataPaths(properties);

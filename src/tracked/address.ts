@@ -6,7 +6,10 @@ let nextInternId = 0;
 const internIdentity = (key: object | symbol): number => {
 	const resolved = resolveIdentity(key);
 
-	if (resolved === null || (typeof resolved !== "object" && typeof resolved !== "function" && typeof resolved !== "symbol")) {
+	if (
+		resolved === null ||
+		(typeof resolved !== "object" && typeof resolved !== "function" && typeof resolved !== "symbol")
+	) {
 		throw new Error("opshot: addressOf interned a non-identity value");
 	}
 
@@ -24,6 +27,7 @@ const internIdentity = (key: object | symbol): number => {
 
 export const addressOf = (key: unknown): string => {
 	if (key === null) return "z";
+
 	if (key === undefined) return "u";
 
 	switch (typeof key) {

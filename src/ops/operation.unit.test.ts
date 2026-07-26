@@ -1,4 +1,4 @@
-import {createMutableState} from "../createMutableState";
+import { createMutableState } from "../createMutableState";
 import { getRegisteredTarget } from "../identity";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";

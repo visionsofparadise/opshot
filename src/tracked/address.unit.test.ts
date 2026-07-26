@@ -9,10 +9,7 @@ import { type Op } from "../ops/operation";
 import { addressOf } from "./address";
 
 const undo = <T extends object>(state: T, ops: Array<Op>): void => {
-	applyOps(
-		state,
-		ops.map((op) => op.undo).reverse(),
-	);
+	applyOps(state, ops.map((op) => op.undo).reverse());
 };
 
 describe("addressOf", () => {
@@ -70,7 +67,10 @@ describe("addressOf", () => {
 	});
 
 	it("interns the same object once across raw, proxy, snapshot, and undo handles", () => {
-		const state = createMutableState<{ item: { label: string }; sibling: number }>({ item: { label: "a" }, sibling: 0 });
+		const state = createMutableState<{ item: { label: string }; sibling: number }>({
+			item: { label: "a" },
+			sibling: 0,
+		});
 		const proxied = state as { item: { label: string }; sibling: number };
 
 		const addressProxy = addressOf(proxied.item);

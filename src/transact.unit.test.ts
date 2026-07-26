@@ -12,14 +12,20 @@ describe("transact", () => {
 			heard.push({ ops: [...ops], meta });
 		});
 
-		transact(state, () => {
-			state.count = 3;
-		}, { reason: "test" });
+		transact(
+			state,
+			() => {
+				state.count = 3;
+			},
+			{ reason: "test" },
+		);
 
 		expect(state.count).toBe(3);
 		expect(heard).toEqual([
 			{
-				ops: [{ do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+				ops: [
+					{ do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } },
+				],
 				meta: { reason: "test" },
 			},
 		]);
@@ -28,9 +34,13 @@ describe("transact", () => {
 	it("runs the mutate callback with no record when nothing listens", () => {
 		const state = createMutableState({ count: 0 });
 
-		transact(state, () => {
-			state.count = 4;
-		}, { ignored: true });
+		transact(
+			state,
+			() => {
+				state.count = 4;
+			},
+			{ ignored: true },
+		);
 
 		expect(state.count).toBe(4);
 	});

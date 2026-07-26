@@ -10,7 +10,9 @@ describe("operation paths", () => {
 
 		expect(formatOperationPath(createOperationPath([]))).toBe("");
 		expect(formatOperationPath(createOperationPath(["a/b", "c~d", 3, "3"]))).toBe("/a~1b/c~0d/3/3");
-		expect(formatOperationPath(createOperationPath([object, () => undefined, Symbol("member")]))).toBe("/<identity>/<identity>/<symbol>");
+		expect(formatOperationPath(createOperationPath([object, () => undefined, Symbol("member")]))).toBe(
+			"/<identity>/<identity>/<symbol>",
+		);
 	});
 
 	it("retains number and string segments as distinct values", () => {

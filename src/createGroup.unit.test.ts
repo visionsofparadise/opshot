@@ -25,9 +25,13 @@ describe("createGroup", () => {
 		const first = group.createState<Counter>({ count: 0 });
 		const second = group.createState<Counter>({ count: 0 });
 
-		transact(first, () => {
-			first.count = 1;
-		}, { transactionKey: "drag" });
+		transact(
+			first,
+			() => {
+				first.count = 1;
+			},
+			{ transactionKey: "drag" },
+		);
 
 		transact(second, () => {
 			second.count = 2;
@@ -187,9 +191,13 @@ describe("createGroup", () => {
 
 		const state = group.createState({ count: 0 });
 
-		channel.transact(state, () => {
-			state.count = 1;
-		}, { transactionKey: "drag" });
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ transactionKey: "drag" },
+		);
 
 		expect(heard).toEqual([{ replay: false, transactionKey: "drag" }]);
 	});

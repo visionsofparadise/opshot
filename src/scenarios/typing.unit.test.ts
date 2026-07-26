@@ -102,9 +102,13 @@ describe("typing", () => {
 			}
 		});
 
-		docChannel.transact(state, () => {
-			state.count = 1;
-		}, { transactionKey: "drag" });
+		docChannel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ transactionKey: "drag" },
+		);
 	});
 
 	it("types channel defaults merge as total M on the true arm", () => {

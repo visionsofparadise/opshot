@@ -12,17 +12,20 @@ const domValues: ReadonlyArray<{ readonly name: string; readonly create: () => u
 ];
 
 describe("web DOM globals under jsdom (clean-class attach)", () => {
-	it.each(domValues.map((entry) => [entry.name, entry] as const))("%s attaches at create and via mutate", (_name, entry) => {
-		const created = createMutableState<{ value: unknown }>({ value: entry.create() });
+	it.each(domValues.map((entry) => [entry.name, entry] as const))(
+		"%s attaches at create and via mutate",
+		(_name, entry) => {
+			const created = createMutableState<{ value: unknown }>({ value: entry.create() });
 
-		expect("value" in created).toBe(true);
+			expect("value" in created).toBe(true);
 
-		const state = createMutableState<{ value?: unknown }>({});
+			const state = createMutableState<{ value?: unknown }>({});
 
-		transact(state, () => {
-			state.value = entry.create();
-		});
+			transact(state, () => {
+				state.value = entry.create();
+			});
 
-		expect("value" in state).toBe(true);
-	});
+			expect("value" in state).toBe(true);
+		},
+	);
 });

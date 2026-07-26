@@ -1,0 +1,9 @@
+**/archive/**
+**/node_modules/**
+**/.*/**
+**/dist/**
+**/out/**
+**/build/**
+**/coverage/**
+scratch/
+tmp_*

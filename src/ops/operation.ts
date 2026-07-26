@@ -1,7 +1,11 @@
 import { cloneValue, isCloneable } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 
-export interface AddOperation { readonly op: "add"; readonly path: OperationPath; readonly value: unknown }
+export interface AddOperation {
+	readonly op: "add";
+	readonly path: OperationPath;
+	readonly value: unknown;
+}
 export interface ReplaceOperation {
 	readonly op: "replace";
 	readonly path: OperationPath;
@@ -57,12 +61,14 @@ class RemoveHalf extends OperationHalf {
 	readonly op = "remove";
 }
 
-export const isOperation = (value: unknown): value is Operation => typeof value === "object" && value !== null && operationBrand in value;
+export const isOperation = (value: unknown): value is Operation =>
+	typeof value === "object" && value !== null && operationBrand in value;
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
 export const createAddOperation = (path: OperationPath, value: unknown): AddOperation => new AddHalf(path, value);
 
-export const createReplaceOperation = (path: OperationPath, value: unknown): ReplaceOperation => new ReplaceHalf(path, value);
+export const createReplaceOperation = (path: OperationPath, value: unknown): ReplaceOperation =>
+	new ReplaceHalf(path, value);
 
 export const createRemoveOperation = (path: OperationPath): RemoveOperation => new RemoveHalf(path);

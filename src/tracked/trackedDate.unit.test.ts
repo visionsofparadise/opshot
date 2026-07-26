@@ -8,7 +8,8 @@ import { applyOps } from "../ops/applyOps";
 import { type Op, type Operation } from "../ops/operation";
 import { TrackedDate } from "./trackedDate";
 
-const readValue = (half: Operation | undefined): unknown => (half !== undefined && "value" in half ? half.value : undefined);
+const readValue = (half: Operation | undefined): unknown =>
+	half !== undefined && "value" in half ? half.value : undefined;
 
 const recordAll = (state: object): Array<{ ops: Array<Op>; meta: unknown }> => {
 	const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
@@ -81,12 +82,15 @@ describe("TrackedDate facade", () => {
 			const facadeMethod: unknown = Reflect.get(date, name);
 			const nativeMethod: unknown = Reflect.get(native, name);
 
-			if (typeof facadeMethod !== "function" || typeof nativeMethod !== "function") throw new Error(`${name} is not callable`);
+			if (typeof facadeMethod !== "function" || typeof nativeMethod !== "function")
+				throw new Error(`${name} is not callable`);
 
 			expect(Reflect.apply(facadeMethod, date, [])).toEqual(Reflect.apply(nativeMethod, native, []));
 		}
 
-		const missingMethods = Reflect.ownKeys(Date.prototype).filter((key) => key !== "constructor" && key !== "toJSON" && !Reflect.has(TrackedDate.prototype, key));
+		const missingMethods = Reflect.ownKeys(Date.prototype).filter(
+			(key) => key !== "constructor" && key !== "toJSON" && !Reflect.has(TrackedDate.prototype, key),
+		);
 
 		expect(missingMethods).toEqual([]);
 		expect(date).not.toBeInstanceOf(Date);
@@ -114,7 +118,8 @@ describe("TrackedDate facade", () => {
 		const facadeMethod: unknown = Reflect.get(date, name);
 		const nativeMethod: unknown = Reflect.get(native, name);
 
-		if (typeof facadeMethod !== "function" || typeof nativeMethod !== "function") throw new Error(`${name} is not callable`);
+		if (typeof facadeMethod !== "function" || typeof nativeMethod !== "function")
+			throw new Error(`${name} is not callable`);
 
 		const expected = Reflect.apply(nativeMethod, native, args);
 		const result = Reflect.apply(facadeMethod, date, args);
@@ -145,7 +150,8 @@ describe("TrackedDate facade", () => {
 			const setYear: unknown = Reflect.get(date, "setYear");
 			const nativeSetYear: unknown = Reflect.get(native, "setYear");
 
-			if (typeof setYear !== "function" || typeof nativeSetYear !== "function") throw new Error("setYear is not callable");
+			if (typeof setYear !== "function" || typeof nativeSetYear !== "function")
+				throw new Error("setYear is not callable");
 
 			expect(Reflect.apply(setYear, date, [year])).toBe(Reflect.apply(nativeSetYear, native, [year]));
 			expect(date.getTime()).toBe(native.getTime());
@@ -158,7 +164,8 @@ describe("TrackedDate facade", () => {
 		const setYear: unknown = Reflect.get(date, "setYear");
 		const nativeSetYear: unknown = Reflect.get(native, "setYear");
 
-		if (typeof setYear !== "function" || typeof nativeSetYear !== "function") throw new Error("setYear is not callable");
+		if (typeof setYear !== "function" || typeof nativeSetYear !== "function")
+			throw new Error("setYear is not callable");
 
 		expect(() => Reflect.apply(setYear, date, [1n])).toThrow(TypeError);
 		expect(() => Reflect.apply(nativeSetYear, native, [1n])).toThrow(TypeError);

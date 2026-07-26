@@ -38,7 +38,8 @@ const driveInterior = (state: ValueState): void => {
 	state.value = probeKey;
 };
 
-const isObjectOrFunction = (value: unknown): value is object => value !== null && (typeof value === "object" || typeof value === "function");
+const isObjectOrFunction = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
 
 const collectArityZeroMethods = (value: unknown): ReadonlyArray<string> => {
 	const boxed = Object(value) as object;

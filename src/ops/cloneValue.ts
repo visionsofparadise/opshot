@@ -1,5 +1,4 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { isTrackable } from "../valtio/classify";
 import { createOperationPath, formatOperationPath, type OperationPath } from "./path";
@@ -8,7 +7,8 @@ const { refSet } = unstable_getInternalStates();
 
 export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value) && !refSet.has(value);
 
-export const isPlainObject = (value: unknown): value is Record<string, unknown> => isTrackable(value) && !Array.isArray(value);
+export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+	isTrackable(value) && !Array.isArray(value);
 
 export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> => isTrackable(value);
 
@@ -24,7 +24,8 @@ export class CyclicValueError extends Error {
 
 export const cyclicError = (path: OperationPath): CyclicValueError => new CyclicValueError(path);
 
-export const getCyclicPath = (error: unknown): OperationPath | undefined => (error instanceof CyclicValueError ? error.path : undefined);
+export const getCyclicPath = (error: unknown): OperationPath | undefined =>
+	error instanceof CyclicValueError ? error.path : undefined;
 
 const CLONE_IN_PROGRESS = Symbol("opshot.cloneValue.inProgress");
 
@@ -34,6 +35,7 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 	const cached = memo.get(value);
 
 	if (cached === CLONE_IN_PROGRESS) throw cyclicError(path);
+
 	if (cached !== undefined) return cached;
 
 	memo.set(value, CLONE_IN_PROGRESS);
@@ -51,7 +53,11 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 		if (!descriptor) continue;
 
 		if ("value" in descriptor) {
-			Object.defineProperty(clone, key, { ...descriptor, value: cloneValue(descriptor.value, memo, path), writable: true });
+			Object.defineProperty(clone, key, {
+				...descriptor,
+				value: cloneValue(descriptor.value, memo, path),
+				writable: true,
+			});
 		} else {
 			Object.defineProperty(clone, key, descriptor);
 		}

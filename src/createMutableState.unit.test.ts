@@ -56,9 +56,13 @@ describe("createMutableState", () => {
 		const state = createCounter();
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
-			state.count = 1;
-		}, { transactionKey: "drag", replay: true });
+		transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ transactionKey: "drag", replay: true },
+		);
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
@@ -278,7 +282,9 @@ describe("createMutableState", () => {
 
 		expect(heard).toEqual([
 			{
-				ops: [{ do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+				ops: [
+					{ do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } },
+				],
 				meta: undefined,
 			},
 		]);
@@ -293,9 +299,13 @@ describe("createMutableState", () => {
 			heard.push(meta);
 		});
 
-		transact(state, () => {
-			state.count = 1;
-		}, {});
+		transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{},
+		);
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toEqual({});
@@ -314,9 +324,13 @@ describe("createMutableState", () => {
 		});
 
 		state.count = 1;
-		transact(state, () => {
-			state.flag = true;
-		}, { tag: "tx" });
+		transact(
+			state,
+			() => {
+				state.flag = true;
+			},
+			{ tag: "tx" },
+		);
 
 		await Promise.resolve();
 
@@ -366,9 +380,13 @@ describe("grouped createMutableState", () => {
 		const first = group.createState({ count: 0 });
 		const second = group.createState({ count: 0 });
 
-		transact(first, () => {
-			first.count = 1;
-		}, { transactionKey: "drag" });
+		transact(
+			first,
+			() => {
+				first.count = 1;
+			},
+			{ transactionKey: "drag" },
+		);
 		transact(second, () => {
 			second.count = 2;
 		});

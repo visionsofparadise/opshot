@@ -1,12 +1,9 @@
-import { getUntracked } from "proxy-compare";
 import { snapshot, subscribe as valtioSubscribe, unstable_getInternalStates } from "valtio/vanilla";
-
-import { getRegisteredTarget } from "./identity";
+import { peelIdentityLayer } from "./identity";
 import { getCyclicPath } from "./ops/cloneValue";
 import { diffSnapshots } from "./ops/diff";
-import type { Op } from "./ops/operation";
 import { formatOperationPath } from "./ops/path";
-import { getRegisteredWrapperTarget } from "./react/wrapperRegistry";
+import type { Op } from "./ops/operation";
 
 export type StateListener = (ops: ReadonlyArray<Op>, meta: unknown) => void;
 export type GroupListener = (state: object, ops: ReadonlyArray<Op>, meta: unknown) => void;
@@ -23,9 +20,10 @@ export interface EmitterRecord {
 const emitters = new WeakMap<object, EmitterRecord>();
 const { proxyStateMap } = unstable_getInternalStates();
 
-const isObjectLike = (value: unknown): value is object => value !== null && (typeof value === "object" || typeof value === "function");
+const isObjectLike = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
 
-export const augmentBareCycleError = (error: unknown): Error | undefined => {
+const augmentBareCycleError = (error: unknown): Error | undefined => {
 	const path = getCyclicPath(error);
 
 	if (path === undefined) return undefined;
@@ -41,31 +39,11 @@ export function resolveEmitterTarget(state: object): object {
 	while (isObjectLike(current)) {
 		if (proxyStateMap.has(current)) return current;
 
-		const untracked = getUntracked(current);
+		const peeled = peelIdentityLayer(current);
 
-		if (untracked !== null && untracked !== current) {
-			current = untracked;
+		if (peeled === undefined) break;
 
-			continue;
-		}
-
-		const wrapperTarget = getRegisteredWrapperTarget(current);
-
-		if (wrapperTarget !== undefined && wrapperTarget !== current) {
-			current = wrapperTarget;
-
-			continue;
-		}
-
-		const registeredTarget = getRegisteredTarget(current);
-
-		if (registeredTarget !== undefined && registeredTarget !== current) {
-			current = registeredTarget;
-
-			continue;
-		}
-
-		break;
+		current = peeled;
 	}
 
 	if (!isObjectLike(current) || !proxyStateMap.has(current)) throw new Error("opshot: expected a state object");
@@ -77,7 +55,8 @@ export function getEmitter(state: object): EmitterRecord | undefined {
 	return emitters.get(resolveEmitterTarget(state));
 }
 
-export const hasListeners = (record: EmitterRecord): boolean => record.listeners.size > 0 || (record.groupListeners?.size ?? 0) > 0;
+export const hasListeners = (record: EmitterRecord): boolean =>
+	record.listeners.size > 0 || (record.groupListeners?.size ?? 0) > 0;
 
 const armWatchdog = (record: EmitterRecord): void => {
 	if (record.disarm !== undefined) return;
@@ -95,6 +74,7 @@ const disarmWatchdog = (record: EmitterRecord): void => {
 
 export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Op>, meta: unknown): void => {
 	for (const listener of [...(record.groupListeners ?? [])]) listener(record.target, ops, meta);
+
 	for (const listener of [...record.listeners]) listener(ops, meta);
 };
 
@@ -104,7 +84,7 @@ export const requireObjectSnapshot = (value: unknown): object => {
 	throw new Error("opshot: state snapshots must have an object root");
 };
 
-export const settlePendingBare = (record: EmitterRecord): void => {
+const reportBareDiff = (record: EmitterRecord): void => {
 	const current = snapshot(record.target);
 
 	if (current === record.lastReported) return;
@@ -124,6 +104,10 @@ export const settlePendingBare = (record: EmitterRecord): void => {
 	} catch (error) {
 		throw augmentBareCycleError(error) ?? error;
 	}
+};
+
+export const settlePendingBare = (record: EmitterRecord): void => {
+	reportBareDiff(record);
 };
 
 export function getOrCreateEmitter(target: object, groupListeners?: Set<GroupListener>): EmitterRecord {
@@ -158,25 +142,7 @@ export function emitBareFlush(target: object): void {
 
 	if (record === undefined) return;
 
-	const current = snapshot(record.target);
-
-	if (current === record.lastReported) return;
-
-	const previous = record.lastReported;
-
-	record.lastReported = current;
-
-	if (!hasListeners(record)) return;
-
-	try {
-		const ops = diffSnapshots(requireObjectSnapshot(previous), requireObjectSnapshot(current));
-
-		if (ops.length === 0) return;
-
-		deliver(record, ops, undefined);
-	} catch (error) {
-		throw augmentBareCycleError(error) ?? error;
-	}
+	reportBareDiff(record);
 }
 
 export function addStateListener(state: object, listener: StateListener): () => void {

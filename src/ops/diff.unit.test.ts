@@ -22,8 +22,16 @@ const record = <T extends object>(state: T): Array<Array<Op>> => {
 	return heard;
 };
 
-const replayUndo = <T extends object>(state: T, ops: Array<Op>): void => applyOps(state, [...ops].reverse().map((pair) => pair.undo));
-const replayDo = <T extends object>(state: T, ops: Array<Op>): void => applyOps(state, ops.map((pair) => pair.do));
+const replayUndo = <T extends object>(state: T, ops: Array<Op>): void =>
+	applyOps(
+		state,
+		[...ops].reverse().map((pair) => pair.undo),
+	);
+const replayDo = <T extends object>(state: T, ops: Array<Op>): void =>
+	applyOps(
+		state,
+		ops.map((pair) => pair.do),
+	);
 
 describe("diffSnapshots: atomic flat paths", () => {
 	it("emits add, replace, and remove pairs at frozen array paths", () => {
@@ -54,7 +62,9 @@ describe("diffSnapshots: atomic flat paths", () => {
 
 	it("compares leaves with Object.is so NaN equals NaN and 0 differs from -0", () => {
 		expect(diffSnapshots({ n: Number.NaN }, { n: Number.NaN })).toEqual([]);
-		expect(diffSnapshots({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([{ op: "replace", path: ["z"], value: -0 }]);
+		expect(diffSnapshots({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([
+			{ op: "replace", path: ["z"], value: -0 },
+		]);
 	});
 
 	it("emits a whole-value replace when equal content lands on a different target", () => {
@@ -72,7 +82,9 @@ describe("diffSnapshots: atomic flat paths", () => {
 	});
 
 	it("rejects primitive, unsupported, and incompatible roots", () => {
-		expect(() => diffSnapshots(1 as unknown as object, 2 as unknown as object)).toThrow("compatible supported object roots");
+		expect(() => diffSnapshots(1 as unknown as object, 2 as unknown as object)).toThrow(
+			"compatible supported object roots",
+		);
 		expect(() => diffSnapshots({}, [])).toThrow("compatible supported object roots");
 		expect(() => diffSnapshots(new Map(), new Map())).toThrow("compatible supported object roots");
 	});
@@ -91,7 +103,9 @@ describe("diffSnapshots: atomic flat paths", () => {
 		Object.defineProperty(polluted, "__proto__", { value: { polluted: true }, enumerable: true });
 
 		expect(() => diffSnapshots({}, polluted)).toThrow("reserved operation path");
-		expect(() => diffSnapshots({}, { constructor: { prototype: { polluted: true } } })).toThrow("reserved operation path");
+		expect(() => diffSnapshots({}, { constructor: { prototype: { polluted: true } } })).toThrow(
+			"reserved operation path",
+		);
 		expect(() => diffSnapshots({}, { boundary: { safe: aliasedPrototype, constructor: aliasedPrototype } })).toThrow(
 			"reserved operation path /boundary/constructor/prototype",
 		);
@@ -272,15 +286,17 @@ describe("diffSnapshots: atomic flat paths", () => {
 			state.replaced = new TrackedDate(10);
 		});
 
-		expect((heard[0] ?? []).map((pair) => pair.do.path)).toEqual([
-			["retained", "epochMs"],
-			["replaced"],
-		]);
+		expect((heard[0] ?? []).map((pair) => pair.do.path)).toEqual([["retained", "epochMs"], ["replaced"]]);
 	});
 
 	it("round-trips mixed atomic changes exactly", () => {
 		const key = { id: 1 };
-		const state = createMutableState({ list: [1, 2], map: new TrackedMap([[key, { count: 1 }]]), set: new TrackedSet(["a"]), date: new TrackedDate(0) });
+		const state = createMutableState({
+			list: [1, 2],
+			map: new TrackedMap([[key, { count: 1 }]]),
+			set: new TrackedSet(["a"]),
+			date: new TrackedDate(0),
+		});
 		const heard = record(state);
 
 		transact(state, () => {
@@ -319,7 +335,9 @@ describe("diffSnapshots: container collapse", () => {
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
-		expect(readValue(ops[0]?.do ?? { op: "remove", path: [] })).toEqual(Array.from({ length: 10 }, (_, index) => index));
+		expect(readValue(ops[0]?.do ?? { op: "remove", path: [] })).toEqual(
+			Array.from({ length: 10 }, (_, index) => index),
+		);
 
 		replayUndo(state, ops);
 		expect(state.list).toEqual(Array.from({ length: 2000 }, (_, index) => index));
@@ -341,7 +359,9 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(5);
-		expect(ops.map((pair) => pair.do)).toEqual(edited.map((index) => ({ op: "replace", path: ["tree", index, "n"], value: index + 1 })));
+		expect(ops.map((pair) => pair.do)).toEqual(
+			edited.map((index) => ({ op: "replace", path: ["tree", index, "n"], value: index + 1 })),
+		);
 	});
 
 	it("many small changes beside few huge unchanged entries stay atomic", () => {
@@ -376,7 +396,9 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(8);
-		expect(ops.every((pair) => pair.do.op === "replace" && pair.do.path[0] === "bag" && pair.do.path.length === 2)).toBe(true);
+		expect(
+			ops.every((pair) => pair.do.op === "replace" && pair.do.path[0] === "bag" && pair.do.path.length === 2),
+		).toBe(true);
 		expect(ops.map((pair) => pair.do.path[1])).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
 	});
 
@@ -468,7 +490,9 @@ describe("diffSnapshots: container collapse", () => {
 		expect(heard[0]?.meta).toBeUndefined();
 		expect(heard[0]?.ops).toHaveLength(1);
 		expect(heard[0]?.ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
-		expect(heard[0]?.ops[0]?.do && "value" in heard[0].ops[0].do ? heard[0].ops[0].do.value : undefined).toEqual([0, 1, 2, 3, 4]);
+		expect(heard[0]?.ops[0]?.do && "value" in heard[0].ops[0].do ? heard[0].ops[0].do.value : undefined).toEqual([
+			0, 1, 2, 3, 4,
+		]);
 	});
 
 	it("small-container two-op edit collapses to one replace and round-trips", () => {

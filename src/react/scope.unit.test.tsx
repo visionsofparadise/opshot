@@ -193,7 +193,10 @@ describe("scope", () => {
 		});
 
 		const Parent: FC = () => {
-			const state = useMutableState({ map: new TrackedMap<string, { label: string }>([["a", { label: "one" }]]), unrelated: "steady" });
+			const state = useMutableState({
+				map: new TrackedMap<string, { label: string }>([["a", { label: "one" }]]),
+				unrelated: "steady",
+			});
 
 			useEffect(() => {
 				stateRef = state;

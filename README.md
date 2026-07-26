@@ -145,11 +145,11 @@ counter.job = new UploadJob();
 
 The throw is synchronous at the assigning line (or at `createMutableState` when the literal carries the value), and the message carries the fix. There is no silent lane — nothing is stored raw to misbehave later, far from the cause.
 
-| Lane | Values | Treatment |
-| --- | --- | --- |
-| Tracked automatically | plain objects, plain arrays, primitives, clean class instances (no own-enumerable functions) | proxied, diffed, fine-grained ops |
-| Admitted by rule | frozen plain objects; symbol-keyed and non-enumerable properties; functions; own getters | present, no ops (rules below) |
-| Declaration required | `Map`/`Set`/`Date`, classes with own-enumerable functions or hidden state, array subclasses, everything else | throws until you pick a facade, `unsafeTrack()`, or `ignore()` |
+| Lane                  | Values                                                                                                       | Treatment                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| Tracked automatically | plain objects, plain arrays, primitives, clean class instances (no own-enumerable functions)                 | proxied, diffed, fine-grained ops                              |
+| Admitted by rule      | frozen plain objects; symbol-keyed and non-enumerable properties; functions; own getters                     | present, no ops (rules below)                                  |
+| Declaration required  | `Map`/`Set`/`Date`, classes with own-enumerable functions or hidden state, array subclasses, everything else | throws until you pick a facade, `unsafeTrack()`, or `ignore()` |
 
 The admitted-by-rule lane holds values that carry an in-band declaration of their own:
 
@@ -263,9 +263,13 @@ import { applyOps, createMutableState, subscribe, transact } from "opshot";
 const counter = createMutableState({ count: 0 });
 
 // Scoped synchronous emission: one net-diff emission with optional meta.
-transact(counter, () => {
-	counter.count++;
-}, { transactionKey: "drag" });
+transact(
+	counter,
+	() => {
+		counter.count++;
+	},
+	{ transactionKey: "drag" },
+);
 
 // Bare writes work too; they emit at the flush with no meta.
 counter.count = 9;
@@ -281,7 +285,11 @@ isSameIdentity(counter, other);
 identify(counter);
 
 // Replay one direction's halves in one transaction, forwarding meta.
-applyOps(counter, ops.map((op) => op.undo), { replay: true });
+applyOps(
+	counter,
+	ops.map((op) => op.undo),
+	{ replay: true },
+);
 ```
 
 `transact` is also the catchable lane for cycle detection: its diff runs synchronously inside the caller's frame, so a cycle throws at the `transact` call site where `try`/`catch` can catch it. Bare writes that form cycles surface asynchronously on the flush path.
@@ -318,14 +326,14 @@ interface Op {
 
 The exported `AddOperation`, `ReplaceOperation`, and `RemoveOperation` types give the exact union members. Paths are state-relative sequences of string and numeric segments over plain data:
 
-| Resolved parent | Segment | Address |
-| --- | --- | --- |
-| plain object / clean class | string | enumerable own data property |
-| plain array | non-negative integer | indexed presence and value, with no shifting |
-| plain array | enumerable non-index string | ordinary data property |
-| plain array | `"length"` | conceptual array length |
+| Resolved parent             | Segment                           | Address                                                             |
+| --------------------------- | --------------------------------- | ------------------------------------------------------------------- |
+| plain object / clean class  | string                            | enumerable own data property                                        |
+| plain array                 | non-negative integer              | indexed presence and value, with no shifting                        |
+| plain array                 | enumerable non-index string       | ordinary data property                                              |
+| plain array                 | `"length"`                        | conceptual array length                                             |
 | `TrackedMap` / `TrackedSet` | `"index"` / `"slots"` / `"count"` | facade backing fields (addresses are tagged strings inside `index`) |
-| `TrackedDate` | `"epochMs"` | epoch milliseconds |
+| `TrackedDate`               | `"epochMs"`                       | epoch milliseconds                                                  |
 
 `[]` names the logical state root, but a half cannot add, replace, or remove that stable root. Every constructed path is a shallow-frozen copy. `add` requires an absent address and makes it present; `replace` requires a present address and changes its value; `remove` requires a present address and makes it absent. Presence is distinct from a stored `undefined`.
 
@@ -387,7 +395,7 @@ document.transact(doc, () => {
 
 Listener shapes differ by target:
 
-```
+```ts
 // plain
 subscribe(state, (ops, meta) => void)
 subscribe(group, (state, ops, meta) => void)
@@ -469,7 +477,11 @@ const undo = () => {
 
 	if (!entry) return;
 
-	history.applyOps(entry.state, [...entry.ops].reverse().map((op) => op.undo), { replay: true });
+	history.applyOps(
+		entry.state,
+		[...entry.ops].reverse().map((op) => op.undo),
+		{ replay: true },
+	);
 
 	index -= 1;
 };

@@ -1,6 +1,7 @@
 import { addressOf } from "./address";
 import { assertMutableFacade } from "./facadeGuard";
 import { iterateSlots } from "./iterateSlots";
+import { clearStore, deleteFromStore, type SlotStore } from "./slotStore";
 
 export class TrackedMap<K, V> {
 	private slots: Array<readonly [K, V] | null>;
@@ -59,24 +60,12 @@ export class TrackedMap<K, V> {
 	delete(key: K): boolean {
 		assertMutableFacade(this, "count");
 
-		const addr = addressOf(key);
-		const slot = this.index[addr];
-
-		if (slot === undefined) return false;
-
-		this.slots[slot] = null;
-		Reflect.deleteProperty(this.index, addr);
-		this.count -= 1;
-
-		return true;
+		return deleteFromStore(this as unknown as SlotStore<readonly [K, V]>, addressOf(key));
 	}
 
 	clear(): void {
 		assertMutableFacade(this, "count");
-
-		this.slots = [];
-		this.index = {};
-		this.count = 0;
+		clearStore(this as unknown as SlotStore<readonly [K, V]>);
 	}
 
 	entries(): IterableIterator<[K, V]> {
@@ -114,4 +103,9 @@ export class TrackedMap<K, V> {
 	declare readonly [Symbol.toStringTag]: "TrackedMap";
 }
 
-Object.defineProperty(TrackedMap.prototype, Symbol.toStringTag, { value: "TrackedMap", enumerable: false, configurable: false, writable: false });
+Object.defineProperty(TrackedMap.prototype, Symbol.toStringTag, {
+	value: "TrackedMap",
+	enumerable: false,
+	configurable: false,
+	writable: false,
+});

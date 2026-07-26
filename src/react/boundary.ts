@@ -1,6 +1,5 @@
 import { isChanged } from "proxy-compare";
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
-
 import { getRegisteredWrapperTarget, registerWrapperTarget } from "./wrapperRegistry";
 
 const { refSet, proxyStateMap } = unstable_getInternalStates();
@@ -10,7 +9,8 @@ const HAS_KEY_PROPERTY = "h";
 const HAS_OWN_KEY_PROPERTY = "o";
 const ALL_OWN_KEYS_PROPERTY = "w";
 
-const isObjectLike = (value: unknown): value is object => value !== null && (typeof value === "object" || typeof value === "function");
+const isObjectLike = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
 const isLiveProxy = (value: object): boolean => proxyStateMap.has(value);
 const getProxyTarget = (liveProxy: object): object => proxyStateMap.get(liveProxy)?.[0] ?? liveProxy;
 
@@ -35,8 +35,11 @@ interface CacheTarget {
 
 export interface Boundary {
 	wrap<T extends object>(sourceProxy: T): T;
+
 	readsChanged(sourceProxy: object): boolean;
+
 	evictChangedTargets(): void;
+
 	resetReads(): void;
 }
 
@@ -105,7 +108,8 @@ const bindMethodToWrapper = (wrapper: object, method: Function): Function => {
 	return bound;
 };
 
-export const isWrapper = (value: unknown): boolean => isObjectLike(value) && getRegisteredWrapperTarget(value) !== undefined;
+export const isWrapper = (value: unknown): boolean =>
+	isObjectLike(value) && getRegisteredWrapperTarget(value) !== undefined;
 
 export function createBoundary(): Boundary {
 	const partitions = new Map<object, SourcePartition>();
@@ -190,8 +194,11 @@ export function createBoundary(): Boundary {
 				ensureBaseline(partition, liveProxy);
 
 				if (!isObjectLike(value)) return value;
+
 				if (typeof value === "function") return value;
+
 				if (refSet.has(value)) return value;
+
 				if (!isLiveProxy(value)) return value;
 
 				return wrapLive(value, partition);
@@ -258,6 +265,7 @@ export function createBoundary(): Boundary {
 			const partition = partitions.get(sourceProxy);
 
 			if (partition?.previousRootSnapshot === undefined) return false;
+
 			if (partition.affected.size === 0) return false;
 
 			const translated = new WeakMap<object, UsageRecord>();

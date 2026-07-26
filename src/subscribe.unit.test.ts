@@ -51,9 +51,13 @@ describe("subscribe", () => {
 			heard.push(meta);
 		});
 
-		transact(state, () => {
-			state.count = 1;
-		}, { a: 1 });
+		transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ a: 1 },
+		);
 
 		expect(heard).toEqual([{ a: 1 }]);
 	});

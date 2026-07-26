@@ -12,7 +12,18 @@ const setLegacyYear = (date: Date, year: unknown): number => {
 	return epochMs;
 };
 
-type DateConstructorArgs = [] | [value: number | string] | [year: number, monthIndex: number, date?: number, hours?: number, minutes?: number, seconds?: number, milliseconds?: number];
+type DateConstructorArgs =
+	| []
+	| [value: number | string]
+	| [
+			year: number,
+			monthIndex: number,
+			date?: number,
+			hours?: number,
+			minutes?: number,
+			seconds?: number,
+			milliseconds?: number,
+	  ];
 
 const constructDate = (args: DateConstructorArgs): Date => {
 	switch (args.length) {
@@ -246,4 +257,9 @@ export class TrackedDate {
 	declare readonly [Symbol.toStringTag]: "TrackedDate";
 }
 
-Object.defineProperty(TrackedDate.prototype, Symbol.toStringTag, { value: "TrackedDate", enumerable: false, configurable: false, writable: false });
+Object.defineProperty(TrackedDate.prototype, Symbol.toStringTag, {
+	value: "TrackedDate",
+	enumerable: false,
+	configurable: false,
+	writable: false,
+});

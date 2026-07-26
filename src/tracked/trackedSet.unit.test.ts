@@ -91,7 +91,11 @@ describe("TrackedSet", () => {
 			]),
 		);
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.do.op).toBe("add");
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({ op: "add", path: ["set", "index", addr], value: 20 });
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({
+			op: "add",
+			path: ["set", "index", addr],
+			value: 20,
+		});
 
 		expect(doPaths(heard[1])).toEqual(
 			expect.arrayContaining([
@@ -100,7 +104,11 @@ describe("TrackedSet", () => {
 				["set", "count"],
 			]),
 		);
-		expect(heard[1]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({ op: "replace", path: ["set", "slots", 20], value: null });
+		expect(heard[1]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({
+			op: "replace",
+			path: ["set", "slots", 20],
+			value: null,
+		});
 		expect(heard[1]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("remove");
 	});
 

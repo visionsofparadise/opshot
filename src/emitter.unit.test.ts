@@ -1,12 +1,6 @@
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
-import {
-	addStateListener,
-	emitBareFlush,
-	getEmitter,
-	getOrCreateEmitter,
-	mintGroupedEmitter,
-} from "./emitter";
+import { addStateListener, emitBareFlush, getEmitter, getOrCreateEmitter, mintGroupedEmitter } from "./emitter";
 import { getGroupListeners } from "./createGroup";
 import { diffSnapshots } from "./ops/diff";
 import { type Op } from "./ops/operation";
@@ -40,9 +34,13 @@ describe("emitter", () => {
 			heard.push({ ops, meta });
 		});
 
-		transact(state, () => {
-			state.count = 1;
-		}, { actor: "a" });
+		transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ actor: "a" },
+		);
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toEqual({ actor: "a" });
@@ -83,9 +81,13 @@ describe("emitter", () => {
 		});
 
 		state.count = 1;
-		transact(state, () => {
-			state.flag = true;
-		}, { tag: "tx" });
+		transact(
+			state,
+			() => {
+				state.flag = true;
+			},
+			{ tag: "tx" },
+		);
 		state.trail = 1;
 
 		expect(order).toEqual(["count:bare", "flag:tx"]);

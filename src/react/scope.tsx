@@ -1,6 +1,5 @@
 import { memo, useEffect, useReducer, useRef, type FC } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
-
 import { isState } from "../isState";
 import { constructorName } from "../valtio/boundary";
 import { classifyValue } from "../valtio/classify";
@@ -29,15 +28,25 @@ const assertSubstitutableContainer = (container: object): void => {
 	const className = constructorName(container.constructor);
 
 	if (kind === "arraySubclass") {
-		throw new Error(`opshot: scope found a state inside ${className}, an array subclass whose prototype can't survive substitution. Move the state to a plain array, or ignore() the ${className}.`);
+		throw new Error(
+			`opshot: scope found a state inside ${className}, an array subclass whose prototype can't survive substitution. Move the state to a plain array, or ignore() the ${className}.`,
+		);
 	}
 
 	const hidden = kind === "privateClass" ? "private fields" : "internal slots";
 
-	throw new Error(`opshot: scope found a state inside ${className}, whose ${hidden} can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`);
+	throw new Error(
+		`opshot: scope found a state inside ${className}, whose ${hidden} can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`,
+	);
 };
 
-function findStatePaths(value: unknown, maxDepth: number, path: PropPath = [], paths: Array<PropPath> = [], ancestors = new Set<object>()): Array<PropPath> {
+function findStatePaths(
+	value: unknown,
+	maxDepth: number,
+	path: PropPath = [],
+	paths: Array<PropPath> = [],
+	ancestors = new Set<object>(),
+): Array<PropPath> {
 	if (isState(value)) {
 		paths.push(path);
 
@@ -45,8 +54,11 @@ function findStatePaths(value: unknown, maxDepth: number, path: PropPath = [], p
 	}
 
 	if (value === null || typeof value !== "object") return paths;
+
 	if ("$$typeof" in value) return paths;
+
 	if (ancestors.has(value)) return paths;
+
 	if (path.length >= maxDepth) return paths;
 
 	ancestors.add(value);
@@ -129,7 +141,8 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 	return clone as T;
 }
 
-const sourcesKey = (sources: Array<object>): string => `${sources.length}:${sources.map((source) => getVersion(source)).join(",")}`;
+const sourcesKey = (sources: Array<object>): string =>
+	`${sources.length}:${sources.map((source) => getVersion(source)).join(",")}`;
 
 export function scope<P extends object>(Component: FC<P>, options?: ScopeOptions): FC<P> {
 	const maxDepth = options?.maxDepth ?? 10;

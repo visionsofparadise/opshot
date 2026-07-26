@@ -1,6 +1,6 @@
 import { transact } from "../transact";
 import { subscribe } from "../subscribe";
-import {createMutableState} from "../createMutableState";
+import { createMutableState } from "../createMutableState";
 import { cloneValue } from "./cloneValue";
 import { type Operation } from "./operation";
 import { createOperationPath } from "./path";
@@ -54,8 +54,18 @@ describe("cloneValue", () => {
 		const symbolKey = Symbol("rideAlong");
 		const value = { visible: true } as Record<PropertyKey, unknown>;
 
-		Object.defineProperty(value, "hidden", { value: { count: 1 }, enumerable: false, configurable: true, writable: true });
-		Object.defineProperty(value, symbolKey, { value: { count: 2 }, enumerable: true, configurable: true, writable: true });
+		Object.defineProperty(value, "hidden", {
+			value: { count: 1 },
+			enumerable: false,
+			configurable: true,
+			writable: true,
+		});
+		Object.defineProperty(value, symbolKey, {
+			value: { count: 2 },
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
 
 		const cloned = readWholeValueUndo(value);
 
@@ -89,10 +99,25 @@ describe("cloneValue", () => {
 		const value = [{ count: 1 }];
 
 		value.length = 3;
-		Object.defineProperty(value, "label", { value: { count: 2 }, enumerable: true, configurable: true, writable: true });
-		Object.defineProperty(value, "hidden", { value: { count: 3 }, enumerable: false, configurable: true, writable: true });
+		Object.defineProperty(value, "label", {
+			value: { count: 2 },
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
+		Object.defineProperty(value, "hidden", {
+			value: { count: 3 },
+			enumerable: false,
+			configurable: true,
+			writable: true,
+		});
 		Object.defineProperty(value, "current", { get: getCurrent, enumerable: true, configurable: true });
-		Object.defineProperty(value, symbolKey, { value: { count: 4 }, enumerable: true, configurable: true, writable: true });
+		Object.defineProperty(value, symbolKey, {
+			value: { count: 4 },
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
 
 		const cloned = readWholeValueUndo(value);
 

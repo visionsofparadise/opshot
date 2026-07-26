@@ -145,9 +145,16 @@ describe("TrackedMap", () => {
 				["map", "count"],
 			]),
 		);
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({ op: "add", path: ["map", "index", addr], value: 20 });
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({
+			op: "add",
+			path: ["map", "index", addr],
+			value: 20,
+		});
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.do.op).toBe("add");
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "count")?.do).toMatchObject({ op: "replace", path: ["map", "count"] });
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "count")?.do).toMatchObject({
+			op: "replace",
+			path: ["map", "count"],
+		});
 
 		expect(doPaths(heard[1])).toEqual([["map", "slots", 20]]);
 		expect(heard[1]?.[0]?.do.op).toBe("replace");
@@ -160,7 +167,11 @@ describe("TrackedMap", () => {
 			]),
 		);
 		expect(heard[2]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("remove");
-		expect(heard[2]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({ op: "replace", path: ["map", "slots", 20], value: null });
+		expect(heard[2]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({
+			op: "replace",
+			path: ["map", "slots", 20],
+			value: null,
+		});
 	});
 
 	it("emits key and value interiors through slots", () => {
@@ -310,14 +321,12 @@ describe("TrackedMap", () => {
 	});
 
 	it("throws when mutating a snapshot copy", () => {
-	const state = createMutableState({
-		map: new TrackedMap([
-			["a", 1],
-		]),
-	});
-	const frozen = snapshot(state);
+		const state = createMutableState({
+			map: new TrackedMap([["a", 1]]),
+		});
+		const frozen = snapshot(state);
 
-	expect(() => frozen.map.set("b", 2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
-	expect(frozen.map.size).toBe(1);
+		expect(() => frozen.map.set("b", 2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
+		expect(frozen.map.size).toBe(1);
 	});
 });

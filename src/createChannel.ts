@@ -1,14 +1,17 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emitter";
 import { applyOps as standaloneApplyOps } from "./ops/applyOps";
-import type { Operation } from "./ops/operation";
 import { stampChannelMeta, toChannelContext, type Context, type Op } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
+import type { Operation } from "./ops/operation";
 
 export interface Channel<M extends object> {
 	transact(state: object, mutate: () => void, meta?: Partial<M>): void;
+
 	subscribe(group: Group, listener: (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+
 	subscribe(state: object, listener: (ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+
 	applyOps(state: object, operations: ReadonlyArray<Operation>, meta?: Partial<M>): void;
 }
 
@@ -19,8 +22,13 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		standaloneTransact(state, mutate, stampChannelMeta(channelId, meta));
 	}
 
-	function subscribe(group: Group, listener: (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+	function subscribe(
+		group: Group,
+		listener: (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void,
+	): () => void;
+
 	function subscribe(state: object, listener: (ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+
 	function subscribe(
 		target: object | Group,
 		listener:
@@ -38,7 +46,10 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		}
 
 		return addStateListener(target, (ops, meta) => {
-			(listener as (ops: ReadonlyArray<Op>, context: Context<M>) => void)(ops, toChannelContext(channelId, defaults, meta));
+			(listener as (ops: ReadonlyArray<Op>, context: Context<M>) => void)(
+				ops,
+				toChannelContext(channelId, defaults, meta),
+			);
 		});
 	}
 

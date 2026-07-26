@@ -44,9 +44,11 @@ const weigh = (value: unknown, state: WeightState): void => {
 			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
 			if (!descriptor || !("value" in descriptor)) continue;
+
 			if (!addWeight(state, KEY_WEIGHT)) return;
 
 			weigh(descriptor.value, state);
+
 			if (state.weight > state.budget) return;
 		}
 

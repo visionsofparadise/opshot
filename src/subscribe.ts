@@ -5,8 +5,7 @@ export type { GroupListener, StateListener } from "./emitter";
 export type { Op } from "./ops/operation";
 
 export type Context<M> =
-	| { readonly isTransaction: true; readonly meta: M }
-	| { readonly isTransaction: false; readonly meta: unknown };
+	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
 
 export function subscribe(group: Group, listener: GroupListener): () => void;
 export function subscribe(state: object, listener: StateListener): () => void;
@@ -18,7 +17,7 @@ export function subscribe(target: object | Group, listener: StateListener | Grou
 	});
 }
 
-export const channelStampBrand: unique symbol = Symbol("opshot.channelStamp");
+const channelStampBrand: unique symbol = Symbol("opshot.channelStamp");
 
 export interface ChannelStamp {
 	readonly [channelStampBrand]: object;
@@ -29,21 +28,25 @@ export function stampChannelMeta(channelId: object, meta?: object): ChannelStamp
 	return { [channelStampBrand]: channelId, meta };
 }
 
-export function isChannelStamp(value: unknown): value is ChannelStamp {
+function isChannelStamp(value: unknown): value is ChannelStamp {
 	return typeof value === "object" && value !== null && channelStampBrand in value;
 }
 
-export function isOwnChannelStamp(value: unknown, channelId: object): value is ChannelStamp {
+function isOwnChannelStamp(value: unknown, channelId: object): value is ChannelStamp {
 	return isChannelStamp(value) && value[channelStampBrand] === channelId;
 }
 
-export function unwrapTransportMeta(meta: unknown): unknown {
+function unwrapTransportMeta(meta: unknown): unknown {
 	if (isChannelStamp(meta)) return meta.meta;
 
 	return meta;
 }
 
-export function toChannelContext<M extends object>(channelId: object, defaults: M | undefined, meta: unknown): Context<M> {
+export function toChannelContext<M extends object>(
+	channelId: object,
+	defaults: M | undefined,
+	meta: unknown,
+): Context<M> {
 	if (isOwnChannelStamp(meta, channelId)) {
 		return { isTransaction: true, meta: { ...defaults, ...meta.meta } as M };
 	}

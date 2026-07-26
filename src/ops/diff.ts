@@ -1,7 +1,7 @@
 import { isSameIdentity } from "../identity";
 import { cyclicError, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAddOperation, createRemoveOperation, createReplaceOperation, type Op } from "./operation";
-import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
+import { appendOperationPath, assertSafePath, createOperationPath, type OperationPath } from "./path";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
 
 type RootKind = "plainObject" | "plainArray";
@@ -76,7 +76,8 @@ const tryCollapse = (
 	return atomicWeight;
 };
 
-const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean => ancestors.get(before)?.has(after) ?? false;
+const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean =>
+	ancestors.get(before)?.has(after) ?? false;
 
 const enterAncestorPair = (ancestors: Ancestors, before: object, after: object): void => {
 	const afterSet = ancestors.get(before) ?? new Set<object>();
@@ -91,25 +92,19 @@ const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): 
 	if (!afterSet) return;
 
 	afterSet.delete(after);
+
 	if (afterSet.size === 0) ancestors.delete(before);
 };
 
-const isObjectLike = (value: unknown): value is object => value !== null && (typeof value === "object" || typeof value === "function");
+const isObjectLike = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
 
-const sharesStorageIdentity = (before: unknown, after: unknown): boolean => isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
-
-const assertSafePath = (path: OperationPath): void => {
-	for (let index = 0; index < path.length; index++) {
-		const segment = path[index];
-
-		if (segment === "__proto__" || (segment === "prototype" && path[index - 1] === "constructor")) {
-			throw new Error(`opshot: reserved operation path ${formatOperationPath(path)}`);
-		}
-	}
-};
+const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
+	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
 
 const assertSafeSubtree = (value: unknown, path: OperationPath, activeAncestors = new WeakSet()): void => {
 	if (!isPlainArray(value) && !isPlainObject(value)) return;
+
 	if (activeAncestors.has(value)) return;
 
 	activeAncestors.add(value);
@@ -171,7 +166,13 @@ const diffObjectProperties = (
 	return weight;
 };
 
-const diffArray = (before: Array<unknown>, after: Array<unknown>, path: OperationPath, ops: Array<Op>, ancestors: Ancestors): number => {
+const diffArray = (
+	before: Array<unknown>,
+	after: Array<unknown>,
+	path: OperationPath,
+	ops: Array<Op>,
+	ancestors: Ancestors,
+): number => {
 	const overlap = Math.min(before.length, after.length);
 	let weight = 0;
 
@@ -181,6 +182,7 @@ const diffArray = (before: Array<unknown>, after: Array<unknown>, path: Operatio
 		const nextPath = appendOperationPath(path, index);
 
 		if (!beforePresent && !afterPresent) continue;
+
 		if (!beforePresent) weight += pushAdd(ops, nextPath, after[index]);
 		else if (!afterPresent) weight += pushRemove(ops, nextPath, before[index]);
 		else weight += diffValue(before[index], after[index], nextPath, ops, ancestors);
@@ -233,7 +235,13 @@ const walkContainer = (
 	}
 };
 
-const diffValue = (before: unknown, after: unknown, path: OperationPath, ops: Array<Op>, ancestors: Ancestors): number => {
+const diffValue = (
+	before: unknown,
+	after: unknown,
+	path: OperationPath,
+	ops: Array<Op>,
+	ancestors: Ancestors,
+): number => {
 	if (Object.is(before, after)) return 0;
 
 	if (path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after)) {
@@ -248,7 +256,9 @@ const diffValue = (before: unknown, after: unknown, path: OperationPath, ops: Ar
 	}
 
 	if (isPlainObject(before) && isPlainObject(after)) {
-		return walkContainer(before, after, path, ops, ancestors, () => diffObjectProperties(before, after, path, ops, ancestors, false));
+		return walkContainer(before, after, path, ops, ancestors, () =>
+			diffObjectProperties(before, after, path, ops, ancestors, false),
+		);
 	}
 
 	assertSafeSubtree(before, path);
@@ -259,6 +269,7 @@ const diffValue = (before: unknown, after: unknown, path: OperationPath, ops: Ar
 
 const getRootKind = (value: object): RootKind | undefined => {
 	if (isPlainArray(value)) return "plainArray";
+
 	if (isPlainObject(value)) return "plainObject";
 
 	return undefined;

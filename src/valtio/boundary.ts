@@ -1,11 +1,8 @@
 import { getUntracked, markToTrack } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
-
 import { getRegisteredTarget, registerSnapshotCopy, resolveIdentity } from "../identity";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { classifyValue, hasOwnEnumerableFunction, isTrackable } from "./classify";
-
-export { classifyValue, type ValueKind } from "./classify";
 
 const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
 
@@ -17,9 +14,13 @@ const directWriteGenerationRegistryKey = Symbol.for("opshot.directWriteGeneratio
 const snapshotDirectWriteGenerationRegistryKey = Symbol.for("opshot.snapshotDirectWriteGenerations");
 const fallbackDirectWriteGenerations = new WeakMap<object, DirectWriteGeneration>();
 const fallbackSnapshotDirectWriteGenerations = new WeakMap<object, DirectWriteGeneration>();
-const isGenerationRegistry = (value: unknown): value is WeakMap<object, DirectWriteGeneration> => value instanceof WeakMap && Object.getPrototypeOf(value) === WeakMap.prototype;
+const isGenerationRegistry = (value: unknown): value is WeakMap<object, DirectWriteGeneration> =>
+	value instanceof WeakMap && Object.getPrototypeOf(value) === WeakMap.prototype;
 
-const getGenerationRegistry = (key: symbol, fallback: WeakMap<object, DirectWriteGeneration>): WeakMap<object, DirectWriteGeneration> => {
+const getGenerationRegistry = (
+	key: symbol,
+	fallback: WeakMap<object, DirectWriteGeneration>,
+): WeakMap<object, DirectWriteGeneration> => {
 	try {
 		const existing: unknown = Reflect.get(globalThis, key);
 
@@ -36,7 +37,10 @@ const getGenerationRegistry = (key: symbol, fallback: WeakMap<object, DirectWrit
 };
 
 const directWriteGenerations = getGenerationRegistry(directWriteGenerationRegistryKey, fallbackDirectWriteGenerations);
-const snapshotDirectWriteGenerations = getGenerationRegistry(snapshotDirectWriteGenerationRegistryKey, fallbackSnapshotDirectWriteGenerations);
+const snapshotDirectWriteGenerations = getGenerationRegistry(
+	snapshotDirectWriteGenerationRegistryKey,
+	fallbackSnapshotDirectWriteGenerations,
+);
 
 const advanceDirectWriteGeneration = (target: object): void => {
 	const current = directWriteGenerations.get(target);
@@ -70,20 +74,30 @@ export const getDirectWriteVersion = (value: object): number | undefined => getD
 
 const ignoreOption = "ignore(value) to store it by reference, untracked";
 const unsafeTrackDataOption = "unsafeTrack(value) to track its data anyway";
-const unsafeTrackPrivateOption = "unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state";
-const unsafeTrackSlotOption = "unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state";
+const unsafeTrackPrivateOption =
+	"unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state";
+const unsafeTrackSlotOption =
+	"unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state";
 const unsafeTrackLossyOption = "unsafeTrack(value) to track it lossily";
 
-export const constructorName = (candidate: unknown): string => (typeof candidate === "function" && candidate.name !== "" ? candidate.name : "Object");
+export const constructorName = (candidate: unknown): string =>
+	typeof candidate === "function" && candidate.name !== "" ? candidate.name : "Object";
 
 const boundaryError = (className: string, reason: string, options: Array<string>): Error =>
 	new Error(`opshot: ${className} cannot be tracked (${reason}). Options: ${options.join("; ")}.`);
 
 const slotContainerError = (className: string, trackedName: string): Error =>
-	boundaryError(className, "its state lives in internal slots", [`use ${trackedName} for a tracked equivalent`, unsafeTrackLossyOption, ignoreOption]);
+	boundaryError(className, "its state lives in internal slots", [
+		`use ${trackedName} for a tracked equivalent`,
+		unsafeTrackLossyOption,
+		ignoreOption,
+	]);
 
 const arraySubclassError = (className: string): Error =>
-	boundaryError(className, "array subclasses lose their prototype in snapshots", [unsafeTrackDataOption, ignoreOption]);
+	boundaryError(className, "array subclasses lose their prototype in snapshots", [
+		unsafeTrackDataOption,
+		ignoreOption,
+	]);
 
 const cleanClassError = (className: string): Error =>
 	boundaryError(className, "arrow-method writes won't be tracked", [unsafeTrackDataOption, ignoreOption]);
@@ -99,7 +113,8 @@ const snapshotDonationError = (key: string | symbol): Error =>
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOps.`,
 	);
 
-const reservedDataPathError = (path: ReadonlyArray<string>): Error => new Error(`opshot: reserved data path /${path.join("/")}`);
+const reservedDataPathError = (path: ReadonlyArray<string>): Error =>
+	new Error(`opshot: reserved data path /${path.join("/")}`);
 const constructorPathTargetCounts = new WeakMap<object, number>();
 
 interface RootGraph {
@@ -184,6 +199,7 @@ const releaseRootGraph = (graph: RootGraph): void => {
 		const references = rootGraphsByTarget.get(target);
 
 		references?.delete(reference);
+
 		if (references?.size === 0) rootGraphsByTarget.delete(target);
 	}
 
@@ -246,7 +262,8 @@ const recomputeRootGraph = (graph: RootGraph): void => {
 
 		const constructorTarget = getEnumerableDataChild(target, "constructor");
 
-		if (constructorTarget) constructorTargets.set(constructorTarget, (constructorTargets.get(constructorTarget) ?? 0) + 1);
+		if (constructorTarget)
+			constructorTargets.set(constructorTarget, (constructorTargets.get(constructorTarget) ?? 0) + 1);
 
 		for (const key of Object.keys(target)) {
 			const child = getEnumerableDataChild(target, key);
@@ -258,6 +275,7 @@ const recomputeRootGraph = (graph: RootGraph): void => {
 	visit(root);
 
 	for (const [target, count] of graph.constructorTargets) adjustConstructorPathTarget(target, -count);
+
 	for (const [target, count] of constructorTargets) adjustConstructorPathTarget(target, count);
 
 	for (const target of graph.targets) {
@@ -266,6 +284,7 @@ const recomputeRootGraph = (graph: RootGraph): void => {
 		const references = rootGraphsByTarget.get(target);
 
 		references?.delete(getRootGraphReference(graph));
+
 		if (references?.size === 0) rootGraphsByTarget.delete(target);
 	}
 
@@ -280,7 +299,10 @@ const recomputeRootGraph = (graph: RootGraph): void => {
 
 	graph.targets = targets;
 	graph.constructorTargets = constructorTargets;
-	graph.finalizationState.constructorTargets = [...constructorTargets].map(([target, count]) => ({ target: new WeakRef(target), count }));
+	graph.finalizationState.constructorTargets = [...constructorTargets].map(([target, count]) => ({
+		target: new WeakRef(target),
+		count,
+	}));
 };
 
 export const registerTrackedRoot = (value: object): void => {
@@ -289,7 +311,12 @@ export const registerTrackedRoot = (value: object): void => {
 	if (!root || rootGraphsByRoot.has(root)) return;
 
 	const finalizationState: RootFinalizationState = { active: true, constructorTargets: [] };
-	const graph: RootGraph = { root: new WeakRef(root), finalizationState, targets: new Set(), constructorTargets: new Map() };
+	const graph: RootGraph = {
+		root: new WeakRef(root),
+		finalizationState,
+		targets: new Set(),
+		constructorTargets: new Map(),
+	};
 
 	rootGraphsByRoot.set(root, graph);
 	rootGraphFinalizer.register(root, finalizationState, finalizationState);
@@ -303,7 +330,11 @@ export const unregisterTrackedRoot = (value: object): void => {
 	if (graph) releaseRootGraph(graph);
 };
 
-export const assertSafeDataPaths = (value: unknown, path = new Array<string>(), activeAncestors = new WeakSet()): void => {
+export const assertSafeDataPaths = (
+	value: unknown,
+	path = new Array<string>(),
+	activeAncestors = new WeakSet(),
+): void => {
 	if (typeof value !== "object" || value === null || activeAncestors.has(value)) return;
 
 	activeAncestors.add(value);
@@ -312,7 +343,8 @@ export const assertSafeDataPaths = (value: unknown, path = new Array<string>(), 
 		for (const key of Object.keys(value)) {
 			const nextPath = [...path, key];
 
-			if (key === "__proto__" || (key === "prototype" && path[path.length - 1] === "constructor")) throw reservedDataPathError(nextPath);
+			if (key === "__proto__" || (key === "prototype" && path[path.length - 1] === "constructor"))
+				throw reservedDataPathError(nextPath);
 
 			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
@@ -323,12 +355,17 @@ export const assertSafeDataPaths = (value: unknown, path = new Array<string>(), 
 	}
 };
 
-const rejectionError = (value: object, kind: "arraySubclass" | "cleanClass" | "privateClass" | "nativeClass"): Error => {
+const rejectionError = (
+	value: object,
+	kind: "arraySubclass" | "cleanClass" | "privateClass" | "nativeClass",
+): Error => {
 	const className = constructorName(value.constructor);
 	const prototype: unknown = Object.getPrototypeOf(value);
 
 	if (prototype === Map.prototype) return slotContainerError(className, "TrackedMap");
+
 	if (prototype === Set.prototype) return slotContainerError(className, "TrackedSet");
+
 	if (prototype === Date.prototype) return slotContainerError(className, "TrackedDate");
 
 	switch (kind) {
@@ -343,7 +380,9 @@ const rejectionError = (value: object, kind: "arraySubclass" | "cleanClass" | "p
 	}
 };
 
-// snapCache must seed BEFORE the property walk (snapshot identity depends on it), and child recursion must call THIS function by name -- the default recurses by its own name and would rebuild children without the added accessor branch.
+/**
+ * snapCache must seed BEFORE the property walk (snapshot identity depends on it), and child recursion must call THIS function by name -- the default recurses by its own name and would rebuild children without the added accessor branch.
+ */
 const createSnapshotPreservingAccessors = <T extends object>(target: T, version: number): T => {
 	const cached = snapCache.get(target);
 
@@ -390,7 +429,8 @@ const createSnapshotPreservingAccessors = <T extends object>(target: T, version:
 			} else {
 				const childState = proxyStateMap.get(value);
 
-				if (childState) snapshotDescriptor.value = createSnapshotPreservingAccessors(childState[0], childState[1]());
+				if (childState)
+					snapshotDescriptor.value = createSnapshotPreservingAccessors(childState[0], childState[1]());
 			}
 		}
 
@@ -415,12 +455,15 @@ export function installBoundary(): void {
 
 	unstable_replaceInternalFunction("canProxy", () => (value) => {
 		if (typeof value !== "object" || value === null) return false;
+
 		if (refSet.has(value)) return false;
+
 		if (isUnsafeTracked(value)) return true;
 
 		const kind = classifyValue(value);
 
 		if (kind === "plain" || kind === "plainArray") return !Object.isFrozen(value);
+
 		if (kind === "cleanClass" && !hasOwnEnumerableFunction(value)) return true;
 
 		throw rejectionError(value, kind);
@@ -437,7 +480,8 @@ export function installBoundary(): void {
 			const defaultDelete = handler.deleteProperty;
 			const defaultSet = handler.set;
 
-			if (!defaultDelete || !defaultSet) throw new Error("opshot: valtio default handler is missing a mutation trap");
+			if (!defaultDelete || !defaultSet)
+				throw new Error("opshot: valtio default handler is missing a mutation trap");
 
 			return {
 				...handler,
@@ -448,18 +492,22 @@ export function installBoundary(): void {
 					const hadOwn = Object.hasOwn(target, prop);
 					const deleted = defaultDelete(target, prop);
 
-					if (deleted && hadOwn && previousChild && !Object.hasOwn(target, prop)) for (const graph of rootGraphs) recomputeRootGraph(graph);
+					if (deleted && hadOwn && previousChild && !Object.hasOwn(target, prop))
+						for (const graph of rootGraphs) recomputeRootGraph(graph);
 
-					if (tracksDirectWrites && deleted && hadOwn && !Object.hasOwn(target, prop)) advanceDirectWriteGeneration(target);
+					if (tracksDirectWrites && deleted && hadOwn && !Object.hasOwn(target, prop))
+						advanceDirectWriteGeneration(target);
 
 					return deleted;
 				},
 				set(target, prop, value, receiver) {
-					// ProxyHandler types value as any; the unknown local restores narrowing.
 					const assigned: unknown = value;
 
 					if (prop === "__proto__") throw reservedDataPathError(["__proto__"]);
-					if (prop === "prototype" && (constructorPathTargetCounts.get(target) ?? 0) > 0) throw reservedDataPathError(["constructor", "prototype"]);
+
+					if (prop === "prototype" && (constructorPathTargetCounts.get(target) ?? 0) > 0)
+						throw reservedDataPathError(["constructor", "prototype"]);
+
 					if (prop === "constructor" && typeof assigned === "object" && assigned !== null) {
 						const prototypeDescriptor = Reflect.getOwnPropertyDescriptor(assigned, "prototype");
 
@@ -477,7 +525,10 @@ export function installBoundary(): void {
 					const tracksDirectWrites = directWriteGenerations.has(target);
 					const rootGraphs = getRootGraphs(target);
 					const previousChild = rootGraphs.length > 0 ? getEnumerableDataChild(target, prop) : undefined;
-					const previousLength: unknown = rootGraphs.length > 0 && Array.isArray(target) && prop === "length" ? Reflect.get(target, "length") : undefined;
+					const previousLength: unknown =
+						rootGraphs.length > 0 && Array.isArray(target) && prop === "length"
+							? Reflect.get(target, "length")
+							: undefined;
 					const hadOwn = tracksDirectWrites && Object.hasOwn(target, prop);
 					const previous: unknown = tracksDirectWrites ? Reflect.get(target, prop, receiver) : undefined;
 
@@ -486,15 +537,18 @@ export function installBoundary(): void {
 					try {
 						const written = defaultSet(target, prop, value, receiver);
 						const currentChild = rootGraphs.length > 0 ? getEnumerableDataChild(target, prop) : undefined;
-						const currentLength: unknown = previousLength === undefined ? undefined : Reflect.get(target, "length");
+						const currentLength: unknown =
+							previousLength === undefined ? undefined : Reflect.get(target, "length");
 
-						if (previousChild !== currentChild || previousLength !== currentLength) for (const graph of rootGraphs) recomputeRootGraph(graph);
+						if (previousChild !== currentChild || previousLength !== currentLength)
+							for (const graph of rootGraphs) recomputeRootGraph(graph);
 
 						if (tracksDirectWrites) {
 							const hasOwn = Object.hasOwn(target, prop);
 							const current: unknown = Reflect.get(target, prop, receiver);
 
-							if (written && (hadOwn !== hasOwn || !Object.is(previous, current))) advanceDirectWriteGeneration(target);
+							if (written && (hadOwn !== hasOwn || !Object.is(previous, current)))
+								advanceDirectWriteGeneration(target);
 						}
 
 						return written;
@@ -505,7 +559,9 @@ export function installBoundary(): void {
 				defineProperty(target, prop, descriptor) {
 					if (setDepth > 0 || isInitializing()) return Reflect.defineProperty(target, prop, descriptor);
 
-					throw new Error("opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input");
+					throw new Error(
+						"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input",
+					);
 				},
 				setPrototypeOf() {
 					throw new Error("opshot: setPrototypeOf is not supported on tracked state");

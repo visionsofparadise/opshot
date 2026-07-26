@@ -1,5 +1,4 @@
 import { snapshot } from "valtio/vanilla";
-
 import { deliver, getEmitter, hasListeners, requireObjectSnapshot, settlePendingBare } from "./emitter";
 import { diffSnapshots } from "./ops/diff";
 
@@ -30,6 +29,7 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 	record.lastReported = after;
 
 	if (before === after) return;
+
 	if (!hasListeners(record)) return;
 
 	const ops = diffSnapshots(requireObjectSnapshot(before), requireObjectSnapshot(after));

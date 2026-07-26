@@ -22,7 +22,9 @@ describe("weighValue", () => {
 
 	it("treats ignore()d objects and functions as flat identity leaves", () => {
 		const ignored = ignore({ nested: { text: "x".repeat(1_000) }, more: { a: 1, b: 2, c: 3 } });
-		const largeFunction = Object.assign(() => undefined, { cache: { values: Array.from({ length: 100 }, (_, index) => index) } });
+		const largeFunction = Object.assign(() => undefined, {
+			cache: { values: Array.from({ length: 100 }, (_, index) => index) },
+		});
 
 		expect(weighValue(ignored, Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
 		expect(weighValue(largeFunction, Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);

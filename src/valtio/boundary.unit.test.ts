@@ -9,55 +9,68 @@ import { type Op } from "../ops/operation";
 import { ignore } from "../ignore";
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Op> }> => {
-  const emissions = new Array<{ state: T; ops: Array<Op> }>();
+	const emissions = new Array<{ state: T; ops: Array<Op> }>();
 
-  subscribe(state, (ops) => {
-    emissions.push({ state, ops: [...ops] });
-  });
+	subscribe(state, (ops) => {
+		emissions.push({ state, ops: [...ops] });
+	});
 
-  return emissions;
+	return emissions;
 };
 
 describe("boundary: tracked lane", () => {
-  it("tracks nested plain objects and arrays with fine-grained ops", () => {
-    const state = createMutableState({ document: { title: "a", tags: ["x", "y"] } });
-    const emissions = recordEmissions(state);
+	it("tracks nested plain objects and arrays with fine-grained ops", () => {
+		const state = createMutableState({ document: { title: "a", tags: ["x", "y"] } });
+		const emissions = recordEmissions(state);
 
-    transact(state, () => {
-      state.document.title = "b";
-    });
+		transact(state, () => {
+			state.document.title = "b";
+		});
 
-    transact(state, () => {
-      state.document.tags[1] = "z";
-    });
+		transact(state, () => {
+			state.document.tags[1] = "z";
+		});
 
-    expect(emissions.map((emission) => emission.ops)).toEqual([
-      [{ do: { op: "replace", path: ["document", "title"], value: "b" }, undo: { op: "replace", path: ["document", "title"], value: "a" } }],
-      [{ do: { op: "replace", path: ["document", "tags", 1], value: "z" }, undo: { op: "replace", path: ["document", "tags", 1], value: "y" } }],
-    ]);
-  });
+		expect(emissions.map((emission) => emission.ops)).toEqual([
+			[
+				{
+					do: { op: "replace", path: ["document", "title"], value: "b" },
+					undo: { op: "replace", path: ["document", "title"], value: "a" },
+				},
+			],
+			[
+				{
+					do: { op: "replace", path: ["document", "tags", 1], value: "z" },
+					undo: { op: "replace", path: ["document", "tags", 1], value: "y" },
+				},
+			],
+		]);
+	});
 
-  it("tracks an iterable plain object with fine-grained ops", () => {
-    const state = createMutableState({
-      collection: {
-        count: 0,
-        [Symbol.iterator]: function* () {
-          yield 1;
-        },
-      },
-    });
-    const emissions = recordEmissions(state);
+	it("tracks an iterable plain object with fine-grained ops", () => {
+		const state = createMutableState({
+			collection: {
+				count: 0,
+				[Symbol.iterator]: function* () {
+					yield 1;
+				},
+			},
+		});
+		const emissions = recordEmissions(state);
 
-    transact(state, () => {
-      state.collection.count = 1;
-    });
+		transact(state, () => {
+			state.collection.count = 1;
+		});
 
-    expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: ["collection", "count"], value: 1 }, undo: { op: "replace", path: ["collection", "count"], value: 0 } },
-    ]);
-    expect(state.collection.count).toBe(1);
-  });
+		expect(emissions).toHaveLength(1);
+		expect(emissions[0]?.ops).toEqual([
+			{
+				do: { op: "replace", path: ["collection", "count"], value: 1 },
+				undo: { op: "replace", path: ["collection", "count"], value: 0 },
+			},
+		]);
+		expect(state.collection.count).toBe(1);
+	});
 });
 
 describe("boundary: sparse-array snapshots", () => {
@@ -176,8 +189,12 @@ describe("boundary: throws at entry", () => {
 		Object.defineProperty(protoData, "__proto__", { value: { polluted: true }, enumerable: true });
 
 		expect(() => createMutableState(protoData)).toThrow("reserved data path /__proto__");
-		expect(() => createMutableState({ constructor: { prototype: { polluted: true } } })).toThrow("reserved data path /constructor/prototype");
-		expect(() => createMutableState({ safe: aliasedPrototype, constructor: aliasedPrototype })).toThrow("reserved data path /constructor/prototype");
+		expect(() => createMutableState({ constructor: { prototype: { polluted: true } } })).toThrow(
+			"reserved data path /constructor/prototype",
+		);
+		expect(() => createMutableState({ safe: aliasedPrototype, constructor: aliasedPrototype })).toThrow(
+			"reserved data path /constructor/prototype",
+		);
 
 		const state = createMutableState<{ value: unknown }>({ value: null });
 
@@ -188,7 +205,9 @@ describe("boundary: throws at entry", () => {
 		}).toThrow("reserved data path /value/constructor/prototype");
 		expect(state.value).toBeNull();
 
-		const staged = createMutableState<{ constructor: { prototype?: object; safe: boolean } }>({ constructor: { safe: true } });
+		const staged = createMutableState<{ constructor: { prototype?: object; safe: boolean } }>({
+			constructor: { safe: true },
+		});
 
 		expect(() => {
 			transact(staged, () => {
@@ -234,7 +253,11 @@ describe("boundary: throws at entry", () => {
 		}
 
 		const target: ConstructorTarget = { safe: true };
-		const state = createMutableState({ first: { constructor: target } as Parent, second: { constructor: target } as Parent, alias: target });
+		const state = createMutableState({
+			first: { constructor: target } as Parent,
+			second: { constructor: target } as Parent,
+			alias: target,
+		});
 
 		transact(state, () => {
 			delete state.first.constructor;
@@ -440,382 +463,397 @@ describe("boundary: throws at entry", () => {
 		expect(state.alias.prototype).toEqual({ safe: true });
 	});
 
-  it("throws for a Map in the define literal, naming TrackedMap, unsafeTrack, and ignore", () => {
-    expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow(
-      "opshot: Map cannot be tracked (its state lives in internal slots). Options: use TrackedMap for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
-    );
-  });
+	it("throws for a Map in the define literal, naming TrackedMap, unsafeTrack, and ignore", () => {
+		expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow(
+			"opshot: Map cannot be tracked (its state lives in internal slots). Options: use TrackedMap for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("throws for a Set, naming TrackedSet, unsafeTrack, and ignore", () => {
-    expect(() => createMutableState({ members: new Set<string>() })).toThrow(
-      "opshot: Set cannot be tracked (its state lives in internal slots). Options: use TrackedSet for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
-    );
-  });
+	it("throws for a Set, naming TrackedSet, unsafeTrack, and ignore", () => {
+		expect(() => createMutableState({ members: new Set<string>() })).toThrow(
+			"opshot: Set cannot be tracked (its state lives in internal slots). Options: use TrackedSet for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("throws for a Date, naming TrackedDate, unsafeTrack, and ignore", () => {
-    expect(() => createMutableState({ createdAt: new Date() })).toThrow(
-      "opshot: Date cannot be tracked (its state lives in internal slots). Options: use TrackedDate for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
-    );
-  });
+	it("throws for a Date, naming TrackedDate, unsafeTrack, and ignore", () => {
+		expect(() => createMutableState({ createdAt: new Date() })).toThrow(
+			"opshot: Date cannot be tracked (its state lives in internal slots). Options: use TrackedDate for a tracked equivalent; unsafeTrack(value) to track it lossily; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("throws for an offending value nested inside the define literal", () => {
-    expect(() => createMutableState({ outer: { m: new Map<string, number>() } })).toThrow("opshot: Map cannot be tracked");
-  });
+	it("throws for an offending value nested inside the define literal", () => {
+		expect(() => createMutableState({ outer: { m: new Map<string, number>() } })).toThrow(
+			"opshot: Map cannot be tracked",
+		);
+	});
 
-  it("throws at the assigning line inside mutate, leaving the state unchanged", () => {
-    interface Box {
-      box: unknown;
-    }
+	it("throws at the assigning line inside mutate, leaving the state unchanged", () => {
+		interface Box {
+			box: unknown;
+		}
 
-    const state = createMutableState<Box>({ box: null });
+		const state = createMutableState<Box>({ box: null });
 
-    expect(() => {
-      transact(state, () => {
-        state.box = new Map<string, number>();
-      });
-    }).toThrow("opshot: Map cannot be tracked");
+		expect(() => {
+			transact(state, () => {
+				state.box = new Map<string, number>();
+			});
+		}).toThrow("opshot: Map cannot be tracked");
 
-    expect(state.box).toBe(null);
-  });
+		expect(state.box).toBe(null);
+	});
 
-  it("throws for a private-field class, naming unsafeTrack and ignore", () => {
-    class Vault {
-      #combination = 7;
+	it("throws for a private-field class, naming unsafeTrack and ignore", () => {
+		class Vault {
+			#combination = 7;
 
-      read() {
-        return this.#combination;
-      }
-    }
+			read() {
+				return this.#combination;
+			}
+		}
 
-    expect(() => createMutableState({ vault: new Vault() })).toThrow(
-      "opshot: Vault cannot be tracked (its state is hidden in private fields). Options: unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.",
-    );
-  });
+		expect(() => createMutableState({ vault: new Vault() })).toThrow(
+			"opshot: Vault cannot be tracked (its state is hidden in private fields). Options: unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("throws for a Map subclass with the native-slot message under its own name", () => {
-    class Cache extends Map<string, number> {}
+	it("throws for a Map subclass with the native-slot message under its own name", () => {
+		class Cache extends Map<string, number> {}
 
-    expect(() => createMutableState({ cache: new Cache() })).toThrow(
-      "opshot: Cache cannot be tracked (its state is hidden in internal slots). Options: unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.",
-    );
-  });
+		expect(() => createMutableState({ cache: new Cache() })).toThrow(
+			"opshot: Cache cannot be tracked (its state is hidden in internal slots). Options: unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("throws for an array subclass instead of silently demoting it", () => {
-    class Stack extends Array<number> {}
+	it("throws for an array subclass instead of silently demoting it", () => {
+		class Stack extends Array<number> {}
 
-    expect(() => createMutableState({ stack: new Stack() })).toThrow(
-      "opshot: Stack cannot be tracked (array subclasses lose their prototype in snapshots). Options: unsafeTrack(value) to track its data anyway; ignore(value) to store it by reference, untracked.",
-    );
-  });
+		expect(() => createMutableState({ stack: new Stack() })).toThrow(
+			"opshot: Stack cannot be tracked (array subclasses lose their prototype in snapshots). Options: unsafeTrack(value) to track its data anyway; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("tracks a clean class instance with fine-grained interior ops", () => {
-    class Emitter {
-      count = 0;
-    }
+	it("tracks a clean class instance with fine-grained interior ops", () => {
+		class Emitter {
+			count = 0;
+		}
 
-    const state = createMutableState({ emitter: new Emitter() });
-    const emissions = recordEmissions(state);
+		const state = createMutableState({ emitter: new Emitter() });
+		const emissions = recordEmissions(state);
 
-    transact(state, () => {
-      state.emitter.count = 1;
-    });
+		transact(state, () => {
+			state.emitter.count = 1;
+		});
 
-    expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([
-      { do: { op: "replace", path: ["emitter", "count"], value: 1 }, undo: { op: "replace", path: ["emitter", "count"], value: 0 } },
-    ]);
-    expect(state.emitter).toBeInstanceOf(Emitter);
-    expect(state.emitter.count).toBe(1);
-  });
+		expect(emissions).toHaveLength(1);
+		expect(emissions[0]?.ops).toEqual([
+			{
+				do: { op: "replace", path: ["emitter", "count"], value: 1 },
+				undo: { op: "replace", path: ["emitter", "count"], value: 0 },
+			},
+		]);
+		expect(state.emitter).toBeInstanceOf(Emitter);
+		expect(state.emitter.count).toBe(1);
+	});
 
-  it("throws for a clean class with an own-enumerable arrow method, naming unsafeTrack", () => {
-    class Arrow {
-      count = 0;
-      bump = (): void => {
-        this.count += 1;
-      };
-    }
+	it("throws for a clean class with an own-enumerable arrow method, naming unsafeTrack", () => {
+		class Arrow {
+			count = 0;
+			bump = (): void => {
+				this.count += 1;
+			};
+		}
 
-    expect(() => createMutableState({ arrow: new Arrow() })).toThrow(
-      "opshot: Arrow cannot be tracked (arrow-method writes won't be tracked). Options: unsafeTrack(value) to track its data anyway; ignore(value) to store it by reference, untracked.",
-    );
-  });
+		expect(() => createMutableState({ arrow: new Arrow() })).toThrow(
+			"opshot: Arrow cannot be tracked (arrow-method writes won't be tracked). Options: unsafeTrack(value) to track its data anyway; ignore(value) to store it by reference, untracked.",
+		);
+	});
 
-  it("throws for a frozen Map: freezing does not freeze internal slots", () => {
-    expect(() => createMutableState({ lookup: Object.freeze(new Map<string, number>()) })).toThrow("opshot: Map cannot be tracked");
-  });
+	it("throws for a frozen Map: freezing does not freeze internal slots", () => {
+		expect(() => createMutableState({ lookup: Object.freeze(new Map<string, number>()) })).toThrow(
+			"opshot: Map cannot be tracked",
+		);
+	});
 });
 
 describe("boundary: admitted by rule", () => {
-  it("auto-ignores a frozen plain object: same reference through snapshots, no ops, interior write throws", () => {
-    const frozen = Object.freeze({ value: 1 });
-    const state = createMutableState({ box: frozen, tick: 0 });
-    const emissions = recordEmissions(state);
+	it("auto-ignores a frozen plain object: same reference through snapshots, no ops, interior write throws", () => {
+		const frozen = Object.freeze({ value: 1 });
+		const state = createMutableState({ box: frozen, tick: 0 });
+		const emissions = recordEmissions(state);
 
-    expect(state.box).toBe(frozen);
+		expect(state.box).toBe(frozen);
 
-    transact(state, () => {
-      state.tick = 1;
-    });
+		transact(state, () => {
+			state.tick = 1;
+		});
 
-    expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ do: { op: "replace", path: ["tick"], value: 1 }, undo: { op: "replace", path: ["tick"], value: 0 } }]);
-    expect(state.box).toBe(frozen);
+		expect(emissions).toHaveLength(1);
+		expect(emissions[0]?.ops).toEqual([
+			{ do: { op: "replace", path: ["tick"], value: 1 }, undo: { op: "replace", path: ["tick"], value: 0 } },
+		]);
+		expect(state.box).toBe(frozen);
 
-    expect(() => {
-      transact(state, () => {
-        (state.box as { value: number }).value = 2;
-      });
-    }).toThrow(TypeError);
-  });
+		expect(() => {
+			transact(state, () => {
+				(state.box as { value: number }).value = 2;
+			});
+		}).toThrow(TypeError);
+	});
 
-  it("carries a symbol-keyed prop into snapshots, bumping the version without emission on write", () => {
-    const marker: unique symbol = Symbol("marker");
+	it("carries a symbol-keyed prop into snapshots, bumping the version without emission on write", () => {
+		const marker: unique symbol = Symbol("marker");
 
-    interface Flagged {
-      count: number;
-      [marker]: string;
-    }
+		interface Flagged {
+			count: number;
+			[marker]: string;
+		}
 
-    const state = createMutableState<Flagged>({ count: 0, [marker]: "initial" });
-    const emissions = recordEmissions(state);
+		const state = createMutableState<Flagged>({ count: 0, [marker]: "initial" });
+		const emissions = recordEmissions(state);
 
-    expect(state[marker]).toBe("initial");
+		expect(state[marker]).toBe("initial");
 
-    transact(state, () => {
-      state[marker] = "written";
-    });
+		transact(state, () => {
+			state[marker] = "written";
+		});
 
-    expect(emissions).toHaveLength(0);
-    expect(state[marker]).toBe("written");
-  });
+		expect(emissions).toHaveLength(0);
+		expect(state[marker]).toBe("written");
+	});
 
-  it("carries a non-enumerable prop into snapshots, absent from ops, bumping the version without emission on write", () => {
-    interface Counted {
-      count: number;
-      hidden?: number;
-    }
+	it("carries a non-enumerable prop into snapshots, absent from ops, bumping the version without emission on write", () => {
+		interface Counted {
+			count: number;
+			hidden?: number;
+		}
 
-    const literal: Counted = { count: 0 };
+		const literal: Counted = { count: 0 };
 
-    Object.defineProperty(literal, "hidden", { value: 0, writable: true, enumerable: false, configurable: true });
+		Object.defineProperty(literal, "hidden", { value: 0, writable: true, enumerable: false, configurable: true });
 
-    const state = createMutableState<Counted>(literal);
-    const emissions = recordEmissions(state);
+		const state = createMutableState<Counted>(literal);
+		const emissions = recordEmissions(state);
 
-    expect(Object.getOwnPropertyDescriptor(state, "hidden")).toMatchObject({ value: 0, enumerable: false });
+		expect(Object.getOwnPropertyDescriptor(state, "hidden")).toMatchObject({ value: 0, enumerable: false });
 
-    transact(state, () => {
-      state.hidden = 5;
-    });
+		transact(state, () => {
+			state.hidden = 5;
+		});
 
-    expect(emissions).toHaveLength(0);
+		expect(emissions).toHaveLength(0);
 
-    transact(state, () => {
-      state.count = 1;
-    });
+		transact(state, () => {
+			state.count = 1;
+		});
 
-    expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }]);
+		expect(emissions).toHaveLength(1);
+		expect(emissions[0]?.ops).toEqual([
+			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+		]);
 
-    const emitted = emissions[0]?.state;
+		const emitted = emissions[0]?.state;
 
-    if (!emitted) throw new Error("the state heard no emission");
+		if (!emitted) throw new Error("the state heard no emission");
 
-    expect(Object.getOwnPropertyDescriptor(emitted, "hidden")).toMatchObject({ value: 5, enumerable: false });
-  });
+		expect(Object.getOwnPropertyDescriptor(emitted, "hidden")).toMatchObject({ value: 5, enumerable: false });
+	});
 
-  it("keeps functions as identity leaves", () => {
-    const first = (): string => "a";
-    const second = (): string => "b";
+	it("keeps functions as identity leaves", () => {
+		const first = (): string => "a";
+		const second = (): string => "b";
 
-    const state = createMutableState({ run: first });
-    const emissions = recordEmissions(state);
+		const state = createMutableState({ run: first });
+		const emissions = recordEmissions(state);
 
-    transact(state, () => {
-      state.run = second;
-    });
+		transact(state, () => {
+			state.run = second;
+		});
 
-    expect(emissions).toHaveLength(1);
-    expect(emissions[0]?.ops).toEqual([{ do: { op: "replace", path: ["run"], value: second }, undo: { op: "replace", path: ["run"], value: first } }]);
-    expect(state.run).toBe(second);
-  });
+		expect(emissions).toHaveLength(1);
+		expect(emissions[0]?.ops).toEqual([
+			{ do: { op: "replace", path: ["run"], value: second }, undo: { op: "replace", path: ["run"], value: first } },
+		]);
+		expect(state.run).toBe(second);
+	});
 });
 
 describe("boundary: ignore lane", () => {
-  it("admits an ignored Map by reference, untracked and silent", () => {
-    const lookup = ignore(new Map<string, number>());
-    const state = createMutableState({ lookup, tick: 0 });
-    const emissions = recordEmissions(state);
+	it("admits an ignored Map by reference, untracked and silent", () => {
+		const lookup = ignore(new Map<string, number>());
+		const state = createMutableState({ lookup, tick: 0 });
+		const emissions = recordEmissions(state);
 
-    expect(state.lookup).toBe(lookup);
+		expect(state.lookup).toBe(lookup);
 
-    transact(state, () => {
-      state.lookup.set("hits", 1);
-    });
+		transact(state, () => {
+			state.lookup.set("hits", 1);
+		});
 
-    expect(emissions).toHaveLength(0);
-    expect(lookup.get("hits")).toBe(1);
-  });
+		expect(emissions).toHaveLength(0);
+		expect(lookup.get("hits")).toBe(1);
+	});
 
-  it("admits an ignored value at the assigning line", () => {
-    interface Box {
-      box: Map<string, number> | null;
-    }
+	it("admits an ignored value at the assigning line", () => {
+		interface Box {
+			box: Map<string, number> | null;
+		}
 
-    const state = createMutableState<Box>({ box: null });
-    const emissions = recordEmissions(state);
-    const kept = ignore(new Map([["k", 1]]));
+		const state = createMutableState<Box>({ box: null });
+		const emissions = recordEmissions(state);
+		const kept = ignore(new Map([["k", 1]]));
 
-    transact(state, () => {
-      state.box = kept;
-    });
+		transact(state, () => {
+			state.box = kept;
+		});
 
-    expect(emissions).toHaveLength(1);
-    expect(state.box).toBe(kept);
-  });
+		expect(emissions).toHaveLength(1);
+		expect(state.box).toBe(kept);
+	});
 
-  it("allows writes through a snapshot copy of an ignored value", () => {
-    const lookup = ignore(new Map<string, number>([["a", 1]]));
-    const state = createMutableState({ lookup });
-    const snap = snapshot(state);
+	it("allows writes through a snapshot copy of an ignored value", () => {
+		const lookup = ignore(new Map<string, number>([["a", 1]]));
+		const state = createMutableState({ lookup });
+		const snap = snapshot(state);
 
-    expect(() => {
-      snap.lookup.set("b", 2);
-    }).not.toThrow();
-    expect(lookup.get("b")).toBe(2);
-    expect(state.lookup).toBe(lookup);
-  });
+		expect(() => {
+			snap.lookup.set("b", 2);
+		}).not.toThrow();
+		expect(lookup.get("b")).toBe(2);
+		expect(state.lookup).toBe(lookup);
+	});
 });
 
 describe("boundary: accessor preservation", () => {
-  interface Temperature {
-    celsius: number;
-    readonly fahrenheit: number;
-    other: { n: number };
-  }
+	interface Temperature {
+		celsius: number;
+		readonly fahrenheit: number;
+		other: { n: number };
+	}
 
-  const createTemperature = (): Temperature =>
-    createMutableState<Temperature>({
-      celsius: 0,
-      other: { n: 1 },
-      get fahrenheit() {
-        return (this.celsius * 9) / 5 + 32;
-      },
-    });
+	const createTemperature = (): Temperature =>
+		createMutableState<Temperature>({
+			celsius: 0,
+			other: { n: 1 },
+			get fahrenheit() {
+				return (this.celsius * 9) / 5 + 32;
+			},
+		});
 
-  it("keeps an own getter live on the live object, recomputing after writes", () => {
-    const state = createTemperature();
-    const emissions = recordEmissions(state);
+	it("keeps an own getter live on the live object, recomputing after writes", () => {
+		const state = createTemperature();
+		const emissions = recordEmissions(state);
 
-    expect(state.fahrenheit).toBe(32);
-    expect(Object.getOwnPropertyDescriptor(state, "fahrenheit")?.get).toBeTypeOf("function");
+		expect(state.fahrenheit).toBe(32);
+		expect(Object.getOwnPropertyDescriptor(state, "fahrenheit")?.get).toBeTypeOf("function");
 
-    transact(state, () => {
-      state.celsius = 20;
-    });
+		transact(state, () => {
+			state.celsius = 20;
+		});
 
-    const second = emissions[0]?.state;
+		const second = emissions[0]?.state;
 
-    if (!second) throw new Error("the subscriber heard no emission");
+		if (!second) throw new Error("the subscriber heard no emission");
 
-    expect(second).toBe(state);
-    expect(second.fahrenheit).toBe(68);
-    expect(Object.getOwnPropertyDescriptor(second, "fahrenheit")?.get).toBeTypeOf("function");
-    expect(state.fahrenheit).toBe(68);
-  });
+		expect(second).toBe(state);
+		expect(second.fahrenheit).toBe(68);
+		expect(Object.getOwnPropertyDescriptor(second, "fahrenheit")?.get).toBeTypeOf("function");
+		expect(state.fahrenheit).toBe(68);
+	});
 
-  it("preserves snapshot cache identity and untouched-subtree structural sharing", () => {
-    const state = createTemperature();
-    const emissions = recordEmissions(state);
+	it("preserves snapshot cache identity and untouched-subtree structural sharing", () => {
+		const state = createTemperature();
+		const emissions = recordEmissions(state);
 
-    const first = snapshot(state);
+		const first = snapshot(state);
 
-    expect(snapshot(state)).toBe(first);
+		expect(snapshot(state)).toBe(first);
 
-    transact(state, () => {
-      state.celsius = 20;
-    });
+		transact(state, () => {
+			state.celsius = 20;
+		});
 
-    const second = emissions[0]?.state;
+		const second = emissions[0]?.state;
 
-    if (!second) throw new Error("the subscriber heard no emission");
+		if (!second) throw new Error("the subscriber heard no emission");
 
-    expect(second).not.toBe(first);
-    expect(second.other).toBe(state.other);
-  });
+		expect(second).not.toBe(first);
+		expect(second.other).toBe(state.other);
+	});
 });
 
 describe("boundary: meta-mutation trap gates", () => {
-  it("throws when a consumer calls Object.defineProperty on tracked state", () => {
-    const state = createMutableState({ count: 0 });
+	it("throws when a consumer calls Object.defineProperty on tracked state", () => {
+		const state = createMutableState({ count: 0 });
 
-    expect(() => Object.defineProperty(state, "extra", { value: 1 })).toThrow(
-      "opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input",
-    );
-  });
+		expect(() => Object.defineProperty(state, "extra", { value: 1 })).toThrow(
+			"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input",
+		);
+	});
 
-  it("throws when a consumer calls Object.setPrototypeOf on tracked state", () => {
-    const state = createMutableState({ count: 0 });
+	it("throws when a consumer calls Object.setPrototypeOf on tracked state", () => {
+		const state = createMutableState({ count: 0 });
 
-    expect(() => Object.setPrototypeOf(state, null)).toThrow("opshot: setPrototypeOf is not supported on tracked state");
-  });
+		expect(() => Object.setPrototypeOf(state, null)).toThrow(
+			"opshot: setPrototypeOf is not supported on tracked state",
+		);
+	});
 
-  it("keeps defineProperty rejection local to each proxy handler", () => {
-    const second = createMutableState({ count: 0 });
-    const first = createMutableState({
-      get trigger(): number {
-        return 0;
-      },
-      set trigger(value: number) {
-        Object.defineProperty(second, "injected", { value });
-      },
-    });
+	it("keeps defineProperty rejection local to each proxy handler", () => {
+		const second = createMutableState({ count: 0 });
+		const first = createMutableState({
+			get trigger(): number {
+				return 0;
+			},
+			set trigger(value: number) {
+				Object.defineProperty(second, "injected", { value });
+			},
+		});
 
-    expect(() => {
-      transact(first, () => {
-        first.trigger = 1;
-      });
-    }).toThrow("opshot: defineProperty is not supported on tracked state");
-    expect(Object.hasOwn(second, "injected")).toBe(false);
-  });
+		expect(() => {
+			transact(first, () => {
+				first.trigger = 1;
+			});
+		}).toThrow("opshot: defineProperty is not supported on tracked state");
+		expect(Object.hasOwn(second, "injected")).toBe(false);
+	});
 
-  it("leaves ordinary set, delete, and nested writes through mutate unaffected", () => {
-    interface Nested {
-      count: number;
-      hidden?: number;
-      child: { value: number };
-    }
+	it("leaves ordinary set, delete, and nested writes through mutate unaffected", () => {
+		interface Nested {
+			count: number;
+			hidden?: number;
+			child: { value: number };
+		}
 
-    const state = createMutableState<Nested>({ count: 0, hidden: 1, child: { value: 1 } });
-    const emissions = recordEmissions(state);
+		const state = createMutableState<Nested>({ count: 0, hidden: 1, child: { value: 1 } });
+		const emissions = recordEmissions(state);
 
-    transact(state, () => {
-      state.count = 1;
-      state.child.value = 9;
-      state.child = { value: 20 };
-      delete state.hidden;
-    });
+		transact(state, () => {
+			state.count = 1;
+			state.child.value = 9;
+			state.child = { value: 20 };
+			delete state.hidden;
+		});
 
-    expect(state.count).toBe(1);
-    expect(state.child.value).toBe(20);
-    expect(state.hidden).toBeUndefined();
-    expect(emissions).toHaveLength(1);
-  });
+		expect(state.count).toBe(1);
+		expect(state.child.value).toBe(20);
+		expect(state.hidden).toBeUndefined();
+		expect(emissions).toHaveLength(1);
+	});
 });
 
 describe("boundary: install", () => {
-  it("installs idempotently", () => {
-    installBoundary();
-    installBoundary();
+	it("installs idempotently", () => {
+		installBoundary();
+		installBoundary();
 
-    const state = createMutableState({ count: 0 });
+		const state = createMutableState({ count: 0 });
 
-    transact(state, () => {
-      state.count = 1;
-    });
+		transact(state, () => {
+			state.count = 1;
+		});
 
-    expect(state.count).toBe(1);
-    expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow("opshot: Map cannot be tracked");
-  });
+		expect(state.count).toBe(1);
+		expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow("opshot: Map cannot be tracked");
+	});
 });

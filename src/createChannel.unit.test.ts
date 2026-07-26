@@ -14,13 +14,21 @@ describe("createChannel", () => {
 			heard.push(context);
 		});
 
-		channel.transact(state, () => {
-			state.count = 1;
-		}, {});
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{},
+		);
 
-		channel.transact(state, () => {
-			state.count = 2;
-		}, { replay: true, transactionKey: "drag" });
+		channel.transact(
+			state,
+			() => {
+				state.count = 2;
+			},
+			{ replay: true, transactionKey: "drag" },
+		);
 
 		expect(heard).toEqual([
 			{ isTransaction: true, meta: { replay: false } },
@@ -41,13 +49,21 @@ describe("createChannel", () => {
 		state.count = 1;
 		await Promise.resolve();
 
-		foreign.transact(state, () => {
-			state.count = 2;
-		}, { actor: "other" });
+		foreign.transact(
+			state,
+			() => {
+				state.count = 2;
+			},
+			{ actor: "other" },
+		);
 
-		own.transact(state, () => {
-			state.count = 3;
-		}, { actor: "me" });
+		own.transact(
+			state,
+			() => {
+				state.count = 3;
+			},
+			{ actor: "me" },
+		);
 
 		expect(heard).toEqual([
 			{ isTransaction: false, meta: undefined },
@@ -65,13 +81,21 @@ describe("createChannel", () => {
 			heard.push(meta);
 		});
 
-		channel.transact(state, () => {
-			state.count = 1;
-		}, { actor: "matt" });
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ actor: "matt" },
+		);
 
-		transact(state, () => {
-			state.count = 2;
-		}, { plain: true });
+		transact(
+			state,
+			() => {
+				state.count = 2;
+			},
+			{ plain: true },
+		);
 
 		expect(heard).toEqual([{ actor: "matt" }, { plain: true }]);
 	});
@@ -97,7 +121,11 @@ describe("createChannel", () => {
 			if (context.isTransaction) replayHeard.push(context.meta);
 		});
 
-		channel.applyOps(replay, ops.map((op) => op.do), {});
+		channel.applyOps(
+			replay,
+			ops.map((op) => op.do),
+			{},
+		);
 
 		expect(replay.count).toBe(5);
 		expect(replayHeard).toEqual([{ replay: false }]);
@@ -114,9 +142,13 @@ describe("createChannel", () => {
 
 		const state = group.createState({ count: 0 });
 
-		channel.transact(state, () => {
-			state.count = 1;
-		}, { tag: "g" });
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ tag: "g" },
+		);
 
 		expect(heard).toEqual([{ state, meta: { tag: "g" } }]);
 	});

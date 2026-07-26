@@ -1,0 +1,10 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"entry": ["src/index.ts", "src/react/index.ts"],
+	"project": ["src/**/*.{ts,tsx}"],
+	"ignore": [],
+	"ignoreDependencies": ["textlint", "textlint-filter-rule-comments", "textlint-rule-no-dead-link"],
+	"ignoreIssues": {
+		"src/valtio/boundary.ts": ["exports", "types"]
+	}
+}

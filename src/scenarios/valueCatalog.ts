@@ -1,5 +1,4 @@
 import { createElement } from "react";
-
 import { ignore } from "../ignore";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -87,6 +86,7 @@ class PrivatePublicCycle {
 }
 
 class ArraySubclass extends Array<number> {}
+
 class MapSubclass extends Map<string, number> {}
 
 const makeSelfCycle = (): unknown => {
@@ -252,10 +252,20 @@ export const catalog = [
 	{ name: "bigintValue", create: () => 10n, expect: primitive },
 	{ name: "symbolValue", create: () => Symbol("catalog"), expect: primitive },
 	{ name: "plainObject", create: () => ({ a: 1, b: 2 }), expect: trackedData, scopeExpect: scopeRenders },
-	{ name: "nestedPlainObject", create: () => ({ a: { b: { c: 1 } } }), expect: trackedData, scopeExpect: scopeRenders },
+	{
+		name: "nestedPlainObject",
+		create: () => ({ a: { b: { c: 1 } } }),
+		expect: trackedData,
+		scopeExpect: scopeRenders,
+	},
 	{ name: "plainArray", create: () => [1, 2, 3], expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
 	{ name: "nestedArray", create: () => [[1], [2, 3]], expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
-	{ name: "nullPrototypeObject", create: () => Object.assign(Object.create(null) as object, { a: 1 }), expect: trackedData, scopeExpect: scopeRenders },
+	{
+		name: "nullPrototypeObject",
+		create: () => Object.assign(Object.create(null) as object, { a: 1 }),
+		expect: trackedData,
+		scopeExpect: scopeRenders,
+	},
 	{
 		name: "objectWithGetter",
 		create: () => ({
@@ -267,7 +277,12 @@ export const catalog = [
 		expect: trackedData,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "symbolKeyedProp", create: () => ({ a: 1, [Symbol("ride")]: 2 }), expect: trackedData, scopeExpect: scopeRenders },
+	{
+		name: "symbolKeyedProp",
+		create: () => ({ a: 1, [Symbol("ride")]: 2 }),
+		expect: trackedData,
+		scopeExpect: scopeRenders,
+	},
 	{
 		name: "nonEnumerableProp",
 		create: () => {
@@ -292,7 +307,12 @@ export const catalog = [
 		expect: trackedWithMutatingMethods,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "storedUndefinedArray", create: () => [1, undefined, 3], expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{
+		name: "storedUndefinedArray",
+		create: () => [1, undefined, 3],
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
+	},
 	{
 		name: "sharedDag",
 		create: () => {
@@ -310,12 +330,32 @@ export const catalog = [
 	{ name: "rawSet", create: () => new Set([1, 2]), expect: rejected, scopeExpect: scopeInert },
 	{ name: "rawDate", create: () => new Date(0), expect: rejected, scopeExpect: scopeThrows },
 	{ name: "cleanClassInstance", create: () => new CleanPoint(), expect: trackedData, scopeExpect: scopeRenders },
-	{ name: "cleanMutatingClassInstance", create: () => new CleanMutatingPoint(), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{
+		name: "cleanMutatingClassInstance",
+		create: () => new CleanMutatingPoint(),
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
+	},
 	{ name: "cleanArrowClassInstance", create: () => new ArrowPoint(), expect: rejected, scopeExpect: scopeRenders },
-	{ name: "unsafeTrackedCleanArrowClass", create: () => unsafeTrack(new ArrowPoint()), expect: trackedData, scopeExpect: scopeRenders },
+	{
+		name: "unsafeTrackedCleanArrowClass",
+		create: () => unsafeTrack(new ArrowPoint()),
+		expect: trackedData,
+		scopeExpect: scopeRenders,
+	},
 	{ name: "privateFieldClassInstance", create: () => new PrivateBox(), expect: rejected, scopeExpect: scopeThrows },
-	{ name: "unsafeTrackedPrivateClass", create: () => unsafeTrack(new PrivatePublicBox()), expect: unsafePrivate, scopeExpect: scopeThrows },
-	{ name: "unsafeTrackedPrivateCycle", create: () => unsafeTrack(new PrivatePublicCycle()), expect: unsafePrivateCycle, scopeExpect: scopeThrows },
+	{
+		name: "unsafeTrackedPrivateClass",
+		create: () => unsafeTrack(new PrivatePublicBox()),
+		expect: unsafePrivate,
+		scopeExpect: scopeThrows,
+	},
+	{
+		name: "unsafeTrackedPrivateCycle",
+		create: () => unsafeTrack(new PrivatePublicCycle()),
+		expect: unsafePrivateCycle,
+		scopeExpect: scopeThrows,
+	},
 	{ name: "arraySubclass", create: () => new ArraySubclass(), expect: rejected, scopeExpect: scopeThrows },
 	{ name: "mapSubclass", create: () => new MapSubclass(), expect: rejected, scopeExpect: scopeInert },
 	{ name: "regExp", create: () => /catalog/g, expect: rejected, scopeExpect: scopeThrows },
@@ -325,27 +365,52 @@ export const catalog = [
 	{ name: "urlSearchParams", create: () => new URLSearchParams("a=1"), expect: rejected, scopeExpect: scopeThrows },
 	{ name: "typedArray", create: () => new Uint8Array([1, 2, 3]), expect: rejected, scopeExpect: scopeThrows },
 	{ name: "arrayBuffer", create: () => new ArrayBuffer(8), expect: rejected, scopeExpect: scopeThrows },
-	{ name: "dataView", create: () => new DataView(new ArrayBuffer(8)), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
+	{
+		name: "dataView",
+		create: () => new DataView(new ArrayBuffer(8)),
+		expect: rejectedEmptyMethods,
+		scopeExpect: scopeThrows,
+	},
 	{ name: "weakMap", create: () => new WeakMap(), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
 	{ name: "weakSet", create: () => new WeakSet(), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
 	{ name: "ignoredMap", create: () => ignore(new Map([["a", 1]])), expect: ignored, scopeExpect: scopeInert },
 	{ name: "ignoredClassInstance", create: () => ignore(new CleanPoint()), expect: ignored, scopeExpect: scopeRenders },
-	{ name: "ignoredCycle", create: () => ignore(makeSelfCycle() as object), expect: ignored, scopeExpect: scopeRenders },
-	{ name: "trackedMap", create: () => new TrackedMap<string, number>([["a", 1]]), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{
+		name: "ignoredCycle",
+		create: () => ignore(makeSelfCycle() as object),
+		expect: ignored,
+		scopeExpect: scopeRenders,
+	},
+	{
+		name: "trackedMap",
+		create: () => new TrackedMap<string, number>([["a", 1]]),
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
+	},
 	{
 		name: "trackedMapObjectKeys",
 		create: () => new TrackedMap<{ id: number }, string>([[{ id: 1 }, "one"]]),
 		expect: trackedWithMutatingMethods,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "trackedSet", create: () => new TrackedSet<number>([1, 2]), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{
+		name: "trackedSet",
+		create: () => new TrackedSet<number>([1, 2]),
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
+	},
 	{
 		name: "trackedSetIgnoredMember",
 		create: () => new TrackedSet([ignore(new CleanPoint())]),
 		expect: trackedWithMutatingMethods,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "trackedDate", create: () => new TrackedDate(0), expect: trackedWithMutatingMethods, scopeExpect: scopeRenders },
+	{
+		name: "trackedDate",
+		create: () => new TrackedDate(0),
+		expect: trackedWithMutatingMethods,
+		scopeExpect: scopeRenders,
+	},
 	{
 		name: "namedFunction",
 		create: () =>

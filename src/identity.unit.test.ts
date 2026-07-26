@@ -65,7 +65,8 @@ describe("identity", () => {
 
 		const clone = operation.value;
 
-		if (typeof clone !== "object" || clone === null) throw new Error("identity test: operation did not return an object clone");
+		if (typeof clone !== "object" || clone === null)
+			throw new Error("identity test: operation did not return an object clone");
 
 		expect(clone).not.toBe(original);
 		expect(getRegisteredTarget(clone)).toBeUndefined();
