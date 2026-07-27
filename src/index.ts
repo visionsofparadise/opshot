@@ -18,7 +18,7 @@ export { unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 export { TrackedDate } from "./tracked/trackedDate";
 export { TrackedMap } from "./tracked/trackedMap";
 export { TrackedSet } from "./tracked/trackedSet";
-export { type GroupListener, type StateListener } from "./emitter";
+export { type GroupListener, type StateListener } from "./emit/emitterRegistry";
 export { subscribe, type Context } from "./subscribe";
 export { transact } from "./transact";
 export { scope, type ScopeOptions } from "./react/scope";

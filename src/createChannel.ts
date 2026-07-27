@@ -1,5 +1,5 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
-import { addGroupListener, addStateListener } from "./emitter";
+import { addGroupListener, addStateListener } from "./emit/emitterListeners";
 import { applyOps as standaloneApplyOps } from "./ops/applyOps";
 import { stampChannelMeta, toChannelContext, type Context } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
@@ -36,7 +36,7 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 			| ((state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void),
 	): () => void {
 		if (isGroup(target)) {
-			return addGroupListener(getGroupListeners(target), (state, ops, meta) => {
+			return addGroupListener(getGroupListeners(target), listener, channelId, (state, ops, meta) => {
 				(listener as (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void)(
 					state,
 					ops,
@@ -45,7 +45,7 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 			});
 		}
 
-		return addStateListener(target, (ops, meta) => {
+		return addStateListener(target, listener, channelId, (ops, meta) => {
 			(listener as (ops: ReadonlyArray<Op>, context: Context<M>) => void)(
 				ops,
 				toChannelContext(channelId, defaults, meta),

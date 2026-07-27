@@ -1,6 +1,6 @@
 import { proxy } from "valtio/vanilla";
 import { getGroupListeners, type Group } from "./createGroup";
-import { mintGroupedEmitter } from "./emitter";
+import { mintGroupedEmitter } from "./emit/emitterBare";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 import { registerTrackedRoot } from "./valtio/constructorPathGuard";
 

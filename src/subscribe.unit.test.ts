@@ -2,7 +2,7 @@ import { createChannel } from "./createChannel";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { type Op } from "./ops/operation";
-import { subscribe } from "./subscribe";
+import { subscribe, type Context } from "./subscribe";
 import { transact } from "./transact";
 
 describe("subscribe", () => {
@@ -86,5 +86,114 @@ describe("subscribe", () => {
 		await Promise.resolve();
 
 		expect(heard).toEqual([{ actor: "matt" }, undefined]);
+	});
+
+	it("subscribing the same function twice to a state is one subscription", () => {
+		const state = createMutableState({ count: 0 });
+		const heard = new Array<ReadonlyArray<Op>>();
+		const listener = (ops: ReadonlyArray<Op>): void => {
+			heard.push(ops);
+		};
+
+		subscribe(state, listener);
+		const stop = subscribe(state, listener);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(heard).toHaveLength(1);
+
+		stop();
+		transact(state, () => {
+			state.count = 2;
+		});
+
+		expect(heard).toHaveLength(1);
+	});
+
+	it("subscribing the same function twice to a group is one subscription", () => {
+		const group = createGroup();
+		const state = group.createMutableState({ count: 0 });
+		const heard = new Array<object>();
+		const listener = (emitted: object): void => {
+			heard.push(emitted);
+		};
+
+		subscribe(group, listener);
+		const stop = subscribe(group, listener);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(heard).toEqual([state]);
+
+		stop();
+		transact(state, () => {
+			state.count = 2;
+		});
+
+		expect(heard).toEqual([state]);
+	});
+
+	it("the same function through two channels delivers once per channel frame; unsubscribing one leaves the other", () => {
+		const state = createMutableState({ count: 0 });
+		const a = createChannel<{ tag: string }>({ tag: "a" });
+		const b = createChannel<{ tag: string }>({ tag: "b" });
+		const heard = new Array<string>();
+		const listener = (_ops: ReadonlyArray<Op>, context: Context<{ tag: string }>): void => {
+			heard.push(context.isTransaction ? context.meta.tag : "foreign");
+		};
+
+		const stopA = a.subscribe(state, listener);
+
+		b.subscribe(state, listener);
+
+		a.transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(heard).toEqual(["a", "foreign"]);
+
+		heard.length = 0;
+		b.transact(state, () => {
+			state.count = 2;
+		});
+
+		expect(heard).toEqual(["foreign", "b"]);
+
+		heard.length = 0;
+		stopA();
+		b.transact(state, () => {
+			state.count = 3;
+		});
+
+		expect(heard).toEqual(["b"]);
+	});
+
+	it("delivers in registration order across mixed plain and channel subscriptions", () => {
+		const state = createMutableState({ count: 0 });
+		const channel = createChannel();
+		const order = new Array<string>();
+		const plainA = (): void => {
+			order.push("A");
+		};
+		const channelB = (): void => {
+			order.push("B");
+		};
+		const plainC = (): void => {
+			order.push("C");
+		};
+
+		subscribe(state, plainA);
+		channel.subscribe(state, channelB);
+		subscribe(state, plainC);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(order).toEqual(["A", "B", "C"]);
 	});
 });

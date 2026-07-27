@@ -41,6 +41,10 @@ export interface Boundary {
 	evictChangedTargets(): void;
 
 	resetReads(): void;
+
+	captureReads(): void;
+
+	advanceBaselines(): void;
 }
 
 const getUsage = (affected: Map<object, UsageRecord>, target: object): UsageRecord => {
@@ -114,6 +118,7 @@ export const isWrapper = (value: unknown): boolean =>
 export function createBoundary(): Boundary {
 	const partitions = new Map<object, SourcePartition>();
 	const targets = new Map<object, CacheTarget>();
+	let afterRender = false;
 
 	const getPartition = (sourceProxy: object): SourcePartition => {
 		let partition = partitions.get(sourceProxy);
@@ -132,7 +137,12 @@ export function createBoundary(): Boundary {
 		return partition;
 	};
 
+	const trackUsage = (partition: SourcePartition, liveProxy: object): UsageRecord =>
+		afterRender ? {} : getUsage(partition.affected, liveProxy);
+
 	const ensureBaseline = (partition: SourcePartition, liveProxy: object): object => {
+		if (afterRender) return snapshot(liveProxy);
+
 		const existing = partition.baselines.get(liveProxy);
 
 		if (existing !== undefined) return existing;
@@ -145,6 +155,8 @@ export function createBoundary(): Boundary {
 	};
 
 	const ensureRootBaseline = (partition: SourcePartition): object => {
+		if (afterRender) return partition.previousRootSnapshot ?? snapshot(partition.sourceProxy);
+
 		if (partition.previousRootSnapshot === undefined) {
 			partition.previousRootSnapshot = snapshot(partition.sourceProxy);
 			partition.baselines.set(partition.sourceProxy, partition.previousRootSnapshot);
@@ -180,7 +192,7 @@ export function createBoundary(): Boundary {
 				const value: unknown = Reflect.get(liveProxy, prop, liveProxy);
 				const wrapper = wrapperBox.current;
 
-				const used = getUsage(partition.affected, liveProxy);
+				const used = trackUsage(partition, liveProxy);
 
 				recordKey(used, KEYS_PROPERTY, prop);
 				ensureBaseline(partition, liveProxy);
@@ -204,7 +216,7 @@ export function createBoundary(): Boundary {
 				return wrapLive(value, partition);
 			},
 			has(_target, prop) {
-				const used = getUsage(partition.affected, liveProxy);
+				const used = trackUsage(partition, liveProxy);
 
 				recordKey(used, HAS_KEY_PROPERTY, prop);
 				ensureBaseline(partition, liveProxy);
@@ -212,7 +224,7 @@ export function createBoundary(): Boundary {
 				return Reflect.has(liveProxy, prop);
 			},
 			getOwnPropertyDescriptor(_target, prop) {
-				const used = getUsage(partition.affected, liveProxy);
+				const used = trackUsage(partition, liveProxy);
 
 				recordKey(used, HAS_OWN_KEY_PROPERTY, prop);
 				ensureBaseline(partition, liveProxy);
@@ -220,7 +232,7 @@ export function createBoundary(): Boundary {
 				return Reflect.getOwnPropertyDescriptor(liveProxy, prop);
 			},
 			ownKeys() {
-				const used = getUsage(partition.affected, liveProxy);
+				const used = trackUsage(partition, liveProxy);
 
 				used[ALL_OWN_KEYS_PROPERTY] = true;
 				ensureBaseline(partition, liveProxy);
@@ -285,6 +297,10 @@ export function createBoundary(): Boundary {
 			return isChanged(partition.previousRootSnapshot, nextRoot, translated, new WeakMap());
 		},
 
+		captureReads(): void {
+			afterRender = true;
+		},
+
 		evictChangedTargets(): void {
 			for (const [liveProxy, entry] of targets) {
 				const current = snapshot(liveProxy);
@@ -300,10 +316,23 @@ export function createBoundary(): Boundary {
 		},
 
 		resetReads(): void {
+			afterRender = false;
+
 			for (const partition of partitions.values()) {
 				partition.previousRootSnapshot = undefined;
 				partition.affected.clear();
 				partition.baselines.clear();
+			}
+		},
+
+		advanceBaselines(): void {
+			for (const partition of partitions.values()) {
+				for (const liveProxy of [...partition.baselines.keys()]) {
+					partition.baselines.set(liveProxy, snapshot(liveProxy));
+				}
+
+				partition.previousRootSnapshot = snapshot(partition.sourceProxy);
+				partition.baselines.set(partition.sourceProxy, partition.previousRootSnapshot);
 			}
 		},
 	};

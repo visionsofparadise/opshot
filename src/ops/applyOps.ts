@@ -1,4 +1,4 @@
-import { resolveEmitterTarget } from "../emitter";
+import { resolveEmitterTarget } from "../emit/resolveEmitterTarget";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
 import { getValueOriginal, isOperation, type Operation, type ReplaceOperation, type AddOperation } from "./operation";

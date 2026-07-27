@@ -22,10 +22,15 @@ export function useMutableState<T extends object>(properties: T, group?: Group):
 	const wrapper = boundary.wrap(proxy);
 
 	useEffect(() => {
+		boundary.captureReads();
+	});
+
+	useEffect(() => {
 		const onSignal = (): void => {
 			boundary.evictChangedTargets();
 
 			if (boundary.readsChanged(proxy)) bump();
+			else boundary.advanceBaselines();
 		};
 
 		return valtioSubscribe(proxy, onSignal, true);

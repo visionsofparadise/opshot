@@ -1,17 +1,17 @@
 import { createMutableState } from "./createMutableState";
-import type { GroupListener } from "./emitter";
+import type { GroupListeners } from "./emit/emitterRegistry";
 
 export interface Group {
 	createMutableState<T extends object>(properties: T): T;
 }
 
-const groupListenersByGroup = new WeakMap<Group, Set<GroupListener>>();
+const groupListenersByGroup = new WeakMap<Group, GroupListeners>();
 
 export function isGroup(value: unknown): value is Group {
 	return typeof value === "object" && value !== null && groupListenersByGroup.has(value as Group);
 }
 
-export function getGroupListeners(group: Group): Set<GroupListener> {
+export function getGroupListeners(group: Group): GroupListeners {
 	const listeners = groupListenersByGroup.get(group);
 
 	if (listeners === undefined) throw new Error("opshot: unknown group");
@@ -20,7 +20,7 @@ export function getGroupListeners(group: Group): Set<GroupListener> {
 }
 
 export function createGroup(): Group {
-	const listeners = new Set<GroupListener>();
+	const listeners: GroupListeners = new Map();
 	const group: Group = {
 		createMutableState<T extends object>(properties: T): T {
 			return createMutableState(properties, group);

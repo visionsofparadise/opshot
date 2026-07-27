@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, render, screen } from "@testing-library/react";
-import { memo, useEffect, useLayoutEffect, useRef, type FC } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -402,5 +402,251 @@ describe("scope", () => {
 
 		expect(renders).toBe(2);
 		expect(screen.getByTestId("count").textContent).toBe("1");
+	});
+
+	it("three-level chain: each boundary re-renders only for fields it read", async () => {
+		interface Doc {
+			a: number;
+			b: number;
+			deep: { x: number };
+		}
+
+		const renders = { a: 0, b: 0, c: 0 };
+		const seen: Array<number> = [];
+		let held: Doc | undefined;
+
+		const C = scope<{ state: Doc }>(({ state }) => {
+			renders.c += 1;
+			seen.push(state.deep.x);
+
+			return null;
+		});
+
+		const B = scope<{ state: Doc }>(({ state }) => {
+			renders.b += 1;
+			void state.b;
+
+			return <C state={state} />;
+		});
+
+		const A: FC = () => {
+			const state = useMutableState<Doc>({ a: 0, b: 0, deep: { x: 0 } });
+
+			held = state;
+			renders.a += 1;
+			void state.a;
+
+			return <B state={state} />;
+		};
+
+		render(<A />);
+		expect(renders).toEqual({ a: 1, b: 1, c: 1 });
+		expect(seen).toEqual([0]);
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.deep.x = 1;
+		});
+		expect(renders).toEqual({ a: 1, b: 1, c: 2 });
+		expect(seen).toEqual([0, 1]);
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.a = 1;
+		});
+		expect(renders).toEqual({ a: 2, b: 1, c: 2 });
+		expect(seen).toEqual([0, 1]);
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.b = 1;
+		});
+		expect(renders).toEqual({ a: 2, b: 2, c: 2 });
+		expect(seen).toEqual([0, 1]);
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.deep.x = 2;
+		});
+		expect(renders).toEqual({ a: 2, b: 2, c: 3 });
+		expect(seen).toEqual([0, 1, 2]);
+	});
+
+	it("free-rider leaf under a bailing boundary still updates on a field only it reads", async () => {
+		interface Doc {
+			a: number;
+			b: number;
+			c: number;
+		}
+
+		let ownerRenders = 0;
+		let midRenders = 0;
+		let leafRenders = 0;
+		const leafSaw: Array<number> = [];
+		let held: Doc | undefined;
+
+		const Leaf: FC<{ state: Doc }> = ({ state }) => {
+			leafRenders += 1;
+			leafSaw.push(state.c);
+
+			return <span data-testid="c">{state.c}</span>;
+		};
+
+		const Mid = scope<{ state: Doc }>(({ state }) => {
+			midRenders += 1;
+			void state.b;
+
+			return <Leaf state={state} />;
+		});
+
+		const Owner: FC = () => {
+			const state = useMutableState<Doc>({ a: 0, b: 0, c: 0 });
+
+			held = state;
+			ownerRenders += 1;
+			void state.a;
+
+			return <Mid state={state} />;
+		};
+
+		render(<Owner />);
+		expect({ owner: ownerRenders, mid: midRenders, leaf: leafRenders }).toEqual({
+			owner: 1,
+			mid: 1,
+			leaf: 1,
+		});
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.a = 1;
+		});
+		expect({ owner: ownerRenders, mid: midRenders, leaf: leafRenders }).toEqual({
+			owner: 2,
+			mid: 1,
+			leaf: 1,
+		});
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.c = 5;
+		});
+		expect({ owner: ownerRenders, mid: midRenders, leaf: leafRenders }).toEqual({
+			owner: 2,
+			mid: 2,
+			leaf: 2,
+		});
+		expect(leafSaw).toEqual([0, 5]);
+		expect(screen.getByTestId("c").textContent).toBe("5");
+	});
+
+	it("re-renders a boundary when a non-state prop changes even if reads did not", async () => {
+		interface Doc {
+			count: number;
+		}
+
+		let childRenders = 0;
+		let held: Doc | undefined;
+		let setLabel: ((value: string) => void) | undefined;
+
+		const Child = scope<{ state: Doc; label: string }>(({ state, label }) => {
+			childRenders += 1;
+			void state.count;
+
+			return (
+				<span data-testid="row">
+					{label}:{state.count}
+				</span>
+			);
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Doc>({ count: 0 });
+			const [label, setLabelState] = useState("first");
+
+			held = state;
+			setLabel = setLabelState;
+
+			return <Child state={state} label={label} />;
+		};
+
+		render(<Parent />);
+		expect(childRenders).toBe(1);
+		expect(screen.getByTestId("row").textContent).toBe("first:0");
+
+		await act(async () => {
+			setLabel?.("second");
+		});
+		expect(childRenders).toBe(2);
+		expect(screen.getByTestId("row").textContent).toBe("second:0");
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.count = 1;
+		});
+		expect(childRenders).toBe(3);
+		expect(screen.getByTestId("row").textContent).toBe("second:1");
+	});
+
+	it("a boundary blocked across parent renders still advances and re-renders on its own field", async () => {
+		interface Doc {
+			a: number;
+			b: number;
+		}
+
+		let ownerRenders = 0;
+		let childRenders = 0;
+		const childSaw: Array<number> = [];
+		let held: Doc | undefined;
+
+		const Child = scope<{ state: Doc }>(({ state }) => {
+			childRenders += 1;
+			childSaw.push(state.b);
+
+			return <span data-testid="b">{state.b}</span>;
+		});
+
+		const Owner: FC = () => {
+			const state = useMutableState<Doc>({ a: 0, b: 0 });
+
+			held = state;
+			ownerRenders += 1;
+			void state.a;
+
+			return <Child state={state} />;
+		};
+
+		render(<Owner />);
+		expect({ owner: ownerRenders, child: childRenders }).toEqual({ owner: 1, child: 1 });
+		expect(childSaw).toEqual([0]);
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.a = 1;
+		});
+		expect({ owner: ownerRenders, child: childRenders }).toEqual({ owner: 2, child: 1 });
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.a = 2;
+		});
+		expect({ owner: ownerRenders, child: childRenders }).toEqual({ owner: 3, child: 1 });
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.b = 9;
+		});
+		expect({ owner: ownerRenders, child: childRenders }).toEqual({ owner: 3, child: 2 });
+		expect(childSaw).toEqual([0, 9]);
+		expect(screen.getByTestId("b").textContent).toBe("9");
 	});
 });

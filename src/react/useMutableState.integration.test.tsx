@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, render, screen } from "@testing-library/react";
-import { useEffect, useLayoutEffect, useRef, type FC } from "react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
+import { subscribe } from "../subscribe";
+import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
+import type { Op } from "../ops/operation";
 
 const valtioSubscribeCounts = vi.hoisted(() => ({ subscribes: 0, unsubscribes: 0 }));
 
@@ -116,7 +119,7 @@ describe("useMutableState", () => {
 		expect(screen.getByText("7")).toBeTruthy();
 	});
 
-	it("handler reads subscribe until the next render drops them", () => {
+	it("handler reads do not subscribe the component", () => {
 		let renders = 0;
 		let stateRef: { count: number; extra: number } | undefined;
 
@@ -138,25 +141,21 @@ describe("useMutableState", () => {
 			stateRef.extra += 1;
 		});
 
-		if (renders === 1) {
-			act(() => {
-				if (stateRef === undefined) throw new Error("missing state");
+		act(() => {
+			if (stateRef === undefined) throw new Error("missing state");
 
-				stateRef.extra = 10;
-			});
-		}
+			stateRef.extra += 1;
+		});
 
-		expect(renders).toBe(2);
-
-		const afterSubscribedRender = renders;
+		expect(renders).toBe(1);
 
 		act(() => {
 			if (stateRef === undefined) throw new Error("missing state");
 
-			stateRef.extra = 99;
+			stateRef.count += 1;
 		});
 
-		expect(renders).toBe(afterSubscribedRender);
+		expect(renders).toBe(2);
 	});
 
 	it("keeps a non-reading owner silent for a top-level write through its handle", () => {
@@ -184,7 +183,7 @@ describe("useMutableState", () => {
 		expect(renders).toBe(1);
 	});
 
-	it("rerenders a non-reading owner for a nested write, which records a read on the way in", () => {
+	it("keeps a non-reading owner silent for a nested write after render", () => {
 		let renders = 0;
 		let stateRef: { count: number; box: { value: number } } | undefined;
 
@@ -206,7 +205,7 @@ describe("useMutableState", () => {
 			stateRef.box.value = 1;
 		});
 
-		expect(renders).toBe(2);
+		expect(renders).toBe(1);
 	});
 
 	it("subscribes once for its lifetime rather than once per render", () => {
@@ -251,5 +250,175 @@ describe("useMutableState", () => {
 		expect(renders).toBe(6);
 		expect(valtioSubscribeCounts.subscribes).toBe(1);
 		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
+	});
+
+	it("delivers a write to the subscription the same write tears down", async () => {
+		const heard = new Array<ReadonlyArray<Op>>();
+
+		const View: FC = () => {
+			const state = useMutableState({ count: 0 });
+
+			useEffect(
+				() =>
+					subscribe(state, (ops) => {
+						heard.push(ops);
+					}),
+				[state],
+			);
+
+			return (
+				<button
+					type="button"
+					onClick={() => {
+						state.count += 1;
+					}}
+				>
+					{state.count}
+				</button>
+			);
+		};
+
+		render(<View />);
+
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button"));
+		});
+
+		expect(heard).toEqual([
+			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+		]);
+
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button"));
+		});
+
+		expect(heard).toEqual([
+			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+		]);
+		expect(screen.getByRole("button").textContent).toBe("2");
+	});
+
+	it("a non-reading owner stays at one render across three scoped child increments", async () => {
+		interface User {
+			name: string;
+			age: number;
+		}
+
+		const renders = { parent: 0, child: 0 };
+
+		const Child = scope<{ user: User }>(({ user }) => {
+			renders.child += 1;
+
+			return <p>{user.age}</p>;
+		});
+
+		const Parent = () => {
+			const user = useMutableState<User>({ name: "Ada", age: 36 });
+
+			renders.parent += 1;
+
+			return (
+				<>
+					<button
+						type="button"
+						onClick={() => {
+							user.age++;
+						}}
+					>
+						+
+					</button>
+					<Child user={user} />
+				</>
+			);
+		};
+
+		render(<Parent />);
+
+		for (let index = 0; index < 3; index += 1) {
+			await act(async () => {
+				fireEvent.click(screen.getByRole("button"));
+			});
+		}
+
+		expect(renders.parent).toBe(1);
+		expect(renders.child).toBe(4);
+	});
+
+	it("idiomatic debounce keyed on the handle produces one save after a burst, matching useState", async () => {
+		const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+		const stateSaves: Array<string> = [];
+		let held: { draft: string } | undefined;
+
+		const StateEditor: FC = () => {
+			const state = useMutableState({ draft: "" });
+
+			held = state;
+
+			useEffect(() => {
+				const timer = setTimeout(() => {
+					stateSaves.push(state.draft);
+				}, 30);
+
+				return () => {
+					clearTimeout(timer);
+				};
+			}, [state]);
+
+			return <span>{state.draft}</span>;
+		};
+
+		render(<StateEditor />);
+
+		for (const character of "hello") {
+			await act(async () => {
+				if (held === undefined) throw new Error("missing state");
+
+				held.draft += character;
+			});
+		}
+
+		await act(async () => {
+			await wait(80);
+		});
+
+		const controlSaves: Array<string> = [];
+		let type: ((character: string) => void) | undefined;
+
+		const ControlEditor: FC = () => {
+			const [draft, setDraft] = useState("");
+
+			type = (character: string) => {
+				setDraft(draft + character);
+			};
+
+			useEffect(() => {
+				const timer = setTimeout(() => {
+					controlSaves.push(draft);
+				}, 30);
+
+				return () => {
+					clearTimeout(timer);
+				};
+			}, [draft]);
+
+			return <span>{draft}</span>;
+		};
+
+		render(<ControlEditor />);
+
+		for (const character of "hello") {
+			await act(async () => {
+				type?.(character);
+			});
+		}
+
+		await act(async () => {
+			await wait(80);
+		});
+
+		expect(stateSaves).toEqual(["hello"]);
+		expect(controlSaves).toEqual(["hello"]);
 	});
 });

@@ -263,4 +263,55 @@ describe("Boundary wrapper", () => {
 
 		expect(() => boundary.wrap({ count: 0 })).toThrow("opshot: Boundary.wrap requires a live Valtio proxy");
 	});
+
+	it("wrap with no mutation returns the same root reference", () => {
+		const state = createLive({ count: 0 });
+		const boundary = createBoundary();
+		const first = boundary.wrap(state);
+		const second = boundary.wrap(state);
+
+		expect(second).toBe(first);
+	});
+
+	it("evicts the root wrapper after a read field mutates", () => {
+		const state = createLive({ count: 0 });
+		const boundary = createBoundary();
+		const first = boundary.wrap(state);
+
+		void first.count;
+		state.count = 1;
+		boundary.evictChangedTargets();
+
+		expect(boundary.wrap(state)).not.toBe(first);
+	});
+
+	it("evicts the root wrapper after an unread field mutates", () => {
+		const state = createLive({ count: 0, other: 0 });
+		const boundary = createBoundary();
+		const first = boundary.wrap(state);
+
+		void first.count;
+		state.other = 1;
+		boundary.evictChangedTargets();
+
+		expect(boundary.wrap(state)).not.toBe(first);
+	});
+
+	it("keeps a nested wrapper whose subtree did not change across a root-level change", () => {
+		const state = createLive({ other: 0, nested: { value: 1 } });
+		const boundary = createBoundary();
+		const first = boundary.wrap(state);
+		const nested = first.nested;
+
+		void first.other;
+		void nested.value;
+
+		state.other = 1;
+		boundary.evictChangedTargets();
+
+		const next = boundary.wrap(state);
+
+		expect(next).not.toBe(first);
+		expect(next.nested).toBe(nested);
+	});
 });

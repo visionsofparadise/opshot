@@ -1,5 +1,6 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
-import { addGroupListener, addStateListener, type GroupListener, type StateListener } from "./emitter";
+import { addGroupListener, addStateListener } from "./emit/emitterListeners";
+import type { GroupListener, StateListener } from "./emit/emitterRegistry";
 
 export type Context<M> =
 	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
@@ -8,12 +9,12 @@ export function subscribe(group: Group, listener: GroupListener): () => void;
 export function subscribe(state: object, listener: StateListener): () => void;
 export function subscribe(target: object | Group, listener: StateListener | GroupListener): () => void {
 	if (isGroup(target)) {
-		return addGroupListener(getGroupListeners(target), (state, ops, meta) => {
+		return addGroupListener(getGroupListeners(target), listener, undefined, (state, ops, meta) => {
 			(listener as GroupListener)(state, ops, unwrapTransportMeta(meta));
 		});
 	}
 
-	return addStateListener(target, (ops, meta) => {
+	return addStateListener(target, listener, undefined, (ops, meta) => {
 		(listener as StateListener)(ops, unwrapTransportMeta(meta));
 	});
 }

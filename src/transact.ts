@@ -1,5 +1,7 @@
 import { snapshot } from "valtio/vanilla";
-import { deliver, getEmitter, hasListeners, requireObjectSnapshot, settlePendingBare } from "./emitter";
+import { requireObjectSnapshot, settlePendingBare } from "./emit/emitterBare";
+import { deliver } from "./emit/emitterDeliver";
+import { getEmitter, hasListeners } from "./emit/emitterRegistry";
 import { diffSnapshots } from "./ops/diff";
 
 export function transact(state: object, mutate: () => void, meta?: unknown): void {

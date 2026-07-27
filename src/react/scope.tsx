@@ -1,5 +1,6 @@
 import { createElement, memo, useEffect, useReducer, useRef, type ComponentType, type FC } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
+import { isSameIdentity } from "../identity";
 import { isState } from "../isState";
 import { addressOf } from "../tracked/address";
 import { constructorName } from "../utils/constructorName";
@@ -145,6 +146,37 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 const sourcesKey = (sources: Array<object>): string =>
 	`${sources.length}:${sources.map((source) => addressOf(source)).join(",")}`;
 
+const arePropsEqual = (previous: object, next: object): boolean => {
+	const previousRecord = previous as Record<string, unknown>;
+	const nextRecord = next as Record<string, unknown>;
+	const keys = Object.keys(previousRecord);
+
+	if (keys.length !== Object.keys(nextRecord).length) return false;
+
+	for (const key of keys) {
+		const before = previousRecord[key];
+		const after = nextRecord[key];
+
+		if (Object.is(before, after)) continue;
+
+		if (
+			typeof before === "object" &&
+			before !== null &&
+			typeof after === "object" &&
+			after !== null &&
+			isState(before) &&
+			isState(after) &&
+			isSameIdentity(before, after)
+		) {
+			continue;
+		}
+
+		return false;
+	}
+
+	return true;
+};
+
 export function scope<P extends object>(Component: ComponentType<P>, options?: ScopeOptions): FC<P> {
 	const maxDepth = options?.maxDepth ?? 10;
 	const Scoped: FC<P> = (props) => {
@@ -185,6 +217,10 @@ export function scope<P extends object>(Component: ComponentType<P>, options?: S
 		const versionsAtRender = sources.map((source) => getVersion(source));
 
 		useEffect(() => {
+			boundary.captureReads();
+		});
+
+		useEffect(() => {
 			const unsubscribes = sources.map((source) =>
 				valtioSubscribe(
 					source,
@@ -192,6 +228,7 @@ export function scope<P extends object>(Component: ComponentType<P>, options?: S
 						boundary.evictChangedTargets();
 
 						if (boundary.readsChanged(source)) bump();
+						else boundary.advanceBaselines();
 					},
 					true,
 				),
@@ -228,5 +265,5 @@ export function scope<P extends object>(Component: ComponentType<P>, options?: S
 
 	Scoped.displayName = `scope(${typeof baseName === "string" && baseName !== "" ? baseName : "Component"})`;
 
-	return memo(Scoped);
+	return memo(Scoped, arePropsEqual);
 }

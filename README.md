@@ -122,8 +122,9 @@ It can't track:
 
 - Internal slots (language level features like in Map)
 - #private fields (hidden at the language level)
-- Arrow methods on classes (they write to the original object, not the tracked one)
 - Array subclasses (the prototype is lost when copied)
+
+And `this` for arrow methods on classes refers to the original and **not** the tracked state.
 
 Use `ignore` or `unsafeTrack` when dealing with these.
 
