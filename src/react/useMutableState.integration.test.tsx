@@ -3,6 +3,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
+import { identify } from "../identity";
 import { subscribe } from "../subscribe";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
@@ -59,6 +60,74 @@ describe("useMutableState", () => {
 
 		expect(latest).toBe(1);
 		expect(screen.getByRole("button").textContent).toBe("1");
+	});
+
+	it("runs a function initializer once across renders and keeps one state", () => {
+		let initializations = 0;
+		let bump: (() => void) | undefined;
+		const identities = new Set<object>();
+
+		const Counter: FC = () => {
+			const state = useMutableState(() => {
+				initializations += 1;
+
+				return { count: 0 };
+			});
+			const [, force] = useState(0);
+
+			bump = () => {
+				force((value) => value + 1);
+			};
+			identities.add(identify(state));
+
+			return <span>{state.count}</span>;
+		};
+
+		render(<Counter />);
+
+		for (let index = 0; index < 2; index += 1) {
+			act(() => {
+				bump?.();
+			});
+		}
+
+		expect(initializations).toBe(1);
+		expect(identities.size).toBe(1);
+	});
+
+	it("evaluates a properties argument every render while keeping one state", () => {
+		let evaluations = 0;
+		let bump: (() => void) | undefined;
+		const identities = new Set<object>();
+
+		const build = (): { count: number } => {
+			evaluations += 1;
+
+			return { count: 0 };
+		};
+
+		const Counter: FC = () => {
+			const state = useMutableState(build());
+			const [, force] = useState(0);
+
+			bump = () => {
+				force((value) => value + 1);
+			};
+			identities.add(identify(state));
+
+			return <span>{state.count}</span>;
+		};
+
+		render(<Counter />);
+
+		for (let index = 0; index < 2; index += 1) {
+			act(() => {
+				bump?.();
+			});
+		}
+
+		expect(evaluations).toBe(3);
+		expect(identities.size).toBe(1);
 	});
 
 	it("does not rerender for unread fields", () => {

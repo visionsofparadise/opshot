@@ -28,6 +28,12 @@ const user = useMutableState({ name: "Ada", age: 36 });
 user.age = 37;
 ```
 
+The state is created once, on the first render. Pass a function to build the properties once as well, exactly as `useState` does:
+
+```tsx
+const navigation = useMutableState(createNavigation);
+```
+
 ## Bounded re-renders
 
 React re-renders a component and its children when its state changes.

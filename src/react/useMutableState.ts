@@ -9,9 +9,9 @@ interface MutableStateHolder<T extends object> {
 	readonly boundary: Boundary;
 }
 
-export function useMutableState<T extends object>(properties: T, group?: Group): T {
+export function useMutableState<T extends object>(properties: (() => T) | T, group?: Group): T {
 	const [{ proxy, boundary }] = useState((): MutableStateHolder<T> => ({
-		proxy: createMutableState(properties, group),
+		proxy: createMutableState(typeof properties === "function" ? properties() : properties, group),
 		boundary: createBoundary(),
 	}));
 	const [, bump] = useReducer((value: number) => value + 1, 0);
