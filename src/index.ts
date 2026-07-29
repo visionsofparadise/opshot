@@ -1,6 +1,7 @@
 export { createChannel, type Channel } from "./createChannel";
 export { createGroup, type Group } from "./createGroup";
-export { createMutableState } from "./createMutableState";
+export { createMutableState, type MutableStateOptions } from "./createMutableState";
+export { type EmitOn, type StateSettings } from "./settings";
 export { identify, isSameIdentity } from "./identity";
 export { isState } from "./isState";
 export { applyOps } from "./ops/applyOps";

@@ -1,6 +1,8 @@
 import { getUntracked } from "proxy-compare";
-import { unstable_replaceInternalFunction } from "valtio/vanilla";
+import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
+import { getSettings, inheritSettings } from "../settings";
+import { unsafeTrack } from "../unsafeTrack";
 import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
 import { admissionLane, classifyValue } from "./classify";
 import {
@@ -10,6 +12,8 @@ import {
 	recomputeRootGraph,
 } from "./constructorPathGuard";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
+
+const { proxyStateMap } = unstable_getInternalStates();
 
 export const assertSafeDataPaths = (
 	value: unknown,
@@ -100,10 +104,20 @@ export function installBoundary(): void {
 
 					assertSafeDataPaths(assigned, typeof prop === "string" ? [prop] : []);
 
-					if (typeof assigned === "object" && assigned !== null) {
-						const untracked = getUntracked(assigned) ?? assigned;
+					const resolved: unknown =
+						typeof assigned === "object" && assigned !== null ? (getUntracked(assigned) ?? assigned) : assigned;
 
-						if (getRegisteredTarget(untracked) !== undefined) throw snapshotDonationError(prop);
+					if (typeof resolved === "object" && resolved !== null) {
+						if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
+
+						inheritSettings(target, resolved);
+
+						if (
+							getSettings(target)?.strict === false &&
+							!proxyStateMap.has(resolved) &&
+							admissionLane(resolved) === "reject"
+						)
+							unsafeTrack(resolved);
 					}
 
 					const rootGraphs = getRootGraphs(target);

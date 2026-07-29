@@ -1,17 +1,16 @@
 import { useEffect, useReducer, useState } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
-import { createMutableState } from "../createMutableState";
+import { createMutableState, type MutableStateOptions } from "../createMutableState";
 import { createBoundary, type Boundary } from "./boundary";
-import type { Group } from "../createGroup";
 
 interface MutableStateHolder<T extends object> {
 	readonly proxy: T;
 	readonly boundary: Boundary;
 }
 
-export function useMutableState<T extends object>(properties: (() => T) | T, group?: Group): T {
+export function useMutableState<T extends object>(properties: (() => T) | T, options?: MutableStateOptions): T {
 	const [{ proxy, boundary }] = useState((): MutableStateHolder<T> => ({
-		proxy: createMutableState(typeof properties === "function" ? properties() : properties, group),
+		proxy: createMutableState(typeof properties === "function" ? properties() : properties, options),
 		boundary: createBoundary(),
 	}));
 	const [, bump] = useReducer((value: number) => value + 1, 0);

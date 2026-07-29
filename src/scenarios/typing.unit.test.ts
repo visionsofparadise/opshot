@@ -124,7 +124,7 @@ describe("typing", () => {
 
 	it("composes useMutableState with an optional group", () => {
 		expectTypeOf(useMutableState<Doc>).toBeCallableWith(makeDoc());
-		expectTypeOf(useMutableState<Doc>).toBeCallableWith(makeDoc(), docGroup);
+		expectTypeOf(useMutableState<Doc>).toBeCallableWith(makeDoc(), { group: docGroup });
 	});
 
 	it("delivers merged meta from a defaulted channel at runtime", () => {
@@ -145,5 +145,5 @@ describe("typing", () => {
 
 export function useHookTypeRejections(): void {
 	// @ts-expect-error there is no third argument slot
-	useMutableState(makeDoc(), docGroup, docChannel);
+	useMutableState(makeDoc(), { group: docGroup }, docChannel);
 }

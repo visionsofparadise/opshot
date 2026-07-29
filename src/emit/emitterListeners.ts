@@ -1,7 +1,9 @@
+import { snapshot } from "valtio/vanilla";
 import { armWatchdog, disarmWatchdog, settlePendingBare } from "./emitterBare";
 import {
 	deleteEmitter,
 	getOrCreateEmitter,
+	hasListeners,
 	type GroupListener,
 	type GroupListeners,
 	type StateListener,
@@ -19,6 +21,10 @@ export function addStateListener(
 
 	if (record.disarm === undefined && record.groupListeners === undefined) {
 		armWatchdog(record);
+	}
+
+	if (!hasListeners(record)) {
+		record.lastReported = snapshot(record.target);
 	}
 
 	let byChannel = record.listeners.get(listener);

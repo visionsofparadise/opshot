@@ -1,4 +1,5 @@
-import { snapshot } from "valtio/vanilla";
+import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
+import { getSettings, type EmitOn } from "../settings";
 import { resolveEmitterTarget } from "./resolveEmitterTarget";
 import type { Op } from "../ops/operation";
 
@@ -16,9 +17,13 @@ export interface EmitterRecord {
 	disarm?: () => void;
 	isMutating: boolean;
 	readonly target: object;
+	emitOn?: EmitOn;
+	pending: boolean;
 }
 
 const emitters = new WeakMap<object, EmitterRecord>();
+
+const { proxyStateMap } = unstable_getInternalStates();
 
 export function getEmitter(state: object): EmitterRecord | undefined {
 	return emitters.get(resolveEmitterTarget(state));
@@ -33,12 +38,17 @@ export function getOrCreateEmitter(target: object, groupListeners?: GroupListene
 
 	if (existing !== undefined) return existing;
 
+	const rawTarget = proxyStateMap.get(resolved)?.[0] ?? resolved;
+	const emitOn = getSettings(rawTarget)?.emitOn;
+
 	const record: EmitterRecord = {
 		listeners: new Map(),
 		groupListeners,
 		lastReported: snapshot(resolved),
 		isMutating: false,
 		target: resolved,
+		emitOn,
+		pending: false,
 	};
 
 	emitters.set(resolved, record);

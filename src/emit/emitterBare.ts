@@ -27,12 +27,28 @@ export const requireObjectSnapshot = (value: unknown): object => {
 	throw new Error("opshot: state snapshots must have an object root");
 };
 
+const scheduleFlush = (record: EmitterRecord): void => {
+	if (record.emitOn === undefined) {
+		emitBareFlush(record.target);
+
+		return;
+	}
+
+	if (record.pending) return;
+
+	record.pending = true;
+	record.emitOn(() => {
+		record.pending = false;
+		emitBareFlush(record.target);
+	});
+};
+
 export const armWatchdog = (record: EmitterRecord): void => {
 	if (record.disarm !== undefined) return;
 
 	record.lastReported = snapshot(record.target);
 	record.disarm = valtioSubscribe(record.target, () => {
-		emitBareFlush(record.target);
+		scheduleFlush(record);
 	});
 };
 

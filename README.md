@@ -120,6 +120,18 @@ const Player = () => {
 };
 ```
 
+Creation takes an options bag: `{ group?, emitOn?, strict? }`.
+
+### `emitOn`
+
+Bare writes emit ona microtask. Pass `emitOn` to choose a different window:
+
+```ts
+const state = createMutableState({ x: 0, y: 0 }, { emitOn: (flush) => requestAnimationFrame(flush) });
+```
+
+Ops are the net diff over a window either way.
+
 ## Constraints
 
 opshot tracks plain data.
@@ -133,6 +145,8 @@ It can't track:
 And `this` for arrow methods on classes refers to the original and **not** the tracked state.
 
 Use `ignore` or `unsafeTrack` when dealing with these.
+
+You can set `strict: false` when creating state to admit to unsafely tracking everything.
 
 ## Tracked collections
 
@@ -171,6 +185,14 @@ const Counter = () => {
 
 	// ...
 };
+```
+
+Any tracked object node is subscribable. A listener on `state.a` hears only changes at or below `a`, at paths relative to `a`.
+
+```ts
+subscribe(state.a, (ops) => {
+	// path ["x"] for a write to state.a.x
+});
 ```
 
 ## Ops
@@ -251,8 +273,8 @@ const Editor = () => {
 	const group = useGroup();
 
 	// Created through the group, so their ops reach the group's subscribers.
-	const doc = useMutableState({ items: new Array<string>() }, group);
-	const selection = useMutableState({ index: 0 }, group);
+	const doc = useMutableState({ items: new Array<string>() }, { group });
+	const selection = useMutableState({ index: 0 }, { group });
 
 	useEffect(
 		() =>

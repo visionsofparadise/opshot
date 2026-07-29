@@ -196,4 +196,80 @@ describe("subscribe", () => {
 
 		expect(order).toEqual(["A", "B", "C"]);
 	});
+
+	it("node subscription delivers node-relative paths and is silent for sibling writes", async () => {
+		const state = createMutableState({ a: { x: 0 }, b: { y: 0 } });
+		const nodeHeard = new Array<ReadonlyArray<Op>>();
+		const rootHeard = new Array<ReadonlyArray<Op>>();
+
+		subscribe(state.a, (ops) => {
+			nodeHeard.push([...ops]);
+		});
+		subscribe(state, (ops) => {
+			rootHeard.push([...ops]);
+		});
+
+		state.a.x = 1;
+		await Promise.resolve();
+
+		expect(nodeHeard).toEqual([
+			[{ do: { op: "replace", path: ["x"], value: 1 }, undo: { op: "replace", path: ["x"], value: 0 } }],
+		]);
+		expect(rootHeard).toEqual([
+			[
+				{
+					do: { op: "replace", path: ["a", "x"], value: 1 },
+					undo: { op: "replace", path: ["a", "x"], value: 0 },
+				},
+			],
+		]);
+
+		nodeHeard.length = 0;
+		rootHeard.length = 0;
+
+		state.b.y = 2;
+		await Promise.resolve();
+
+		expect(nodeHeard).toEqual([]);
+		expect(rootHeard).toEqual([
+			[
+				{
+					do: { op: "replace", path: ["b", "y"], value: 2 },
+					undo: { op: "replace", path: ["b", "y"], value: 0 },
+				},
+			],
+		]);
+	});
+
+	it("unsubscribing a node listener leaves the root listener intact", async () => {
+		const state = createMutableState({ a: { x: 0 }, b: { y: 0 } });
+		const rootHeard = new Array<ReadonlyArray<Op>>();
+		const stopNode = subscribe(state.a, () => undefined);
+
+		subscribe(state, (ops) => {
+			rootHeard.push([...ops]);
+		});
+
+		stopNode();
+
+		state.a.x = 1;
+		await Promise.resolve();
+
+		expect(rootHeard).toEqual([
+			[
+				{
+					do: { op: "replace", path: ["a", "x"], value: 1 },
+					undo: { op: "replace", path: ["a", "x"], value: 0 },
+				},
+			],
+		]);
+	});
+
+	it("throws when the target is a scalar field", () => {
+		const state = createMutableState({ a: { x: 0 } });
+
+		expect(() => {
+			subscribe(state.a.x as unknown as object, () => undefined);
+		}).toThrow("opshot: expected a state object");
+	});
 });
