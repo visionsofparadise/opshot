@@ -9,7 +9,7 @@
 		"MD033": false,
 		"MD041": false,
 		"MD004": { "style": "dash" },
-		"MD049": { "style": "asterisk" },
+		"MD049": { "style": "underscore" },
 		"MD050": { "style": "asterisk" },
 		"MD010": { "spaces_per_tab": 3, "code_blocks": false },
 		"MD024": false,

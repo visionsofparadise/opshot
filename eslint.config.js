@@ -74,7 +74,7 @@ export default tseslint.config(
 			"prefer-arrow-callback": "error",
 			"arrow-body-style": ["error", "as-needed"],
 
-			"comment-rules/no-restricted-comments": ["error", "docs"],
+			"comment-rules/no-restricted-comments": ["error", "docs-report"],
 
 			"@typescript-eslint/naming-convention": [
 				"error",

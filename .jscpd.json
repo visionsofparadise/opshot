@@ -4,12 +4,16 @@
 	"gitignore": true,
 	"absolute": true,
 	"threshold": 0,
-	"reporters": ["consoleFull"],
+	"reporters": ["console"],
 	"ignore": [
 		"**/archive/**",
 		"**/.*/**",
+		"**/*.md",
 		"**/*.test.ts",
 		"**/*.test.tsx",
+		"**/__fixtures__/**",
+		"**/types/*.d.ts",
+		"**/package.json",
 		"package-lock.json",
 		"pnpm-lock.yaml",
 		"yarn.lock"

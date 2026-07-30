@@ -23,10 +23,8 @@
 		"url": "git+https://github.com/visionsofparadise/opshot.git"
 	},
 	"scripts": {
-		"check": "prettier --write . && eslint . --fix --cache && concurrently \"tsc --noEmit\" \"markdownlint-cli2 \\\"**/*.md\\\"\" \"textlint \\\"**/*.md\\\"\" \"knip --no-progress\" \"jscpd .\"",
-		"lint": "eslint . --fix --cache",
-		"lint:fix": "eslint . --fix",
-		"format": "prettier --write .",
+		"fix": "concurrently -m 1 --group \"prettier --write .\" \"eslint . --fix --cache\" \"markdownlint-cli2 --fix \\\"**/*.md\\\"\" \"textlint --fix \\\"**/*.md\\\"\"",
+		"check": "concurrently --group \"prettier --check .\" \"eslint . --no-cache -f unix\" \"tsc --noEmit --pretty false\" \"markdownlint-cli2 \\\"**/*.md\\\"\" \"textlint -f compact \\\"**/*.md\\\"\" \"knip --no-progress\" \"jscpd .\"",
 		"unit": "vitest run unit",
 		"integration": "vitest run integration",
 		"build": "tsup --config tsup.config.ts"
@@ -43,10 +41,11 @@
 		"concurrently": "^10.0.3",
 		"eslint": "^9.39.5",
 		"eslint-config-prettier": "^10.1.8",
+		"eslint-formatter-unix": "^9.0.1",
 		"eslint-import-resolver-typescript": "^4.4.4",
 		"eslint-plugin-barrel-files": "^3.0.1",
 		"eslint-plugin-check-file": "^3.3.1",
-		"eslint-plugin-comment-rules": "^0.1.5",
+		"eslint-plugin-comment-rules": "^0.1.7",
 		"eslint-plugin-import-x": "^4.17.1",
 		"eslint-plugin-jsx-a11y": "^6.10.2",
 		"eslint-plugin-react": "^7.37.5",
