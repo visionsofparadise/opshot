@@ -17,7 +17,7 @@ const readWholeValueUndo = (value: object): object => {
 		state.value = null;
 	});
 
-	if (undo?.op !== "replace") throw new Error("expected a whole-value replace undo");
+	if (undo?.op !== "assign") throw new Error("expected a whole-value assign undo");
 
 	const cloned = undo.value;
 

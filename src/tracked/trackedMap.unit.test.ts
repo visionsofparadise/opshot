@@ -146,18 +146,20 @@ describe("TrackedMap", () => {
 			]),
 		);
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({
-			op: "add",
+			op: "assign",
 			path: ["map", "index", addr],
 			value: 20,
 		});
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.do.op).toBe("add");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.undo.op).toBe("delete");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.undo.op).toBe("delete");
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "count")?.do).toMatchObject({
-			op: "replace",
+			op: "assign",
 			path: ["map", "count"],
 		});
 
 		expect(doPaths(heard[1])).toEqual([["map", "slots", 20]]);
-		expect(heard[1]?.[0]?.do.op).toBe("replace");
+		expect(heard[1]?.[0]?.do.op).toBe("assign");
+		expect(heard[1]?.[0]?.undo.op).toBe("assign");
 
 		expect(doPaths(heard[2])).toEqual(
 			expect.arrayContaining([
@@ -166,9 +168,9 @@ describe("TrackedMap", () => {
 				["map", "count"],
 			]),
 		);
-		expect(heard[2]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("remove");
+		expect(heard[2]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("delete");
 		expect(heard[2]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({
-			op: "replace",
+			op: "assign",
 			path: ["map", "slots", 20],
 			value: null,
 		});
@@ -222,7 +224,7 @@ describe("TrackedMap", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["map"] });
 		applyOps(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),

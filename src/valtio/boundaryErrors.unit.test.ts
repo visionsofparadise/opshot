@@ -1,28 +1,40 @@
 import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
+import { rejectionError } from "./boundaryErrors";
 
 describe("boundaryErrors: rejection vocabulary", () => {
+	it("omits the location clause with no path, the form canProxy raises", () => {
+		const locationless =
+			"opshot: Map cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked";
+
+		expect(rejectionError(new Map<string, number>(), "nativeClass").message).toBe(locationless);
+		expect(rejectionError(new Map<string, number>(), "nativeClass", []).message).toBe(locationless);
+		expect(rejectionError(new Map<string, number>(), "nativeClass", ["a", "b"]).message).toContain(
+			"opshot: Map at /a/b cannot be tracked",
+		);
+	});
+
 	it("throws for a Map in the define literal, naming TrackedMap, unsafeTrack, and ignore", () => {
 		expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow(
-			"opshot: Map cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
+			"opshot: Map at /lookup cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
 	it("throws for a Set, naming TrackedSet, unsafeTrack, and ignore", () => {
 		expect(() => createMutableState({ members: new Set<string>() })).toThrow(
-			"opshot: Set cannot be tracked (its state lives in internal slots). Options:\n- use TrackedSet for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
+			"opshot: Set at /members cannot be tracked (its state lives in internal slots). Options:\n- use TrackedSet for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
 	it("throws for a Date, naming TrackedDate, unsafeTrack, and ignore", () => {
 		expect(() => createMutableState({ createdAt: new Date() })).toThrow(
-			"opshot: Date cannot be tracked (its state lives in internal slots). Options:\n- use TrackedDate for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
+			"opshot: Date at /createdAt cannot be tracked (its state lives in internal slots). Options:\n- use TrackedDate for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
 	it("throws for an offending value nested inside the define literal", () => {
 		expect(() => createMutableState({ outer: { m: new Map<string, number>() } })).toThrow(
-			"opshot: Map cannot be tracked",
+			"opshot: Map at /outer/m cannot be tracked",
 		);
 	});
 
@@ -37,7 +49,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 			transact(state, () => {
 				state.box = new Map<string, number>();
 			});
-		}).toThrow("opshot: Map cannot be tracked");
+		}).toThrow("opshot: Map at /box cannot be tracked");
 
 		expect(state.box).toBe(null);
 	});
@@ -52,7 +64,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		}
 
 		expect(() => createMutableState({ vault: new Vault() })).toThrow(
-			"opshot: Vault cannot be tracked (its state is hidden in private fields). Options:\n- unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state\n- ignore(value) to store it by reference, untracked",
+			"opshot: Vault at /vault cannot be tracked (its state is hidden in private fields). Options:\n- unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
@@ -60,7 +72,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		class Cache extends Map<string, number> {}
 
 		expect(() => createMutableState({ cache: new Cache() })).toThrow(
-			"opshot: Cache cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
+			"opshot: Cache at /cache cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
@@ -68,7 +80,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		class Stack extends Array<number> {}
 
 		expect(() => createMutableState({ stack: new Stack() })).toThrow(
-			"opshot: Stack cannot be tracked (array subclasses lose their prototype in snapshots). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
+			"opshot: Stack at /stack cannot be tracked (array subclasses lose their prototype in snapshots). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
@@ -81,13 +93,13 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		}
 
 		expect(() => createMutableState({ arrow: new Arrow() })).toThrow(
-			"opshot: Arrow cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
+			"opshot: Arrow at /arrow cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
 	it("throws for a frozen Map: freezing does not freeze internal slots", () => {
 		expect(() => createMutableState({ lookup: Object.freeze(new Map<string, number>()) })).toThrow(
-			"opshot: Map cannot be tracked",
+			"opshot: Map at /lookup cannot be tracked",
 		);
 	});
 });

@@ -354,7 +354,7 @@ describe("useMutableState", () => {
 		});
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 
 		await act(async () => {
@@ -362,8 +362,8 @@ describe("useMutableState", () => {
 		});
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
-			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
 		]);
 		expect(screen.getByRole("button").textContent).toBe("2");
 	});

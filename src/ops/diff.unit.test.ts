@@ -34,15 +34,37 @@ const replayDo = <T extends object>(state: T, ops: Array<Op>): void =>
 	);
 
 describe("diffSnapshots: atomic flat paths", () => {
-	it("emits add, replace, and remove pairs at frozen array paths", () => {
+	it("emits addition, change, and removal pairs at frozen array paths", () => {
 		const ops = diffSnapshots({ kept: 1, changed: 2, removed: 3 }, { kept: 1, changed: 4, added: 5 });
 
 		expect(ops).toEqual([
-			{ do: { op: "replace", path: ["changed"], value: 4 }, undo: { op: "replace", path: ["changed"], value: 2 } },
-			{ do: { op: "remove", path: ["removed"] }, undo: { op: "add", path: ["removed"], value: 3 } },
-			{ do: { op: "add", path: ["added"], value: 5 }, undo: { op: "remove", path: ["added"] } },
+			{ do: { op: "assign", path: ["changed"], value: 4 }, undo: { op: "assign", path: ["changed"], value: 2 } },
+			{ do: { op: "delete", path: ["removed"] }, undo: { op: "assign", path: ["removed"], value: 3 } },
+			{ do: { op: "assign", path: ["added"], value: 5 }, undo: { op: "delete", path: ["added"] } },
 		]);
 		for (const pair of ops) expect(Object.isFrozen(pair.do.path)).toBe(true);
+	});
+
+	it("carries added-versus-changed on the undo half, both halves assigning", () => {
+		const ops = diffSnapshots({ changed: 1 }, { changed: 2, added: 3 });
+		const change = ops.find((pair) => pair.do.path[0] === "changed");
+		const addition = ops.find((pair) => pair.do.path[0] === "added");
+
+		expect(change?.do.op).toBe("assign");
+		expect(addition?.do.op).toBe("assign");
+
+		expect(change?.undo.op).toBe("assign");
+		expect(readValue(change?.undo ?? { op: "delete", path: [] })).toBe(1);
+		expect(addition?.undo.op).toBe("delete");
+	});
+
+	it("undoes an assignment of undefined onto an absent key with a delete, not a stored undefined", () => {
+		const ops = diffSnapshots({}, { value: undefined } as { value?: number });
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do.op).toBe("assign");
+		expect(readValue(ops[0]?.do ?? { op: "delete", path: [] })).toBeUndefined();
+		expect(ops[0]?.undo.op).toBe("delete");
 	});
 
 	it("recurses only while storage identity is continuous", () => {
@@ -57,17 +79,17 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const ops = diffSnapshots(before, snapshot(state));
 
 		expect(ops.map((pair) => pair.do.path)).toEqual([["retained", "count"], ["replaced"]]);
-		expect(readValue(ops[1]?.do ?? { op: "remove", path: [] })).toEqual({ count: 2 });
+		expect(readValue(ops[1]?.do ?? { op: "delete", path: [] })).toEqual({ count: 2 });
 	});
 
 	it("compares leaves with Object.is so NaN equals NaN and 0 differs from -0", () => {
 		expect(diffSnapshots({ n: Number.NaN }, { n: Number.NaN })).toEqual([]);
 		expect(diffSnapshots({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([
-			{ op: "replace", path: ["z"], value: -0 },
+			{ op: "assign", path: ["z"], value: -0 },
 		]);
 	});
 
-	it("emits a whole-value replace when equal content lands on a different target", () => {
+	it("emits a whole-value assign when equal content lands on a different target", () => {
 		const state = createMutableState({ value: { count: 1 } });
 		const heard = record(state);
 		const before = state.value;
@@ -77,7 +99,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 		});
 
 		expect(heard[0]).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ op: "replace", path: ["value"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ op: "assign", path: ["value"] });
 		expect(isSameIdentity(before, state.value)).toBe(false);
 	});
 
@@ -123,8 +145,12 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const ops = diffSnapshots(before, after);
 
 		expect(ops.map((pair) => pair.do)).toEqual([
-			{ op: "replace", path: ["length"], value: 4 },
-			{ op: "add", path: [3], value: undefined },
+			{ op: "assign", path: ["length"], value: 4 },
+			{ op: "assign", path: [3], value: undefined },
+		]);
+		expect(ops.map((pair) => pair.undo)).toEqual([
+			{ op: "assign", path: ["length"], value: 1 },
+			{ op: "delete", path: [3] },
 		]);
 	});
 
@@ -134,14 +160,14 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const ops = diffSnapshots(before, after);
 
 		expect(ops.map((pair) => pair.do)).toEqual([
-			{ op: "remove", path: [1] },
-			{ op: "remove", path: [2] },
-			{ op: "replace", path: ["length"], value: 1 },
+			{ op: "delete", path: [1] },
+			{ op: "delete", path: [2] },
+			{ op: "assign", path: ["length"], value: 1 },
 		]);
 		expect([...ops].reverse().map((pair) => pair.undo)).toEqual([
-			{ op: "replace", path: ["length"], value: 3 },
-			{ op: "add", path: [2], value: 3 },
-			{ op: "add", path: [1], value: 2 },
+			{ op: "assign", path: ["length"], value: 3 },
+			{ op: "assign", path: [2], value: 3 },
+			{ op: "assign", path: [1], value: 2 },
 		]);
 	});
 
@@ -149,8 +175,8 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const hole = new Array<unknown>(1);
 		const stored = [undefined];
 
-		expect(diffSnapshots(hole, stored)[0]?.do).toEqual({ op: "add", path: [0], value: undefined });
-		expect(diffSnapshots(stored, hole)[0]?.do).toEqual({ op: "remove", path: [0] });
+		expect(diffSnapshots(hole, stored)[0]?.do).toEqual({ op: "assign", path: [0], value: undefined });
+		expect(diffSnapshots(stored, hole)[0]?.do).toEqual({ op: "delete", path: [0] });
 	});
 
 	it("emits enumerable array non-index string properties as ordinary paths", () => {
@@ -160,7 +186,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 		Object.defineProperty(before, "label", { value: "a", enumerable: true });
 		Object.defineProperty(after, "label", { value: "b", enumerable: true });
 
-		expect(diffSnapshots(before, after)[0]?.do).toEqual({ op: "replace", path: ["label"], value: "b" });
+		expect(diffSnapshots(before, after)[0]?.do).toEqual({ op: "assign", path: ["label"], value: "b" });
 	});
 
 	it("emits stable Map key and value interiors through slots", () => {
@@ -222,7 +248,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 		expect(setIndexPath).toEqual(["set", "index", addressOf("target")]);
 	});
 
-	it("collapses clear-and-rebuild Map membership into one container replace", () => {
+	it("collapses clear-and-rebuild Map membership into one container assign", () => {
 		const state = createMutableState({
 			map: new TrackedMap([
 				["a", 1],
@@ -240,8 +266,8 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
-		expect([...(readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedMap<string, number>)]).toEqual([
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["map"] });
+		expect([...(readValue(ops[0]?.do ?? { op: "delete", path: [] }) as TrackedMap<string, number>)]).toEqual([
 			["b", 20],
 			["a", 10],
 		]);
@@ -257,7 +283,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 		]);
 	});
 
-	it("collapses multi-slot Set membership edits into one container replace", () => {
+	it("collapses multi-slot Set membership edits into one container assign", () => {
 		const state = createMutableState({ set: new TrackedSet([1, 2]) });
 		const heard = record(state);
 
@@ -269,8 +295,8 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["set"] });
-		expect([...(readValue(ops[0]?.do ?? { op: "remove", path: [] }) as TrackedSet<number>)]).toEqual([2, 3]);
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["set"] });
+		expect([...(readValue(ops[0]?.do ?? { op: "delete", path: [] }) as TrackedSet<number>)]).toEqual([2, 3]);
 		replayUndo(state, ops);
 		expect([...state.set]).toEqual([1, 2]);
 		replayDo(state, ops);
@@ -322,7 +348,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 });
 
 describe("diffSnapshots: container collapse", () => {
-	it("mass shrink emits one replace at the array path and round-trips", () => {
+	it("mass shrink emits one assign at the array path and round-trips", () => {
 		const state = createMutableState({ list: Array.from({ length: 2000 }, (_, index) => index) });
 		const heard = record(state);
 
@@ -334,8 +360,8 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
-		expect(readValue(ops[0]?.do ?? { op: "remove", path: [] })).toEqual(
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["list"] });
+		expect(readValue(ops[0]?.do ?? { op: "delete", path: [] })).toEqual(
 			Array.from({ length: 10 }, (_, index) => index),
 		);
 
@@ -360,7 +386,7 @@ describe("diffSnapshots: container collapse", () => {
 
 		expect(ops).toHaveLength(5);
 		expect(ops.map((pair) => pair.do)).toEqual(
-			edited.map((index) => ({ op: "replace", path: ["tree", index, "n"], value: index + 1 })),
+			edited.map((index) => ({ op: "assign", path: ["tree", index, "n"], value: index + 1 })),
 		);
 	});
 
@@ -397,7 +423,7 @@ describe("diffSnapshots: container collapse", () => {
 
 		expect(ops).toHaveLength(8);
 		expect(
-			ops.every((pair) => pair.do.op === "replace" && pair.do.path[0] === "bag" && pair.do.path.length === 2),
+			ops.every((pair) => pair.do.op === "assign" && pair.do.path[0] === "bag" && pair.do.path.length === 2),
 		).toBe(true);
 		expect(ops.map((pair) => pair.do.path[1])).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
 	});
@@ -419,10 +445,10 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["outer"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["outer"] });
 	});
 
-	it("map clear-and-rebuild collapses to one replace with iteration order restored on undo", () => {
+	it("map clear-and-rebuild collapses to one assign with iteration order restored on undo", () => {
 		const state = createMutableState({
 			map: new TrackedMap([
 				["a", 1],
@@ -442,7 +468,7 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["map"] });
 		expect([...state.map]).toEqual([
 			["c", 30],
 			["a", 10],
@@ -469,10 +495,10 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = diffSnapshots(before, after);
 
 		expect(ops.length).toBe(50);
-		expect(ops.every((pair) => pair.do.op === "replace" && pair.do.path.length === 1)).toBe(true);
+		expect(ops.every((pair) => pair.do.op === "assign" && pair.do.path.length === 1)).toBe(true);
 	});
 
-	it("watchdog mass edit reaches the stream as one side-effect container replace", async () => {
+	it("watchdog mass edit reaches the stream as one side-effect container assign", async () => {
 		const state = createMutableState({ list: Array.from({ length: 200 }, (_, index) => index) });
 		const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
 
@@ -489,13 +515,13 @@ describe("diffSnapshots: container collapse", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toBeUndefined();
 		expect(heard[0]?.ops).toHaveLength(1);
-		expect(heard[0]?.ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
+		expect(heard[0]?.ops[0]?.do).toMatchObject({ op: "assign", path: ["list"] });
 		expect(heard[0]?.ops[0]?.do && "value" in heard[0].ops[0].do ? heard[0].ops[0].do.value : undefined).toEqual([
 			0, 1, 2, 3, 4,
 		]);
 	});
 
-	it("small-container two-op edit collapses to one replace and round-trips", () => {
+	it("small-container two-op edit collapses to one assign and round-trips", () => {
 		const state = createMutableState({ list: [1, 2, 3] });
 		const heard = record(state);
 
@@ -508,8 +534,8 @@ describe("diffSnapshots: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["list"] });
-		expect(readValue(ops[0]?.do ?? { op: "remove", path: [] })).toEqual([1, 20, 30]);
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["list"] });
+		expect(readValue(ops[0]?.do ?? { op: "delete", path: [] })).toEqual([1, 20, 30]);
 
 		replayUndo(state, ops);
 		expect(state.list).toEqual([1, 2, 3]);

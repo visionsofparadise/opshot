@@ -213,13 +213,13 @@ describe("subscribe", () => {
 		await Promise.resolve();
 
 		expect(nodeHeard).toEqual([
-			[{ do: { op: "replace", path: ["x"], value: 1 }, undo: { op: "replace", path: ["x"], value: 0 } }],
+			[{ do: { op: "assign", path: ["x"], value: 1 }, undo: { op: "assign", path: ["x"], value: 0 } }],
 		]);
 		expect(rootHeard).toEqual([
 			[
 				{
-					do: { op: "replace", path: ["a", "x"], value: 1 },
-					undo: { op: "replace", path: ["a", "x"], value: 0 },
+					do: { op: "assign", path: ["a", "x"], value: 1 },
+					undo: { op: "assign", path: ["a", "x"], value: 0 },
 				},
 			],
 		]);
@@ -234,8 +234,8 @@ describe("subscribe", () => {
 		expect(rootHeard).toEqual([
 			[
 				{
-					do: { op: "replace", path: ["b", "y"], value: 2 },
-					undo: { op: "replace", path: ["b", "y"], value: 0 },
+					do: { op: "assign", path: ["b", "y"], value: 2 },
+					undo: { op: "assign", path: ["b", "y"], value: 0 },
 				},
 			],
 		]);
@@ -258,8 +258,8 @@ describe("subscribe", () => {
 		expect(rootHeard).toEqual([
 			[
 				{
-					do: { op: "replace", path: ["a", "x"], value: 1 },
-					undo: { op: "replace", path: ["a", "x"], value: 0 },
+					do: { op: "assign", path: ["a", "x"], value: 1 },
+					undo: { op: "assign", path: ["a", "x"], value: 0 },
 				},
 			],
 		]);

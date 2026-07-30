@@ -1,10 +1,8 @@
 import { resolveEmitterTarget } from "../emit/resolveEmitterTarget";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
-import { getValueOriginal, isOperation, type Operation, type ReplaceOperation, type AddOperation } from "./operation";
+import { getValueOriginal, isOperation, type AssignOperation, type Operation } from "./operation";
 import { assertSafePath, formatOperationPath, type OperationPath } from "./path";
-
-type ValueOperation = AddOperation | ReplaceOperation;
 
 interface ValuePayload {
 	readonly recorded: unknown;
@@ -55,7 +53,7 @@ const setOrThrow = (target: object, key: PropertyKey, value: unknown): void => {
 };
 
 const deleteOrThrow = (target: object, key: PropertyKey): void => {
-	if (!Reflect.deleteProperty(target, key)) throw new Error(`opshot: replay could not remove ${String(key)}`);
+	if (!Reflect.deleteProperty(target, key)) throw new Error(`opshot: replay could not delete ${String(key)}`);
 };
 
 const restoreRecordedContent = (attached: object, recorded: object, restored: WeakSet<object>): void => {
@@ -104,7 +102,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 	}
 };
 
-const getValuePayload = (operation: ValueOperation): ValuePayload => {
+const getValuePayload = (operation: AssignOperation): ValuePayload => {
 	const original = getValueOriginal(operation);
 
 	if (original !== undefined) {
@@ -209,7 +207,7 @@ const applyPlain = (parent: object, segment: unknown, operation: Operation): voi
 
 	if (Array.isArray(parent) && segment === "length") {
 		if (
-			operation.op !== "replace" ||
+			operation.op !== "assign" ||
 			typeof operation.value !== "number" ||
 			!Number.isInteger(operation.value) ||
 			operation.value < 0 ||
@@ -229,22 +227,18 @@ const applyPlain = (parent: object, segment: unknown, operation: Operation): voi
 
 	if (descriptor !== undefined && !present) throw unresolvedError(path);
 
-	if (operation.op === "add" && present) throw unresolvedError(path);
+	if (operation.op === "delete") {
+		deleteOrThrow(parent, key);
 
-	if (operation.op !== "add" && !present) throw unresolvedError(path);
+		return;
+	}
 
-	if (operation.op === "add") {
+	if (!present) {
 		const inheritedDescriptor = getInheritedDescriptor(parent, key);
 
 		if (inheritedDescriptor && !("value" in inheritedDescriptor)) {
 			throw new Error(`opshot: ${formatOperationPath(path)} resolves to an inherited accessor`);
 		}
-	}
-
-	if (operation.op === "remove") {
-		deleteOrThrow(parent, key);
-
-		return;
 	}
 
 	if (!("value" in operation)) throw unresolvedError(path);

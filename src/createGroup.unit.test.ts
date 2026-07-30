@@ -42,7 +42,7 @@ describe("createGroup", () => {
 		expect(isSameIdentity(first, emissions[0]!.state)).toBe(true);
 		expect(isSameIdentity(second, emissions[0]!.state)).toBe(false);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
 		expect(emissions[1]?.state).toBe(second);

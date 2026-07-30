@@ -4,7 +4,7 @@ import { getRegisteredTarget } from "../identity";
 import { getSettings, inheritSettings } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
-import { admissionLane, classifyValue } from "./classify";
+import { admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import {
 	constructorPathTargetCount,
 	getEnumerableDataChild,
@@ -15,10 +15,23 @@ import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
-export const assertSafeDataPaths = (
+const certifyAdmission = (value: object, path?: ReadonlyArray<string>): AdmissionLane => {
+	const lane = admissionLane(value);
+
+	if (lane !== "reject") return lane;
+
+	const kind = classifyValue(value);
+
+	if (kind === "plain" || kind === "plainArray") return "track";
+
+	throw rejectionError(value, kind, path);
+};
+
+const walkDataPaths = (
 	value: unknown,
-	path = new Array<string>(),
-	activeAncestors = new WeakSet(),
+	path: Array<string>,
+	activeAncestors: WeakSet<object>,
+	certifying: boolean,
 ): void => {
 	if (typeof value !== "object" || value === null || activeAncestors.has(value)) return;
 
@@ -33,11 +46,26 @@ export const assertSafeDataPaths = (
 
 			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
-			if (descriptor && "value" in descriptor) assertSafeDataPaths(descriptor.value, nextPath, activeAncestors);
+			if (!descriptor || !("value" in descriptor)) continue;
+
+			const child: unknown = descriptor.value;
+			const reachable = certifying && descriptor.writable === true && typeof child === "object" && child !== null;
+			const certifyBelow = reachable && !proxyStateMap.has(child) && certifyAdmission(child, nextPath) === "track";
+
+			walkDataPaths(child, nextPath, activeAncestors, certifyBelow);
 		}
 	} finally {
 		activeAncestors.delete(value);
 	}
+};
+
+export const assertSafeDataPaths = (
+	value: unknown,
+	path = new Array<string>(),
+	activeAncestors = new WeakSet<object>(),
+	strict = true,
+): void => {
+	walkDataPaths(value, path, activeAncestors, strict);
 };
 
 let installed = false;
@@ -50,15 +78,7 @@ export function installBoundary(): void {
 	unstable_replaceInternalFunction("canProxy", () => (value) => {
 		if (typeof value !== "object" || value === null) return false;
 
-		const lane = admissionLane(value);
-
-		if (lane !== "reject") return lane === "track";
-
-		const kind = classifyValue(value);
-
-		if (kind === "plain" || kind === "plainArray") return true;
-
-		throw rejectionError(value, kind);
+		return certifyAdmission(value) === "track";
 	});
 
 	unstable_replaceInternalFunction("createSnapshot", () => createSnapshotPreservingAccessors);
@@ -102,7 +122,14 @@ export function installBoundary(): void {
 						if (prototypeDescriptor?.enumerable) throw reservedDataPathError(["constructor", "prototype"]);
 					}
 
-					assertSafeDataPaths(assigned, typeof prop === "string" ? [prop] : []);
+					const location = typeof prop === "string" ? [prop] : [];
+					const strict = getSettings(target)?.strict !== false;
+					const certifyAssigned =
+						strict && typeof assigned === "object" && assigned !== null
+							? admissionLane(assigned) === "track"
+							: strict;
+
+					assertSafeDataPaths(assigned, location, new WeakSet(), certifyAssigned);
 
 					const resolved: unknown =
 						typeof assigned === "object" && assigned !== null ? (getUntracked(assigned) ?? assigned) : assigned;
@@ -118,6 +145,8 @@ export function installBoundary(): void {
 							admissionLane(resolved) === "reject"
 						)
 							unsafeTrack(resolved);
+
+						if (!proxyStateMap.has(resolved)) certifyAdmission(resolved, isInitializing() ? undefined : location);
 					}
 
 					const rootGraphs = getRootGraphs(target);

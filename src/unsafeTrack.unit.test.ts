@@ -86,8 +86,8 @@ describe("unsafeTrack stories", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toEqual([
 			{
-				do: { op: "replace", path: ["arrow", "count"], value: 5 },
-				undo: { op: "replace", path: ["arrow", "count"], value: 0 },
+				do: { op: "assign", path: ["arrow", "count"], value: 5 },
+				undo: { op: "assign", path: ["arrow", "count"], value: 0 },
 			},
 		]);
 		expect(state.arrow.count).toBe(5);
@@ -124,7 +124,7 @@ describe("unsafeTrack stories", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ op: "replace", path: ["vault", "label"], value: "b" });
+		expect(heard[0]?.[0]?.do).toMatchObject({ op: "assign", path: ["vault", "label"], value: "b" });
 		expect(state.vault.label).toBe("b");
 		expect(() => state.vault.reveal()).toThrow();
 		expect(vault.reveal()).toBe(7);
@@ -141,7 +141,7 @@ describe("unsafeTrack stories", () => {
 
 		const replaceOp = heard[0]![0]!;
 
-		expect(replaceOp.do.op).toBe("replace");
+		expect(replaceOp.do.op).toBe("assign");
 		expect(replaceOp.do.path).toEqual(["vault"]);
 
 		applyOps(state, [replaceOp.undo]);

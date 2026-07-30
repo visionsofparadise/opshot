@@ -175,8 +175,8 @@ const Counter = () => {
 		() =>
 			subscribe(counter, (ops, meta) => {
 				// ops: [{
-				//   do:   { op: "replace", path: ["count"], value: 1 },
-				//   undo: { op: "replace", path: ["count"], value: 0 },
+				//   do:   { op: "assign", path: ["count"], value: 1 },
+				//   undo: { op: "assign", path: ["count"], value: 0 },
 				// }]
 				// meta: whatever the writer passed, or undefined for bare writes
 			}),
@@ -197,15 +197,14 @@ subscribe(state.a, (ops) => {
 
 ## Ops
 
-An op is an invertible pair of `Operation` halves. Every half uses one of three verbs:
+An op is an invertible pair of `Operation` halves. Every half uses one of two verbs:
 
 ```ts
 type OperationPath = ReadonlyArray<string | number>;
 
 type Operation =
-	| { readonly op: "add"; readonly path: OperationPath; readonly value: unknown }
-	| { readonly op: "replace"; readonly path: OperationPath; readonly value: unknown }
-	| { readonly op: "remove"; readonly path: OperationPath };
+	| { readonly op: "assign"; readonly path: OperationPath; readonly value: unknown }
+	| { readonly op: "delete"; readonly path: OperationPath };
 
 interface Op {
 	readonly do: Operation;

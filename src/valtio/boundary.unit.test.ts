@@ -36,14 +36,14 @@ describe("boundary: tracked lane", () => {
 		expect(emissions.map((emission) => emission.ops)).toEqual([
 			[
 				{
-					do: { op: "replace", path: ["document", "title"], value: "b" },
-					undo: { op: "replace", path: ["document", "title"], value: "a" },
+					do: { op: "assign", path: ["document", "title"], value: "b" },
+					undo: { op: "assign", path: ["document", "title"], value: "a" },
 				},
 			],
 			[
 				{
-					do: { op: "replace", path: ["document", "tags", 1], value: "z" },
-					undo: { op: "replace", path: ["document", "tags", 1], value: "y" },
+					do: { op: "assign", path: ["document", "tags", 1], value: "z" },
+					undo: { op: "assign", path: ["document", "tags", 1], value: "y" },
 				},
 			],
 		]);
@@ -67,8 +67,8 @@ describe("boundary: tracked lane", () => {
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
 			{
-				do: { op: "replace", path: ["collection", "count"], value: 1 },
-				undo: { op: "replace", path: ["collection", "count"], value: 0 },
+				do: { op: "assign", path: ["collection", "count"], value: 1 },
+				undo: { op: "assign", path: ["collection", "count"], value: 0 },
 			},
 		]);
 		expect(state.collection.count).toBe(1);
@@ -234,12 +234,157 @@ describe("boundary: throws at entry", () => {
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
 			{
-				do: { op: "replace", path: ["emitter", "count"], value: 1 },
-				undo: { op: "replace", path: ["emitter", "count"], value: 0 },
+				do: { op: "assign", path: ["emitter", "count"], value: 1 },
+				undo: { op: "assign", path: ["emitter", "count"], value: 0 },
 			},
 		]);
 		expect(state.emitter).toBeInstanceOf(Emitter);
 		expect(state.emitter.count).toBe(1);
+	});
+});
+
+describe("boundary: located rejection", () => {
+	it("names which of two rejectable values in one initializer was rejected", () => {
+		expect(() =>
+			createMutableState({ first: { lookup: new Map<string, number>() }, second: { members: new Set<string>() } }),
+		).toThrow("opshot: Map at /first/lookup cannot be tracked");
+
+		expect(() =>
+			createMutableState({ first: { members: new Set<string>() }, second: { lookup: new Map<string, number>() } }),
+		).toThrow("opshot: Set at /first/members cannot be tracked");
+	});
+
+	it("tracks the offending path rather than reporting a fixed location", () => {
+		expect(() => createMutableState({ first: { lookup: new Map<string, number>() }, second: { ok: 1 } })).toThrow(
+			"opshot: Map at /first/lookup cannot be tracked",
+		);
+		expect(() => createMutableState({ first: { ok: 1 }, second: { members: new Set<string>() } })).toThrow(
+			"opshot: Set at /second/members cannot be tracked",
+		);
+	});
+
+	it("composes the written key with the relative path beneath it", () => {
+		const state = createMutableState<{ box: unknown }>({ box: null });
+
+		expect(() => {
+			transact(state, () => {
+				state.box = { inner: { lookup: new Map<string, number>() } };
+			});
+		}).toThrow("opshot: Map at /box/inner/lookup cannot be tracked");
+		expect(state.box).toBeNull();
+	});
+});
+
+describe("boundary: certification descends only where valtio proxies", () => {
+	it("admits a rejectable value behind a non-writable property and rejects it behind a writable one", () => {
+		const held = new Map([["k", "v"]]);
+		const nonWritable: Record<string, unknown> = {};
+
+		Object.defineProperty(nonWritable, "held", {
+			value: held,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		const state = createMutableState({ box: nonWritable });
+
+		expect(state.box.held).toBe(held);
+
+		const writable: Record<string, unknown> = {};
+
+		Object.defineProperty(writable, "held", {
+			value: new Map([["k", "v"]]),
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+
+		expect(() => createMutableState({ box: writable })).toThrow("opshot: Map at /box/held cannot be tracked");
+	});
+
+	it("stops certifying the whole subtree beneath a non-writable property", () => {
+		const held = new Map([["k", "v"]]);
+		const outer = { lookup: held };
+		const nested: Record<string, unknown> = {};
+
+		Object.defineProperty(nested, "outer", {
+			value: outer,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		const state = createMutableState({ box: nested });
+
+		expect(state.box.outer).toBe(outer);
+		expect((state.box.outer as typeof outer).lookup).toBe(held);
+	});
+
+	it("leaves the interior of an ignored container uncertified on both paths", () => {
+		const lookup = new Map<string, number>();
+
+		expect(() => createMutableState({ kept: ignore({ lookup }) })).not.toThrow();
+		expect(() => createMutableState({ kept: ignore({ a: { b: new Set<string>() } }) })).not.toThrow();
+		expect(() => createMutableState({ kept: ignore([new Map<string, number>()]) })).not.toThrow();
+
+		const state = createMutableState<{ box: unknown }>({ box: null });
+
+		transact(state, () => {
+			state.box = ignore({ lookup });
+		});
+
+		expect((state.box as { lookup: Map<string, number> }).lookup).toBe(lookup);
+	});
+
+	it("reports no location rather than a wrong one for a placement the walk cannot see", () => {
+		const nested: Record<string, unknown> = {};
+		const symbolKeyed: Record<string | symbol, unknown> = {};
+
+		Object.defineProperty(nested, "held", {
+			value: new Map<string, number>(),
+			enumerable: false,
+			writable: true,
+			configurable: true,
+		});
+		Object.defineProperty(symbolKeyed, Symbol("held"), {
+			value: new Map<string, number>(),
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+
+		for (const carrier of [nested, symbolKeyed]) {
+			let message = "";
+
+			try {
+				createMutableState({ a: { b: carrier } });
+			} catch (error) {
+				message = error instanceof Error ? error.message : String(error);
+			}
+
+			expect(message).toContain("opshot: Map cannot be tracked");
+			expect(message).not.toContain(" at /");
+		}
+	});
+
+	it("keeps the reserved-path guard descending inside an ignored container", () => {
+		expect(() => createMutableState({ kept: ignore({ constructor: { prototype: { polluted: true } } }) })).toThrow(
+			"reserved data path /kept/constructor/prototype",
+		);
+	});
+
+	it("keeps the reserved-path guard descending beneath a non-writable property", () => {
+		const nested: Record<string, unknown> = {};
+
+		Object.defineProperty(nested, "constructor", {
+			value: { prototype: { polluted: true } },
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		expect(() => createMutableState({ box: nested })).toThrow("reserved data path /box/constructor/prototype");
 	});
 });
 
@@ -257,7 +402,7 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["tick"], value: 1 }, undo: { op: "replace", path: ["tick"], value: 0 } },
+			{ do: { op: "assign", path: ["tick"], value: 1 }, undo: { op: "assign", path: ["tick"], value: 0 } },
 		]);
 		expect(state.box).toBe(frozen);
 
@@ -316,7 +461,7 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
 		]);
 
 		const emitted = emissions[0]?.state;
@@ -339,7 +484,7 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["run"], value: second }, undo: { op: "replace", path: ["run"], value: first } },
+			{ do: { op: "assign", path: ["run"], value: second }, undo: { op: "assign", path: ["run"], value: first } },
 		]);
 		expect(state.run).toBe(second);
 	});
@@ -463,7 +608,9 @@ describe("boundary: install", () => {
 		});
 
 		expect(state.count).toBe(1);
-		expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow("opshot: Map cannot be tracked");
+		expect(() => createMutableState({ lookup: new Map<string, number>() })).toThrow(
+			"opshot: Map at /lookup cannot be tracked",
+		);
 	});
 });
 
@@ -490,8 +637,8 @@ describe("boundary: strict false", () => {
 
 		const expected = [
 			{
-				do: { op: "replace", path: ["arrow", "count"], value: 5 },
-				undo: { op: "replace", path: ["arrow", "count"], value: 0 },
+				do: { op: "assign", path: ["arrow", "count"], value: 5 },
+				undo: { op: "assign", path: ["arrow", "count"], value: 0 },
 			},
 		];
 
@@ -518,8 +665,8 @@ describe("boundary: strict false", () => {
 		expect(emissions.map((emission) => emission.ops)).toEqual([
 			[
 				{
-					do: { op: "replace", path: ["arrow", "count"], value: 3 },
-					undo: { op: "replace", path: ["arrow", "count"], value: 0 },
+					do: { op: "assign", path: ["arrow", "count"], value: 3 },
+					undo: { op: "assign", path: ["arrow", "count"], value: 0 },
 				},
 			],
 		]);
@@ -612,6 +759,32 @@ describe("boundary: strict false", () => {
 
 		expect(strict.lookup).toBe(nonStrict.lookup);
 		expect(() => strict.lookup.set("a", 1)).toThrow();
+	});
+
+	it("skips certification on the write path, deferring the throw to first use", () => {
+		const state = createMutableState<{ box: unknown }>({ box: null }, { strict: false });
+
+		transact(state, () => {
+			state.box = new Map<string, number>();
+		});
+
+		expect(state.box).toBeInstanceOf(Map);
+		expect(() => (state.box as Map<string, number>).set("a", 1)).toThrow();
+	});
+
+	it("keeps the reserved-path guard running on both paths", () => {
+		expect(() => createMutableState({ constructor: { prototype: { polluted: true } } }, { strict: false })).toThrow(
+			"reserved data path /constructor/prototype",
+		);
+
+		const state = createMutableState<{ value: unknown }>({ value: null }, { strict: false });
+
+		expect(() => {
+			transact(state, () => {
+				state.value = { constructor: { prototype: { polluted: true } } };
+			});
+		}).toThrow("reserved data path /value/constructor/prototype");
+		expect(state.value).toBeNull();
 	});
 
 	it("keeps every non-admission loud site under strict false", () => {

@@ -5,9 +5,8 @@ import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { isCloneable } from "./cloneValue";
 import {
-	createAddOperation,
-	createRemoveOperation,
-	createReplaceOperation,
+	createAssignOperation,
+	createDeleteOperation,
 	getValueOriginal,
 	isOperation,
 	type Operation,
@@ -18,7 +17,7 @@ const readValue = (half: Operation): unknown => ("value" in half ? half.value : 
 describe("operation", () => {
 	it("mints a fresh equal clone on every read of a cloneable value", () => {
 		const original = { nested: { x: 1 }, list: [1, 2] };
-		const half = createAddOperation(["node"], original);
+		const half = createAssignOperation(["node"], original);
 
 		expect(readValue(half)).not.toBe(readValue(half));
 		expect(readValue(half)).toEqual(original);
@@ -27,7 +26,7 @@ describe("operation", () => {
 
 	it("keeps non-cloneable values directly readable", () => {
 		const run = (): string => "a";
-		const half = createReplaceOperation(["run"], run);
+		const half = createAssignOperation(["run"], run);
 
 		expect(half.value).toBe(run);
 		expect(Object.getOwnPropertyDescriptor(half, "value")?.enumerable).toBe(true);
@@ -35,7 +34,7 @@ describe("operation", () => {
 
 	it("stores a frozen copied path on every half", () => {
 		const source = ["document", 1];
-		const halves = [createAddOperation(source, 1), createReplaceOperation(source, 2), createRemoveOperation(source)];
+		const halves = [createAssignOperation(source, 1), createDeleteOperation(source)];
 
 		source[0] = "changed";
 
@@ -47,7 +46,7 @@ describe("operation", () => {
 
 	it("keeps originals registered while public clone reads are independent", () => {
 		const state = createMutableState({ value: { count: 1 } });
-		const half = createReplaceOperation(["value"], state.value);
+		const half = createAssignOperation(["value"], state.value);
 		const publicValue = half.value;
 
 		expect(getValueOriginal(half)).toBe(state.value);
@@ -58,7 +57,7 @@ describe("operation", () => {
 	});
 
 	it("brands originals and rejects spread, JSON, and structuredClone copies", () => {
-		const half = createAddOperation(["node"], { nested: true });
+		const half = createAssignOperation(["node"], { nested: true });
 
 		expect(isOperation(half)).toBe(true);
 		expect(isOperation({ ...half })).toBe(false);
@@ -67,7 +66,7 @@ describe("operation", () => {
 	});
 
 	it("keeps halves branded through an envelope spread", () => {
-		const envelope = { do: createAddOperation(["node"], { nested: true }), undo: createRemoveOperation(["node"]) };
+		const envelope = { do: createAssignOperation(["node"], { nested: true }), undo: createDeleteOperation(["node"]) };
 		const spread = { ...envelope };
 
 		expect(isOperation(spread.do)).toBe(true);
@@ -83,9 +82,9 @@ describe("operation", () => {
 		expect(isCloneable(set)).toBe(true);
 		expect(isCloneable(date)).toBe(true);
 
-		const mapHalf = createReplaceOperation(["map"], map);
-		const setHalf = createReplaceOperation(["set"], set);
-		const dateHalf = createReplaceOperation(["date"], date);
+		const mapHalf = createAssignOperation(["map"], map);
+		const setHalf = createAssignOperation(["set"], set);
+		const dateHalf = createAssignOperation(["date"], date);
 
 		expect(mapHalf.value).not.toBe(map);
 		expect(setHalf.value).not.toBe(set);

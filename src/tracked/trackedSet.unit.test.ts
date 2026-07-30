@@ -90,12 +90,13 @@ describe("TrackedSet", () => {
 				["set", "count"],
 			]),
 		);
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.do.op).toBe("add");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.undo.op).toBe("delete");
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({
-			op: "add",
+			op: "assign",
 			path: ["set", "index", addr],
 			value: 20,
 		});
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.undo.op).toBe("delete");
 
 		expect(doPaths(heard[1])).toEqual(
 			expect.arrayContaining([
@@ -105,11 +106,11 @@ describe("TrackedSet", () => {
 			]),
 		);
 		expect(heard[1]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({
-			op: "replace",
+			op: "assign",
 			path: ["set", "slots", 20],
 			value: null,
 		});
-		expect(heard[1]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("remove");
+		expect(heard[1]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("delete");
 	});
 
 	it("emits member interiors through slots", () => {
@@ -126,7 +127,7 @@ describe("TrackedSet", () => {
 
 		const operation = heard[0]?.[0]?.do;
 
-		expect(operation?.op).toBe("replace");
+		expect(operation?.op).toBe("assign");
 		expect(operation?.path).toEqual(["set", "slots", 0, 0, "profile", "count"]);
 	});
 
@@ -143,7 +144,7 @@ describe("TrackedSet", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["set"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["set"] });
 		applyOps(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),

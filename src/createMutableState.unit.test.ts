@@ -66,7 +66,7 @@ describe("createMutableState", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
@@ -99,7 +99,7 @@ describe("createMutableState", () => {
 
 		expect(diffSnapshots).toHaveBeenCalledTimes(1);
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
 		]);
 
 		unsubscribe();
@@ -219,7 +219,7 @@ describe("createMutableState", () => {
 		expect(state.entries).toEqual(["one"]);
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["index"], value: 1 }, undo: { op: "replace", path: ["index"], value: 0 } },
+			{ do: { op: "assign", path: ["index"], value: 1 }, undo: { op: "assign", path: ["index"], value: 0 } },
 		]);
 	});
 
@@ -261,7 +261,7 @@ describe("createMutableState", () => {
 		});
 
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(state.doubled).toBe(2);
 	});
@@ -283,7 +283,7 @@ describe("createMutableState", () => {
 		expect(heard).toEqual([
 			{
 				ops: [
-					{ do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } },
+					{ do: { op: "assign", path: ["count"], value: 5 }, undo: { op: "assign", path: ["count"], value: 0 } },
 				],
 				meta: undefined,
 			},
@@ -363,7 +363,7 @@ describe("createMutableState", () => {
 		await Promise.resolve();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 });

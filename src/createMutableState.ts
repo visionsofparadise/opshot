@@ -12,7 +12,7 @@ export interface MutableStateOptions extends StateSettings {
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {
 	installBoundary();
 
-	assertSafeDataPaths(properties);
+	assertSafeDataPaths(properties, [], new WeakSet(), options?.strict !== false);
 
 	const base = Object.create(Reflect.getPrototypeOf(properties)) as T;
 

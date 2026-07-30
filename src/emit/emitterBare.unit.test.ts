@@ -61,7 +61,7 @@ describe("emitterBare", () => {
 		await Promise.resolve();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 
@@ -139,7 +139,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(stateHeard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 		expect(groupHeard).toEqual(stateHeard);
 	});
@@ -161,7 +161,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 
@@ -186,7 +186,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 3 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 		expect(scheduler.pending).toHaveLength(0);
 	});
@@ -218,8 +218,8 @@ describe("emitOn window", () => {
 			{
 				ops: [
 					{
-						do: { op: "replace", path: ["count"], value: 1 },
-						undo: { op: "replace", path: ["count"], value: 0 },
+						do: { op: "assign", path: ["count"], value: 1 },
+						undo: { op: "assign", path: ["count"], value: 0 },
 					},
 				],
 				meta: undefined,
@@ -227,8 +227,8 @@ describe("emitOn window", () => {
 			{
 				ops: [
 					{
-						do: { op: "replace", path: ["count"], value: 2 },
-						undo: { op: "replace", path: ["count"], value: 1 },
+						do: { op: "assign", path: ["count"], value: 2 },
+						undo: { op: "assign", path: ["count"], value: 1 },
 					},
 				],
 				meta: { tag: "txn" },
@@ -275,8 +275,8 @@ describe("emitOn window", () => {
 			{
 				ops: [
 					{
-						do: { op: "replace", path: ["count"], value: 3 },
-						undo: { op: "replace", path: ["count"], value: 2 },
+						do: { op: "assign", path: ["count"], value: 3 },
+						undo: { op: "assign", path: ["count"], value: 2 },
 					},
 				],
 				meta: undefined,
@@ -311,7 +311,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 
@@ -333,7 +333,7 @@ describe("emitOn window", () => {
 		stop();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 
@@ -356,7 +356,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "replace", path: ["x"], value: 1 }, undo: { op: "replace", path: ["x"], value: 0 } }],
+			[{ do: { op: "assign", path: ["x"], value: 1 }, undo: { op: "assign", path: ["x"], value: 0 } }],
 		]);
 	});
 

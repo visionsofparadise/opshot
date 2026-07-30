@@ -235,10 +235,10 @@ describe("TrackedDate atomic emission", () => {
 
 		expect(heard[0]?.ops).toHaveLength(1);
 		expect(heard[0]?.meta).toBeUndefined();
-		expect(pair.do.op).toBe("replace");
+		expect(pair.do.op).toBe("assign");
 		expect(pair.do.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.do)).toBe(Date.UTC(2024, 0, 1));
-		expect(pair.undo.op).toBe("replace");
+		expect(pair.undo.op).toBe("assign");
 		expect(pair.undo.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.undo)).toBe(Date.UTC(2020, 0, 1));
 	});

@@ -1,6 +1,6 @@
 import { isSameIdentity } from "../identity";
 import { cyclicError, isPlainArray, isPlainObject } from "./cloneValue";
-import { createAddOperation, createRemoveOperation, createReplaceOperation, type Op } from "./operation";
+import { createAssignOperation, createDeleteOperation, type Op } from "./operation";
 import { appendOperationPath, assertSafePath, createOperationPath, type OperationPath } from "./path";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
 
@@ -16,37 +16,37 @@ class IncompatibleSnapshotRootsError extends Error {
 	}
 }
 
-const addPair = (path: OperationPath, after: unknown): Op => ({
-	do: createAddOperation(path, after),
-	undo: createRemoveOperation(path),
+const additionPair = (path: OperationPath, after: unknown): Op => ({
+	do: createAssignOperation(path, after),
+	undo: createDeleteOperation(path),
 });
 
-const removePair = (path: OperationPath, before: unknown): Op => ({
-	do: createRemoveOperation(path),
-	undo: createAddOperation(path, before),
+const removalPair = (path: OperationPath, before: unknown): Op => ({
+	do: createDeleteOperation(path),
+	undo: createAssignOperation(path, before),
 });
 
-const replacePair = (path: OperationPath, before: unknown, after: unknown): Op => ({
-	do: createReplaceOperation(path, after),
-	undo: createReplaceOperation(path, before),
+const changePair = (path: OperationPath, before: unknown, after: unknown): Op => ({
+	do: createAssignOperation(path, after),
+	undo: createAssignOperation(path, before),
 });
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
 
-const pushAdd = (ops: Array<Op>, path: OperationPath, after: unknown): number => {
-	ops.push(addPair(path, after));
+const pushAddition = (ops: Array<Op>, path: OperationPath, after: unknown): number => {
+	ops.push(additionPair(path, after));
 
 	return OPERATION_WEIGHT + weighCarried(after);
 };
 
-const pushRemove = (ops: Array<Op>, path: OperationPath, before: unknown): number => {
-	ops.push(removePair(path, before));
+const pushRemoval = (ops: Array<Op>, path: OperationPath, before: unknown): number => {
+	ops.push(removalPair(path, before));
 
 	return OPERATION_WEIGHT + weighCarried(before);
 };
 
-const pushReplace = (ops: Array<Op>, path: OperationPath, before: unknown, after: unknown): number => {
-	ops.push(replacePair(path, before, after));
+const pushChange = (ops: Array<Op>, path: OperationPath, before: unknown, after: unknown): number => {
+	ops.push(changePair(path, before, after));
 
 	return OPERATION_WEIGHT + weighCarried(before) + weighCarried(after);
 };
@@ -68,7 +68,7 @@ const tryCollapse = (
 	if (collapsedWeight < atomicWeight) {
 		assertSafeSubtree(before, path);
 		assertSafeSubtree(after, path);
-		ops.splice(opsStart, ops.length - opsStart, replacePair(path, before, after));
+		ops.splice(opsStart, ops.length - opsStart, changePair(path, before, after));
 
 		return collapsedWeight;
 	}
@@ -154,10 +154,10 @@ const diffObjectProperties = (
 
 		if (!beforeDescriptor) {
 			assertSafeSubtree(Reflect.get(after, key), nextPath);
-			weight += pushAdd(ops, nextPath, Reflect.get(after, key));
+			weight += pushAddition(ops, nextPath, Reflect.get(after, key));
 		} else if (!afterDescriptor) {
 			assertSafeSubtree(Reflect.get(before, key), nextPath);
-			weight += pushRemove(ops, nextPath, Reflect.get(before, key));
+			weight += pushRemoval(ops, nextPath, Reflect.get(before, key));
 		} else {
 			weight += diffValue(Reflect.get(before, key), Reflect.get(after, key), nextPath, ops, ancestors);
 		}
@@ -183,23 +183,23 @@ const diffArray = (
 
 		if (!beforePresent && !afterPresent) continue;
 
-		if (!beforePresent) weight += pushAdd(ops, nextPath, after[index]);
-		else if (!afterPresent) weight += pushRemove(ops, nextPath, before[index]);
+		if (!beforePresent) weight += pushAddition(ops, nextPath, after[index]);
+		else if (!afterPresent) weight += pushRemoval(ops, nextPath, before[index]);
 		else weight += diffValue(before[index], after[index], nextPath, ops, ancestors);
 	}
 
 	if (after.length > before.length) {
-		weight += pushReplace(ops, appendOperationPath(path, "length"), before.length, after.length);
+		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length);
 
 		for (let index = before.length; index < after.length; index++) {
-			if (Object.hasOwn(after, index)) weight += pushAdd(ops, appendOperationPath(path, index), after[index]);
+			if (Object.hasOwn(after, index)) weight += pushAddition(ops, appendOperationPath(path, index), after[index]);
 		}
 	} else if (after.length < before.length) {
 		for (let index = after.length; index < before.length; index++) {
-			if (Object.hasOwn(before, index)) weight += pushRemove(ops, appendOperationPath(path, index), before[index]);
+			if (Object.hasOwn(before, index)) weight += pushRemoval(ops, appendOperationPath(path, index), before[index]);
 		}
 
-		weight += pushReplace(ops, appendOperationPath(path, "length"), before.length, after.length);
+		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length);
 	}
 
 	weight += diffObjectProperties(before, after, path, ops, ancestors, true);
@@ -248,7 +248,7 @@ const diffValue = (
 		assertSafeSubtree(before, path);
 		assertSafeSubtree(after, path);
 
-		return pushReplace(ops, path, before, after);
+		return pushChange(ops, path, before, after);
 	}
 
 	if (isPlainArray(before) && isPlainArray(after)) {
@@ -264,7 +264,7 @@ const diffValue = (
 	assertSafeSubtree(before, path);
 	assertSafeSubtree(after, path);
 
-	return pushReplace(ops, path, before, after);
+	return pushChange(ops, path, before, after);
 };
 
 const getRootKind = (value: object): RootKind | undefined => {

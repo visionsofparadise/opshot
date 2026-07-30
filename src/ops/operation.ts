@@ -1,21 +1,16 @@
 import { cloneValue, isCloneable } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 
-export interface AddOperation {
-	readonly op: "add";
+export interface AssignOperation {
+	readonly op: "assign";
 	readonly path: OperationPath;
 	readonly value: unknown;
 }
-export interface ReplaceOperation {
-	readonly op: "replace";
-	readonly path: OperationPath;
-	readonly value: unknown;
-}
-export interface RemoveOperation {
-	readonly op: "remove";
+export interface DeleteOperation {
+	readonly op: "delete";
 	readonly path: OperationPath;
 }
-export type Operation = AddOperation | ReplaceOperation | RemoveOperation;
+export type Operation = AssignOperation | DeleteOperation;
 
 export interface Op {
 	readonly do: Operation;
@@ -49,16 +44,12 @@ abstract class ValueHalf extends OperationHalf {
 	}
 }
 
-class AddHalf extends ValueHalf {
-	readonly op = "add";
+class AssignHalf extends ValueHalf {
+	readonly op = "assign";
 }
 
-class ReplaceHalf extends ValueHalf {
-	readonly op = "replace";
-}
-
-class RemoveHalf extends OperationHalf {
-	readonly op = "remove";
+class DeleteHalf extends OperationHalf {
+	readonly op = "delete";
 }
 
 export const isOperation = (value: unknown): value is Operation =>
@@ -66,9 +57,7 @@ export const isOperation = (value: unknown): value is Operation =>
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
-export const createAddOperation = (path: OperationPath, value: unknown): AddOperation => new AddHalf(path, value);
+export const createAssignOperation = (path: OperationPath, value: unknown): AssignOperation =>
+	new AssignHalf(path, value);
 
-export const createReplaceOperation = (path: OperationPath, value: unknown): ReplaceOperation =>
-	new ReplaceHalf(path, value);
-
-export const createRemoveOperation = (path: OperationPath): RemoveOperation => new RemoveHalf(path);
+export const createDeleteOperation = (path: OperationPath): DeleteOperation => new DeleteHalf(path);

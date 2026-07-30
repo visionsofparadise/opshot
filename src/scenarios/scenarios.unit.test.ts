@@ -156,20 +156,20 @@ describe("scenarios", () => {
 		expect(received.map((emission) => emission.ops)).toEqual([
 			[
 				{
-					do: { op: "replace", path: ["exposure"], value: 1 },
-					undo: { op: "replace", path: ["exposure"], value: 0 },
+					do: { op: "assign", path: ["exposure"], value: 1 },
+					undo: { op: "assign", path: ["exposure"], value: 0 },
 				},
 			],
 			[
 				{
-					do: { op: "replace", path: ["exposure"], value: 2 },
-					undo: { op: "replace", path: ["exposure"], value: 1 },
+					do: { op: "assign", path: ["exposure"], value: 2 },
+					undo: { op: "assign", path: ["exposure"], value: 1 },
 				},
 			],
 			[
 				{
-					do: { op: "replace", path: ["exposure"], value: 3 },
-					undo: { op: "replace", path: ["exposure"], value: 2 },
+					do: { op: "assign", path: ["exposure"], value: 3 },
+					undo: { op: "assign", path: ["exposure"], value: 2 },
 				},
 			],
 		]);
@@ -305,8 +305,8 @@ describe("scenarios", () => {
 			{
 				ops: [
 					{
-						do: { op: "replace", path: ["box", "x"], value: 2 },
-						undo: { op: "replace", path: ["box", "x"], value: 1 },
+						do: { op: "assign", path: ["box", "x"], value: 2 },
+						undo: { op: "assign", path: ["box", "x"], value: 1 },
 					},
 				],
 				meta: undefined,
@@ -321,8 +321,8 @@ describe("scenarios", () => {
 			{
 				ops: [
 					{
-						do: { op: "replace", path: ["box", "x"], value: 2 },
-						undo: { op: "replace", path: ["box", "x"], value: 1 },
+						do: { op: "assign", path: ["box", "x"], value: 2 },
+						undo: { op: "assign", path: ["box", "x"], value: 1 },
 					},
 				],
 				meta: undefined,
@@ -361,7 +361,7 @@ describe("scenarios", () => {
 		expect(aHeard).toHaveLength(1);
 		expect(aHeard[0]?.meta).toBeUndefined();
 		expect(aHeard[0]?.ops).toHaveLength(1);
-		expect(aHeard[0]?.ops[0]?.do).toMatchObject({ op: "replace", path: ["items"] });
+		expect(aHeard[0]?.ops[0]?.do).toMatchObject({ op: "assign", path: ["items"] });
 		expect(aHeard[0]?.ops[0] && "value" in aHeard[0].ops[0].do ? aHeard[0].ops[0].do.value : undefined).toEqual([]);
 		const sourceOps = aHeard[0]?.ops;
 
@@ -369,7 +369,7 @@ describe("scenarios", () => {
 
 		const sourceUndo = [...sourceOps].reverse().map((pair) => pair.undo);
 
-		expect(sourceUndo[0]).toMatchObject({ op: "replace", path: ["items"] });
+		expect(sourceUndo[0]).toMatchObject({ op: "assign", path: ["items"] });
 		expect(sourceUndo[0] && "value" in sourceUndo[0] ? sourceUndo[0].value : undefined).toEqual([
 			{ id: "x", gain: 1 },
 		]);
@@ -380,7 +380,7 @@ describe("scenarios", () => {
 		if (!destinationOps) throw new Error("the destination operations were not heard");
 
 		expect(destinationOps).toHaveLength(1);
-		expect(destinationOps[0]?.do).toMatchObject({ op: "replace", path: ["items"] });
+		expect(destinationOps[0]?.do).toMatchObject({ op: "assign", path: ["items"] });
 		expect(destinationOps[0] && "value" in destinationOps[0].do ? destinationOps[0].do.value : undefined).toEqual([
 			{ id: "x", gain: 1 },
 		]);
@@ -403,8 +403,8 @@ describe("scenarios", () => {
 		expect(bHeard[1]?.meta).toBeUndefined();
 		expect(bHeard[1]?.ops).toEqual([
 			{
-				do: { op: "replace", path: ["items", 0, "gain"], value: 2 },
-				undo: { op: "replace", path: ["items", 0, "gain"], value: 1 },
+				do: { op: "assign", path: ["items", 0, "gain"], value: 2 },
+				undo: { op: "assign", path: ["items", 0, "gain"], value: 1 },
 			},
 		]);
 		expect(a.items).toEqual([]);

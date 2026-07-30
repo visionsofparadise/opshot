@@ -45,7 +45,7 @@ describe("emitterListeners", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toEqual({ actor: "a" });
 		expect(heard[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } },
+			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
 		]);
 	});
 
@@ -67,7 +67,7 @@ describe("emitterListeners", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toBeUndefined();
 		expect(heard[0]?.ops).toEqual([
-			{ do: { op: "replace", path: ["count"], value: 5 }, undo: { op: "replace", path: ["count"], value: 0 } },
+			{ do: { op: "assign", path: ["count"], value: 5 }, undo: { op: "assign", path: ["count"], value: 0 } },
 		]);
 	});
 
@@ -146,7 +146,7 @@ describe("emitterListeners", () => {
 		unsubscribe();
 
 		expect(firstHeard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 
 		const secondHeard = new Array<ReadonlyArray<Op>>();
@@ -160,7 +160,7 @@ describe("emitterListeners", () => {
 		emitBareFlush(state);
 
 		expect(secondHeard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 2 }, undo: { op: "replace", path: ["count"], value: 1 } }],
+			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 
@@ -214,7 +214,7 @@ describe("emitterListeners", () => {
 
 		expect(groupHeard).toEqual([]);
 		expect(ownHeard).toEqual([
-			[{ do: { op: "replace", path: ["count"], value: 1 }, undo: { op: "replace", path: ["count"], value: 0 } }],
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 });

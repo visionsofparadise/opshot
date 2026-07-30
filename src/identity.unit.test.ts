@@ -4,7 +4,7 @@ import { createProxy } from "proxy-compare";
 import { createMutableState } from "./createMutableState";
 import { getRegisteredTarget, resolveIdentity } from "./identity";
 import { identify, isSameIdentity } from "./index";
-import { createAddOperation } from "./ops/operation";
+import { createAssignOperation } from "./ops/operation";
 
 describe("identity", () => {
 	it("unifies raw, proxy, snapshot, and tracking-wrapper handles", () => {
@@ -59,7 +59,7 @@ describe("identity", () => {
 
 	it("leaves op-value clones unregistered as independent storage", () => {
 		const original = { value: 1 };
-		const operation = createAddOperation(["item"], original);
+		const operation = createAssignOperation(["item"], original);
 
 		if (!("value" in operation)) throw new Error("identity test: value operation has no value");
 

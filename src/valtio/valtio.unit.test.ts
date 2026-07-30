@@ -418,6 +418,33 @@ describe("canProxy seam", () => {
 		}).toThrow("canProxy probe: Map rejected");
 	});
 
+	it("replays only writable data properties, so a value behind a non-writable one never reaches canProxy", () => {
+		const nonWritable = new Map([["k", "v"]]);
+		const nonWritableBase: Record<string, unknown> = {};
+
+		Object.defineProperty(nonWritableBase, "held", {
+			value: nonWritable,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		const state = proxy(nonWritableBase);
+
+		expect(state.held).toBe(nonWritable);
+
+		const writableBase: Record<string, unknown> = {};
+
+		Object.defineProperty(writableBase, "held", {
+			value: new Map([["k", "v"]]),
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+
+		expect(() => proxy(writableBase)).toThrow("canProxy probe: Map rejected");
+	});
+
 	it("short-circuits ref() members before the throw when the replacement checks refSet first", () => {
 		const state = proxy<{ box: unknown }>({ box: null });
 		const kept = ref(new Map([["k", "v"]]));

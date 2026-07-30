@@ -24,7 +24,7 @@ describe("transact", () => {
 		expect(heard).toEqual([
 			{
 				ops: [
-					{ do: { op: "replace", path: ["count"], value: 3 }, undo: { op: "replace", path: ["count"], value: 0 } },
+					{ do: { op: "assign", path: ["count"], value: 3 }, undo: { op: "assign", path: ["count"], value: 0 } },
 				],
 				meta: { reason: "test" },
 			},

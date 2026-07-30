@@ -8,13 +8,7 @@ import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { applyOps } from "./applyOps";
 import { diffSnapshots } from "./diff";
-import {
-	createAddOperation,
-	createRemoveOperation,
-	createReplaceOperation,
-	type Op,
-	type Operation,
-} from "./operation";
+import { createAssignOperation, createDeleteOperation, type Op, type Operation } from "./operation";
 
 const record = <T extends object>(state: T): Array<Array<Op>> => {
 	const heard = new Array<Array<Op>>();
@@ -25,15 +19,15 @@ const record = <T extends object>(state: T): Array<Array<Op>> => {
 };
 
 describe("applyOps: parent-sensitive atomic resolver", () => {
-	it("applies mixed plain add, replace, and remove in delivery order", () => {
+	it("applies mixed plain assign and delete in delivery order", () => {
 		const state = createMutableState({
 			document: { replaced: 1, removed: 2 } as { added?: number; replaced: number; removed?: number },
 		});
 
 		applyOps(state, [
-			createAddOperation(["document", "added"], 3),
-			createReplaceOperation(["document", "replaced"], 4),
-			createRemoveOperation(["document", "removed"]),
+			createAssignOperation(["document", "added"], 3),
+			createAssignOperation(["document", "replaced"], 4),
+			createDeleteOperation(["document", "removed"]),
 		]);
 
 		expect(state.document).toEqual({ added: 3, replaced: 4 });
@@ -43,22 +37,53 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const state = createMutableState<{ document: { value?: number } }>({ document: { value: undefined } });
 
 		applyOps(state, [
-			createReplaceOperation(["document", "value"], 1),
-			createReplaceOperation(["document", "value"], undefined),
+			createAssignOperation(["document", "value"], 1),
+			createAssignOperation(["document", "value"], undefined),
 		]);
 		expect(Object.hasOwn(state.document, "value")).toBe(true);
-		applyOps(state, [createRemoveOperation(["document", "value"])]);
+		applyOps(state, [createDeleteOperation(["document", "value"])]);
 		expect(Object.hasOwn(state.document, "value")).toBe(false);
-		expect(() => applyOps(state, [createReplaceOperation(["document", "value"], 2)])).toThrow("does not resolve");
+		applyOps(state, [createAssignOperation(["document", "value"], undefined)]);
+		expect(Object.hasOwn(state.document, "value")).toBe(true);
+		expect(state.document.value).toBeUndefined();
 	});
 
-	it("uses sparse array add/remove with no shifts", () => {
+	it("re-applies assign and delete onto the same state with no throw", () => {
+		const state = createMutableState<{ document: { value?: number; fresh?: number } }>({ document: { value: 1 } });
+		const overwrite = createAssignOperation(["document", "value"], 2);
+		const create = createAssignOperation(["document", "fresh"], 5);
+		const remove = createDeleteOperation(["document", "value"]);
+
+		applyOps(state, [overwrite, overwrite, create, create]);
+		expect(state.document.value).toBe(2);
+		expect(state.document.fresh).toBe(5);
+
+		applyOps(state, [remove, remove]);
+		expect(Object.hasOwn(state.document, "value")).toBe(false);
+	});
+
+	it("undoes a diff-produced assignment of undefined onto an absent key back to absence", () => {
+		const ops = diffSnapshots({} as { value?: number }, { value: undefined });
+		const state = createMutableState<{ value?: number }>({});
+
+		applyOps(
+			state,
+			ops.map((pair) => pair.do),
+		);
+		expect(Object.hasOwn(state, "value")).toBe(true);
+		expect(state.value).toBeUndefined();
+
+		applyOps(state, ops.map((pair) => pair.undo).reverse());
+		expect(Object.hasOwn(state, "value")).toBe(false);
+	});
+
+	it("uses sparse array assign and delete with no shifts", () => {
 		const state = createMutableState({ list: [1, 2, 3] });
 
-		applyOps(state, [createRemoveOperation(["list", 1])]);
+		applyOps(state, [createDeleteOperation(["list", 1])]);
 		expect(state.list).toHaveLength(3);
 		expect(Object.hasOwn(state.list, 1)).toBe(false);
-		applyOps(state, [createAddOperation(["list", 1], undefined)]);
+		applyOps(state, [createAssignOperation(["list", 1], undefined)]);
 		expect(Object.hasOwn(state.list, 1)).toBe(true);
 		expect(state.list[2]).toBe(3);
 	});
@@ -71,16 +96,16 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ list: initial });
 
 		applyOps(state, [
-			createReplaceOperation(["list", "length"], 3),
-			createReplaceOperation(["list", "label"], "b"),
-			createAddOperation(["list", 2], 9),
+			createAssignOperation(["list", "length"], 3),
+			createAssignOperation(["list", "label"], "b"),
+			createAssignOperation(["list", 2], 9),
 		]);
 		expect(state.list).toHaveLength(3);
 		expect(state.list[2]).toBe(9);
 		expect(state.list.label).toBe("b");
 	});
 
-	it("rejects root, reserved, invalid verb, and invalid terminal operations before that operation mutates", () => {
+	it("rejects root, reserved, and invalid terminal operations before that operation mutates", () => {
 		const state = createMutableState({
 			count: 0,
 			list: [1],
@@ -89,18 +114,15 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 			date: new TrackedDate(0),
 		});
 
-		expect(() => applyOps(state, [createReplaceOperation([], {})])).toThrow("root operations");
-		expect(() => applyOps(state, [createAddOperation(["__proto__", "polluted"], true)])).toThrow(
+		expect(() => applyOps(state, [createAssignOperation([], {})])).toThrow("root operations");
+		expect(() => applyOps(state, [createAssignOperation(["__proto__", "polluted"], true)])).toThrow(
 			"reserved operation path",
 		);
-		expect(() => applyOps(state, [createRemoveOperation(["constructor", "prototype", "polluted"])])).toThrow(
+		expect(() => applyOps(state, [createDeleteOperation(["constructor", "prototype", "polluted"])])).toThrow(
 			"reserved operation path",
 		);
-		expect(() => applyOps(state, [createAddOperation(["list", 0], 2)])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createReplaceOperation(["list", "0"], 2)])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createRemoveOperation(["list", "length"])])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createReplaceOperation(["map", "missing"], 1)])).toThrow("does not resolve");
-		expect(() => applyOps(state, [createAddOperation(["date", "epochMs"], 1)])).toThrow("does not resolve");
+		expect(() => applyOps(state, [createAssignOperation(["list", "0"], 2)])).toThrow("does not resolve");
+		expect(() => applyOps(state, [createDeleteOperation(["list", "length"])])).toThrow("does not resolve");
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
@@ -117,7 +139,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		try {
 			const state = createMutableState<Record<string, number>>({});
 
-			expect(() => applyOps(state, [createAddOperation(["opshotInheritedSetter"], 1)])).toThrow(
+			expect(() => applyOps(state, [createAssignOperation(["opshotInheritedSetter"], 1)])).toThrow(
 				"inherited accessor",
 			);
 			expect(calls).toBe(0);
@@ -129,16 +151,41 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		Object.defineProperty(locked, "value", { value: 1, enumerable: true, configurable: true, writable: false });
 		const lockedState = createMutableState(locked);
 
-		expect(() => applyOps(lockedState, [createReplaceOperation(["value"], 2)])).toThrow(
+		expect(() => applyOps(lockedState, [createAssignOperation(["value"], 2)])).toThrow(
 			"replay could not restore value",
 		);
 	});
 
+	it("re-deletes an address whose prototype carries an accessor without invoking it", () => {
+		let calls = 0;
+
+		Object.defineProperty(Object.prototype, "opshotAccessorAboveDelete", {
+			set: () => {
+				calls += 1;
+			},
+			get: () => undefined,
+			configurable: true,
+		});
+
+		try {
+			const state = createMutableState<Record<string, number>>({ present: 1 });
+			const remove = createDeleteOperation(["opshotAccessorAboveDelete"]);
+
+			applyOps(state, [remove]);
+			applyOps(state, [remove]);
+
+			expect(Object.hasOwn(state, "opshotAccessorAboveDelete")).toBe(false);
+			expect(calls).toBe(0);
+		} finally {
+			Reflect.deleteProperty(Object.prototype, "opshotAccessorAboveDelete");
+		}
+	});
+
 	it("preflights every copied half before applying any operation", () => {
 		const state = createMutableState({ count: 0 });
-		const copied = { ...createReplaceOperation(["count"], 2) };
+		const copied = { ...createAssignOperation(["count"], 2) };
 
-		expect(() => applyOps(state, [createReplaceOperation(["count"], 1), copied as Operation])).toThrow(
+		expect(() => applyOps(state, [createAssignOperation(["count"], 1), copied as Operation])).toThrow(
 			"this op is a copy",
 		);
 		expect(state.count).toBe(0);
@@ -146,7 +193,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 
 	it("rejects full Op envelopes; pass op.do or op.undo halves", () => {
 		const state = createMutableState({ count: 0 });
-		const half = createReplaceOperation(["count"], 1);
+		const half = createAssignOperation(["count"], 1);
 
 		expect(() => applyOps(state, [{ do: half, undo: half } as unknown as Operation])).toThrow(
 			"opshot: applyOps applies operation halves; pass op.do or op.undo.",
@@ -221,9 +268,9 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ map: new TrackedMap([[key, value]]), set: new TrackedSet([member]) });
 
 		applyOps(state, [
-			createReplaceOperation(["map", "slots", 0, 0, "profile", "id"], 2),
-			createReplaceOperation(["map", "slots", 0, 1, "count"], 2),
-			createReplaceOperation(["set", "slots", 0, 0, "count"], 2),
+			createAssignOperation(["map", "slots", 0, 0, "profile", "id"], 2),
+			createAssignOperation(["map", "slots", 0, 1, "count"], 2),
+			createAssignOperation(["set", "slots", 0, 0, "count"], 2),
 		]);
 
 		const storedKey = [...state.map.keys()][0];
@@ -240,11 +287,11 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const held = new TrackedDate(0);
 		const state = createMutableState({ date: held });
 
-		applyOps(state, [createReplaceOperation(["date", "epochMs"], 5)]);
+		applyOps(state, [createAssignOperation(["date", "epochMs"], 5)]);
 		expect(state.date.getTime()).toBe(5);
 		expect(isSameIdentity(state.date, held)).toBe(true);
 
-		applyOps(state, [createReplaceOperation(["date"], new TrackedDate(10))]);
+		applyOps(state, [createAssignOperation(["date"], new TrackedDate(10))]);
 		expect(state.date.getTime()).toBe(10);
 		expect(state.date).toBeInstanceOf(TrackedDate);
 		expect(isSameIdentity(state.date, held)).toBe(false);
@@ -387,7 +434,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["map"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["map"] });
 		expect(isSameIdentity(state.map, original)).toBe(false);
 
 		original.delete(keyA);
@@ -526,7 +573,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["set"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["set"] });
 
 		original.delete(memberA);
 		original.add({ id: "stomp" });
@@ -581,7 +628,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "replace", path: ["document"] });
+		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["document"] });
 
 		applyOps(
 			state,
@@ -656,7 +703,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const firstOps = heard[0] ?? [];
 
 		expect(firstOps).toHaveLength(1);
-		expect(firstOps[0]?.do).toMatchObject({ op: "replace", path: ["root"] });
+		expect(firstOps[0]?.do).toMatchObject({ op: "assign", path: ["root"] });
 
 		transact(state, () => {
 			state.root = { nested: { value: 3 } };
@@ -665,7 +712,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const secondOps = heard[1] ?? [];
 
 		expect(secondOps).toHaveLength(1);
-		expect(secondOps[0]?.do).toMatchObject({ op: "replace", path: ["root"] });
+		expect(secondOps[0]?.do).toMatchObject({ op: "assign", path: ["root"] });
 
 		applyOps(
 			state,
@@ -699,12 +746,12 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ map: new TrackedMap([[key, 1]]) });
 		const addr = addressOf(key);
 
-		applyOps(state, [createReplaceOperation(["map", "slots", 0], [key, 9] as const)]);
+		applyOps(state, [createAssignOperation(["map", "slots", 0], [key, 9] as const)]);
 		expect(state.map.get(key)).toBe(9);
 		applyOps(state, [
-			createRemoveOperation(["map", "index", addr]),
-			createReplaceOperation(["map", "slots", 0], null),
-			createReplaceOperation(["map", "count"], 0),
+			createDeleteOperation(["map", "index", addr]),
+			createAssignOperation(["map", "slots", 0], null),
+			createAssignOperation(["map", "count"], 0),
 		]);
 		expect(state.map.size).toBe(0);
 		expect(state.map.has(key)).toBe(false);

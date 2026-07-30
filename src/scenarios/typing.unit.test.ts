@@ -5,11 +5,10 @@ import {
 	TrackedDate,
 	TrackedMap,
 	TrackedSet,
-	type AddOperation,
+	type AssignOperation,
+	type DeleteOperation,
 	type Operation,
 	type OperationPath,
-	type RemoveOperation,
-	type ReplaceOperation,
 } from "../index";
 import { useMutableState } from "../react/useMutableState";
 import { subscribe } from "../subscribe";
@@ -31,15 +30,15 @@ const docChannel = createChannel<DocMeta>();
 const defaultedChannel = createChannel<{ replay: boolean; transactionKey?: string }>({ replay: false });
 
 describe("typing", () => {
-	it("exports the frozen-path three-verb operation surface from the package root", () => {
-		expectTypeOf<Operation>().toEqualTypeOf<AddOperation | ReplaceOperation | RemoveOperation>();
+	it("exports the frozen-path two-verb operation surface from the package root", () => {
+		expectTypeOf<Operation>().toEqualTypeOf<AssignOperation | DeleteOperation>();
 		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<string | number>>();
 	});
 
 	it("types address components entirely inside flat paths", () => {
-		const operation: Operation = { op: "replace", path: ["items", "o3", "id"], value: 2 };
+		const operation: Operation = { op: "assign", path: ["items", "o3", "id"], value: 2 };
 
-		if (operation.op !== "replace") throw new Error("expected a replace operation");
+		if (operation.op !== "assign") throw new Error("expected an assign operation");
 
 		expectTypeOf(operation.path).toEqualTypeOf<OperationPath>();
 		expect(operation.path).toEqual(["items", "o3", "id"]);
