@@ -258,6 +258,14 @@ function applyOperations(root: object, operations: ReadonlyArray<Operation>): vo
 	}
 }
 
+/**
+ * Applies operations to a state.
+ *
+ * @param state - State to change.
+ * @param operations - Operations to apply.
+ * @param meta - Passed to listeners.
+ * @returns Nothing.
+ */
 export function applyOps(state: object, operations: ReadonlyArray<Operation>, meta?: unknown): void {
 	for (const operation of operations) assertApplicable(operation);
 

@@ -258,6 +258,8 @@ const Counter = () => {
 
 Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception.
 
+Ops are **idempotent**.
+
 If your state is JSON serializable, **then ops are too**.
 
 ## Groups

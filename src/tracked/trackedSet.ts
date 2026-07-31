@@ -4,6 +4,11 @@ import { assertMutableFacade } from "./facadeGuard";
 import { iterateSlots } from "./iterateSlots";
 import { clearStore, deleteFromStore, type SlotStore } from "./slotStore";
 
+/**
+ * Tracked `Set` for use in state.
+ *
+ * @typeParam T - Member type.
+ */
 export class TrackedSet<T> {
 	private slots: Array<readonly [T] | null>;
 	private index: Record<string, number>;

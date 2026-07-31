@@ -8,6 +8,14 @@ interface MutableStateHolder<T extends object> {
 	readonly boundary: Boundary;
 }
 
+/**
+ * Creates mutable state for a component.
+ *
+ * @typeParam T - State shape.
+ * @param properties - Initial fields, or a function that returns them.
+ * @param options - Creation options.
+ * @returns The state.
+ */
 export function useMutableState<T extends object>(properties: (() => T) | T, options?: MutableStateOptions): T {
 	const [{ proxy, boundary }] = useState((): MutableStateHolder<T> => ({
 		proxy: createMutableState(typeof properties === "function" ? properties() : properties, options),

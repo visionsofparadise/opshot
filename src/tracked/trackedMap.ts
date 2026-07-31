@@ -4,6 +4,12 @@ import { assertMutableFacade } from "./facadeGuard";
 import { iterateSlots } from "./iterateSlots";
 import { clearStore, deleteFromStore, type SlotStore } from "./slotStore";
 
+/**
+ * Tracked `Map` for use in state.
+ *
+ * @typeParam K - Key type.
+ * @typeParam V - Value type.
+ */
 export class TrackedMap<K, V> {
 	private slots: Array<readonly [K, V] | null>;
 	private index: Record<string, number>;

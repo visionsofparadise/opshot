@@ -47,6 +47,12 @@ const constructDate = (args: DateConstructorArgs): Date => {
 	}
 };
 
+/**
+ * Tracked `Date` for use in state.
+ *
+ * @example
+ * createMutableState({ when: new TrackedDate() })
+ */
 export class TrackedDate {
 	private epochMs: number;
 

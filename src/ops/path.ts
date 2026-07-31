@@ -1,3 +1,9 @@
+/**
+ * Path segments to a value in state.
+ *
+ * @example
+ * ["document", "items", 0, "title"]
+ */
 export type OperationPath = ReadonlyArray<string | number>;
 
 export const createOperationPath = (segments: ReadonlyArray<string | number>): OperationPath =>

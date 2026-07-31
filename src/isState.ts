@@ -3,6 +3,12 @@ import { unwrapWrapper } from "./react/resolveWrapper";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
+/**
+ * Returns whether a value is an opshot state.
+ *
+ * @param value - Value to test.
+ * @returns True if it is a state.
+ */
 export function isState(value: unknown): value is object {
 	const resolved = unwrapWrapper(value);
 

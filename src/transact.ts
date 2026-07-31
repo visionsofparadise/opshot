@@ -4,6 +4,14 @@ import { deliver } from "./emit/emitterDeliver";
 import { getEmitter, hasListeners } from "./emit/emitterRegistry";
 import { diffSnapshots } from "./ops/diff";
 
+/**
+ * Runs changes in one batch and notifies listeners with optional `meta`.
+ *
+ * @param state - State to change.
+ * @param mutate - Function that writes the state.
+ * @param meta - Passed to listeners.
+ * @returns Nothing.
+ */
 export function transact(state: object, mutate: () => void, meta?: unknown): void {
 	const record = getEmitter(state);
 

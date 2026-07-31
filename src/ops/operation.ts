@@ -1,19 +1,70 @@
 import { cloneValue, isCloneable } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 
+/**
+ * Assigns a value at a path.
+ *
+ * @example
+ * { op: "assign", path: ["count"], value: 1 }
+ */
 export interface AssignOperation {
+	/**
+	 * `"assign"`.
+	 */
 	readonly op: "assign";
+
+	/**
+	 * Path to assign.
+	 */
 	readonly path: OperationPath;
+
+	/**
+	 * Value to assign.
+	 */
 	readonly value: unknown;
 }
+
+/**
+ * Deletes the value at a path.
+ *
+ * @example
+ * { op: "delete", path: ["temp"] }
+ */
 export interface DeleteOperation {
+	/**
+	 * `"delete"`.
+	 */
 	readonly op: "delete";
+
+	/**
+	 * Path to delete.
+	 */
 	readonly path: OperationPath;
 }
+
+/**
+ * An assign or delete operation.
+ *
+ * @example
+ * { op: "assign", path: ["profile"], value: { name: "Ada" } }
+ */
 export type Operation = AssignOperation | DeleteOperation;
 
+/**
+ * A change with do and undo halves.
+ *
+ * @example
+ * { do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }
+ */
 export interface Op {
+	/**
+	 * Forward operation.
+	 */
 	readonly do: Operation;
+
+	/**
+	 * Reverse operation.
+	 */
 	readonly undo: Operation;
 }
 

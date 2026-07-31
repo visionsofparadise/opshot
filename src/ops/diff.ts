@@ -275,6 +275,13 @@ const getRootKind = (value: object): RootKind | undefined => {
 	return undefined;
 };
 
+/**
+ * Diffs two plain objects into ops.
+ *
+ * @param before - Earlier value.
+ * @param after - Later value.
+ * @returns Ops from before to after.
+ */
 export function diffSnapshots(before: object, after: object): Array<Op> {
 	const beforeKind = getRootKind(before);
 	const afterKind = getRootKind(after);

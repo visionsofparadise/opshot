@@ -8,7 +8,16 @@ import { classifyValue } from "../valtio/classify";
 import { createBoundary, type Boundary } from "./boundary";
 import { unwrapWrapper } from "./resolveWrapper";
 
+/**
+ * Options for `scope`.
+ *
+ * @example
+ * scope(Child, { maxDepth: 20 })
+ */
 export interface ScopeOptions {
+	/**
+	 * How deep to search props for state. Defaults to 10.
+	 */
 	readonly maxDepth?: number;
 }
 
@@ -177,6 +186,14 @@ const arePropsEqual = (previous: object, next: object): boolean => {
 	return true;
 };
 
+/**
+ * Wraps a component so it re-renders only when fields it read change.
+ *
+ * @typeParam P - Props type.
+ * @param Component - Component to wrap.
+ * @param options - Scope options.
+ * @returns The wrapped component.
+ */
 export function scope<P extends object>(Component: ComponentType<P>, options?: ScopeOptions): FC<P> {
 	const maxDepth = options?.maxDepth ?? 10;
 	const Scoped: FC<P> = (props) => {

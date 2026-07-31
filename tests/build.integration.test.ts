@@ -40,4 +40,26 @@ describe("package build", () => {
 			await rm(outDir, { recursive: true, force: true });
 		}
 	}, 120_000);
+
+	it("emits jsdoc on declarations and property signatures in index.d.ts", async () => {
+		const outDir = await mkdtemp(join(tmpdir(), "opshot-build-jsdoc-"));
+
+		try {
+			await build({ ...(sharedConfig as Options), outDir, silent: true });
+
+			const declaration = await readFile(join(outDir, "index.d.ts"), "utf8");
+
+			expect(
+				/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+createMutableState\b/.test(declaration),
+				"createMutableState must be preceded by a /** */ block",
+			).toBe(true);
+
+			expect(
+				/\/\*\*[\s\S]*?\*\/\s*readonly\s+maxDepth\s*\?/.test(declaration),
+				"maxDepth must be preceded by a /** */ block",
+			).toBe(true);
+		} finally {
+			await rm(outDir, { recursive: true, force: true });
+		}
+	}, 120_000);
 });

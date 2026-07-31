@@ -59,6 +59,12 @@ export function resolveIdentity(value: unknown): unknown {
 	return current;
 }
 
+/**
+ * Returns a stable identity key for a value.
+ *
+ * @param value - Value to identify.
+ * @returns Identity key.
+ */
 export function identify(value: object): object {
 	const target = resolveIdentity(value);
 
@@ -75,6 +81,13 @@ export function identify(value: object): object {
 	return token;
 }
 
+/**
+ * Returns whether two values share the same identity.
+ *
+ * @param first - First value.
+ * @param second - Second value.
+ * @returns True if they match.
+ */
 export function isSameIdentity(first: object, second: object): boolean {
 	const resolvedFirst = resolveIdentity(first);
 	const resolvedSecond = resolveIdentity(second);
