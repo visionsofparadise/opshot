@@ -1,5 +1,5 @@
 import { createGroup } from "../createGroup";
-import { getGroupListeners } from "../createGroup";
+import { getGroupChain } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { diffSnapshots } from "../ops/diff";
 import { type Op } from "../ops/operation";
@@ -35,9 +35,9 @@ const manualScheduler = (): {
 describe("emitterBare", () => {
 	it("mintGroupedEmitter arms at mint and stays quiescent without listeners", async () => {
 		const group = createGroup();
-		const listeners = getGroupListeners(group);
+		const chain = getGroupChain(group);
 		const state = createMutableState({ count: 0 });
-		const record = mintGroupedEmitter(state, listeners);
+		const record = mintGroupedEmitter(state, chain);
 
 		expect(record.disarm).toBeTypeOf("function");
 

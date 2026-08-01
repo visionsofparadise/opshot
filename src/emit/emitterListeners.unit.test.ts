@@ -119,6 +119,110 @@ describe("emitterListeners", () => {
 		expect(order).toEqual(["group", "own"]);
 	});
 
+	it("delivers causes before effects to a parent when a child listener writes re-entrantly", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const first = child.createMutableState({ count: 0 });
+		const second = child.createMutableState({ count: 0 });
+		const parentOrder = new Array<object>();
+
+		subscribe(child, (state) => {
+			if (state === first) {
+				transact(second, () => {
+					second.count = 1;
+				});
+			}
+		});
+
+		subscribe(parent, (state) => {
+			parentOrder.push(state);
+		});
+
+		transact(first, () => {
+			first.count = 1;
+		});
+
+		expect(parentOrder).toEqual([first, second]);
+	});
+
+	it("still delivers remaining inner listeners after outer unsubscribes one", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const state = child.createMutableState({ count: 0 });
+		const order = new Array<string>();
+		let unsubscribeInner: (() => void) | undefined;
+
+		subscribe(parent, () => {
+			order.push("parent");
+			unsubscribeInner?.();
+		});
+
+		unsubscribeInner = subscribe(child, () => {
+			order.push("inner-first");
+		});
+
+		subscribe(child, () => {
+			order.push("inner-second");
+		});
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(order).toEqual(["parent", "inner-first", "inner-second"]);
+	});
+
+	it("still delivers an own listener unsubscribed by a group listener during the same emission", () => {
+		const group = createGroup();
+		const state = group.createMutableState({ count: 0 });
+		const order = new Array<string>();
+		let unsubscribeOwn: (() => void) | undefined;
+
+		subscribe(group, () => {
+			order.push("group");
+			unsubscribeOwn?.();
+		});
+
+		const own = (): void => {
+			order.push("own");
+		};
+
+		unsubscribeOwn = addStateListener(state, own, undefined, own);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(order).toEqual(["group", "own"]);
+	});
+
+	it("does not recapture when an ancestor listener already makes the record listened", async () => {
+		const pending = new Array<() => void>();
+		const emitOn = (flush: () => void): void => {
+			pending.push(flush);
+		};
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const state = child.createMutableState({ count: 0 }, { emitOn });
+		const stateHeard = new Array<ReadonlyArray<Op>>();
+
+		subscribe(parent, () => undefined);
+
+		state.count = 1;
+
+		await Promise.resolve();
+
+		subscribe(state, (ops) => {
+			stateHeard.push([...ops]);
+		});
+
+		for (const flush of pending.splice(0)) flush();
+
+		expect(stateHeard).toEqual([
+			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+		]);
+	});
+
 	it("throws on nested transact of the same state", () => {
 		const state = createMutableState({ count: 0 });
 		const listener = (): undefined => undefined;

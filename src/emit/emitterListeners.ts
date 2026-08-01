@@ -19,7 +19,7 @@ export function addStateListener(
 	const target = resolveEmitterTarget(state);
 	const record = getOrCreateEmitter(target);
 
-	if (record.disarm === undefined && record.groupListeners === undefined) {
+	if (record.disarm === undefined && record.groupChain === undefined) {
 		armWatchdog(record);
 	}
 
@@ -46,7 +46,7 @@ export function addStateListener(
 
 		if (channels.size === 0) record.listeners.delete(listener);
 
-		if (record.groupListeners === undefined && record.listeners.size === 0) {
+		if (record.groupChain === undefined && record.listeners.size === 0) {
 			disarmWatchdog(record);
 			deleteEmitter(target);
 		}

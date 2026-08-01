@@ -1,5 +1,5 @@
 import { proxy } from "valtio/vanilla";
-import { getGroupListeners, type Group } from "./createGroup";
+import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
 import { stampSettings, type StateSettings } from "./settings";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
@@ -42,7 +42,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	registerTrackedRoot(base);
 
 	if (options?.group !== undefined) {
-		mintGroupedEmitter(proxied, getGroupListeners(options.group));
+		mintGroupedEmitter(proxied, getGroupChain(options.group));
 	}
 
 	return proxied;

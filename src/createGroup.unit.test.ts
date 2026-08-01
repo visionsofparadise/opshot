@@ -180,6 +180,81 @@ describe("createGroup", () => {
 		expect(order).toEqual(["group", "first", "second"]);
 	});
 
+	it("delivers parent before child before own listeners", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const order = new Array<string>();
+		const state = child.createMutableState<Counter>({ count: 0 });
+
+		subscribe(state, () => order.push("own"));
+		subscribe(child, () => order.push("child"));
+		subscribe(parent, () => order.push("parent"));
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(order).toEqual(["parent", "child", "own"]);
+	});
+
+	it("does not deliver a child group's state to a sibling group", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const sibling = createGroup(parent);
+		const siblingEmissions = new Array<Array<Op>>();
+
+		subscribe(sibling, (_state, ops) => {
+			siblingEmissions.push([...ops]);
+		});
+
+		const state = child.createMutableState<Counter>({ count: 0 });
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(siblingEmissions).toHaveLength(0);
+	});
+
+	it("delivers a three-tier state to the root group", () => {
+		const root = createGroup();
+		const mid = createGroup(root);
+		const leaf = createGroup(mid);
+		const order = new Array<string>();
+
+		subscribe(root, () => order.push("root"));
+		subscribe(mid, () => order.push("mid"));
+		subscribe(leaf, () => order.push("leaf"));
+
+		const state = leaf.createMutableState<Counter>({ count: 0 });
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(order).toEqual(["root", "mid", "leaf"]);
+	});
+
+	it("calls one listener function twice when subscribed to parent and child", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		let callCount = 0;
+		const listener = (): void => {
+			callCount += 1;
+		};
+
+		subscribe(parent, listener);
+		subscribe(child, listener);
+
+		const state = child.createMutableState<Counter>({ count: 0 });
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(callCount).toBe(2);
+	});
+
 	it("delivers merged meta from a channel through a group subscriber", () => {
 		const channel = createChannel<{ replay: boolean; transactionKey?: string }>({ replay: false });
 		const group = createGroup();

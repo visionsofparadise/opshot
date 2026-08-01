@@ -91,8 +91,8 @@ export function emitBareFlush(target: object): void {
 	reportBareDiff(record);
 }
 
-export function mintGroupedEmitter(target: object, groupListeners: GroupListeners): EmitterRecord {
-	const record = getOrCreateEmitter(target, groupListeners);
+export function mintGroupedEmitter(target: object, groupChain: ReadonlyArray<GroupListeners>): EmitterRecord {
+	const record = getOrCreateEmitter(target, groupChain);
 
 	armWatchdog(record);
 

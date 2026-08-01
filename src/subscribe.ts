@@ -11,7 +11,8 @@ export type Context<M> =
 	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
 
 /**
- * Listens for changes from a group's states.
+ * Listens for changes from a group's states, including nested groups.
+ * Outer groups run first.
  *
  * @param group - Group to listen to.
  * @param listener - Called on each change.

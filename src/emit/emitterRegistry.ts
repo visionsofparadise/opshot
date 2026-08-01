@@ -28,7 +28,7 @@ export type GroupListeners = Map<Function, Map<object | undefined, GroupListener
 
 export interface EmitterRecord {
 	listeners: StateListeners;
-	groupListeners?: GroupListeners;
+	groupChain?: ReadonlyArray<GroupListeners>;
 	lastReported: object;
 	disarm?: () => void;
 	isMutating: boolean;
@@ -46,9 +46,9 @@ export function getEmitter(state: object): EmitterRecord | undefined {
 }
 
 export const hasListeners = (record: EmitterRecord): boolean =>
-	record.listeners.size > 0 || (record.groupListeners?.size ?? 0) > 0;
+	record.listeners.size > 0 || (record.groupChain?.some((map) => map.size > 0) ?? false);
 
-export function getOrCreateEmitter(target: object, groupListeners?: GroupListeners): EmitterRecord {
+export function getOrCreateEmitter(target: object, groupChain?: ReadonlyArray<GroupListeners>): EmitterRecord {
 	const resolved = resolveEmitterTarget(target);
 	const existing = emitters.get(resolved);
 
@@ -59,7 +59,7 @@ export function getOrCreateEmitter(target: object, groupListeners?: GroupListene
 
 	const record: EmitterRecord = {
 		listeners: new Map(),
-		groupListeners,
+		groupChain,
 		lastReported: snapshot(resolved),
 		isMutating: false,
 		target: resolved,

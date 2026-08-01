@@ -195,6 +195,8 @@ subscribe(state.a, (ops) => {
 });
 ```
 
+Do not mutate the subscribed state inside the listener — that re-enters the listener and loops forever.
+
 ## Ops
 
 An op is an invertible pair of `Operation` halves. Every half uses one of two verbs:
@@ -264,27 +266,36 @@ If your state is JSON serializable, **then ops are too**.
 
 ## Groups
 
-A group creates states and hears every op from the states it created: one stream for history, sync, persistence, etc.
+A group hears every op from the states it created.
 
 ```tsx
 import { useEffect } from "react";
 import { subscribe, useGroup, useMutableState } from "opshot";
 
 const Editor = () => {
-	const group = useGroup();
+	const app = useGroup();
+	const docGroup = useGroup(app);
 
-	// Created through the group, so their ops reach the group's subscribers.
-	const doc = useMutableState({ items: new Array<string>() }, { group });
-	const selection = useMutableState({ index: 0 }, { group });
+	// Ops reach docGroup and, through nesting, app.
+	const doc = useMutableState({ items: new Array<string>() }, { group: docGroup });
+	const selection = useMutableState({ index: 0 }, { group: docGroup });
 
 	useEffect(
 		() =>
-			// Fires for doc, selection, and every other state the group created.
-			// state is whichever one changed.
-			subscribe(group, (state, ops, meta) => {
+			// Per-document stream: doc and selection.
+			subscribe(docGroup, (state, ops, meta) => {
 				// ...
 			}),
-		[group],
+		[docGroup],
+	);
+
+	useEffect(
+		() =>
+			// App-wide stream: every state under app, including nested groups.
+			subscribe(app, (state, ops, meta) => {
+				// ...
+			}),
+		[app],
 	);
 
 	// ...

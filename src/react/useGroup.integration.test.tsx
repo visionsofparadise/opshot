@@ -3,6 +3,8 @@
 import { act, renderHook } from "@testing-library/react";
 
 import { createChannel } from "../createChannel";
+import { createGroup } from "../createGroup";
+import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { useGroup } from "./useGroup";
 
@@ -50,5 +52,26 @@ describe("useGroup", () => {
 		});
 
 		expect(state.count).toBe(3);
+	});
+
+	it("delivers ops from a child-group state to a parent listener", () => {
+		const parent = createGroup();
+		const heard = new Array<object>();
+
+		subscribe(parent, (state) => {
+			heard.push(state);
+		});
+
+		const { result } = renderHook(() => useGroup(parent));
+		const state = result.current.createMutableState({ count: 0 });
+
+		act(() => {
+			transact(state, () => {
+				state.count = 1;
+			});
+		});
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]).toBe(state);
 	});
 });
