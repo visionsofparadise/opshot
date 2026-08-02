@@ -79,11 +79,9 @@ describe("emitterBare", () => {
 	it("augments a bare-flush cycle error naming transact as the catchable lane", async () => {
 		const state = createMutableState<{ node: CyclicNode }>({ node: { n: 1 } });
 
-		subscribe(state, () => undefined);
-
 		state.node.self = state.node;
-		await Promise.resolve();
-		await Promise.resolve();
+
+		subscribe(state, () => undefined);
 
 		state.node.n = 2;
 
