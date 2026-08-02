@@ -48,7 +48,7 @@ const assertAcyclic = (value: unknown, path: OperationPath): void => {
 
 		grey.add(node);
 
-		for (const key of Object.keys(node)) {
+		for (const key of Reflect.ownKeys(node)) {
 			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
 
 			if (!descriptor || !("value" in descriptor)) continue;
@@ -103,6 +103,9 @@ const tryCollapse = (
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
 	if (collapsedWeight < atomicWeight) {
+		assertAcyclic(before, path);
+		assertAcyclic(after, path);
+
 		ops.splice(opsStart, ops.length - opsStart, changePair(path, before, after));
 
 		return collapsedWeight;

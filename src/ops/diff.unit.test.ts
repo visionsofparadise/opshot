@@ -583,6 +583,29 @@ interface Formation {
 	readonly start: () => { readonly state: object; readonly form: () => void };
 }
 
+const rideAlongBackEdges: ReadonlyArray<readonly [string, () => object]> = [
+	[
+		"a non-enumerable back-edge",
+		() => {
+			const node = { m: 1 };
+
+			Object.defineProperty(node, "hidden", { value: node, enumerable: false, writable: true, configurable: true });
+
+			return node;
+		},
+	],
+	[
+		"a symbol-keyed back-edge",
+		() => {
+			const node: { m: number; [key: symbol]: unknown } = { m: 1 };
+
+			node[Symbol("back")] = node;
+
+			return node;
+		},
+	],
+];
+
 const buildAliasedDiamond = (levels: number): object => {
 	let node: object = { leaf: 1 };
 
@@ -713,6 +736,61 @@ describe("diffSnapshots: cyclic values", () => {
 		expect((thrown[0] as Error).message).toMatch(/Use transact for catchable cycle errors/);
 		expect(heard).toHaveLength(0);
 	});
+
+	it("throws at a collapse carrying a cycle formed while nothing was subscribed", () => {
+		interface Holder {
+			readonly holder: {
+				cycle: { n: number; self?: object };
+				a: number;
+				b: number;
+				c: number;
+				d: number;
+				e: number;
+			};
+		}
+
+		const state = createMutableState<Holder>({ holder: { cycle: { n: 1 }, a: 1, b: 2, c: 3, d: 4, e: 5 } });
+
+		state.holder.cycle.self = state.holder.cycle;
+
+		const heard = record(state);
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.holder.a = 10;
+				state.holder.b = 20;
+				state.holder.c = 30;
+				state.holder.d = 40;
+				state.holder.e = 50;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(getCyclicPath(caught)).toEqual(["holder"]);
+		expect(heard).toHaveLength(0);
+	});
+
+	it.each(rideAlongBackEdges)(
+		"refuses %s, which the clone carries and the enumerable walk misses",
+		(_name, create) => {
+			const state = createMutableState<{ n: number; node?: object }>({ n: 1 });
+			const heard = record(state);
+			let caught: unknown;
+
+			try {
+				transact(state, () => {
+					state.node = create();
+				});
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(getCyclicPath(caught)).toEqual(["node"]);
+			expect(heard).toHaveLength(0);
+		},
+	);
 
 	it("diffs a deeply aliased diamond, walking each shared subgraph once", () => {
 		const state = createMutableState<{ n: number; diamond?: object }>({ n: 1 });
