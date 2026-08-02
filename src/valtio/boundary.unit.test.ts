@@ -184,39 +184,110 @@ describe("boundary: snapshot donation", () => {
 });
 
 describe("boundary: throws at entry", () => {
-	it("rejects reserved data paths during creation and mutation", () => {
-		const protoData = {};
-		const aliasedPrototype = { prototype: { polluted: true } };
+	it("rejects a __proto__ data key wherever it is placed", () => {
+		const withOwnProto = () => {
+			const carrier = {};
 
-		Object.defineProperty(protoData, "__proto__", { value: { polluted: true }, enumerable: true });
+			Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
 
-		expect(() => createMutableState(protoData)).toThrow("reserved data path /__proto__");
-		expect(() => createMutableState({ constructor: { prototype: { polluted: true } } })).toThrow(
-			"reserved data path /constructor/prototype",
-		);
-		expect(() => createMutableState({ safe: aliasedPrototype, constructor: aliasedPrototype })).toThrow(
-			"reserved data path /constructor/prototype",
-		);
+			return carrier;
+		};
+
+		expect(() => createMutableState(withOwnProto())).toThrow("reserved data path /__proto__");
+		expect(() => createMutableState({ held: withOwnProto() })).toThrow("reserved data path /held/__proto__");
 
 		const state = createMutableState<{ value: unknown }>({ value: null });
 
 		expect(() => {
 			transact(state, () => {
-				state.value = { constructor: { prototype: { polluted: true } } };
+				state.value = { deep: withOwnProto() };
 			});
-		}).toThrow("reserved data path /value/constructor/prototype");
+		}).toThrow("reserved data path /value/deep/__proto__");
 		expect(state.value).toBeNull();
+		expect(Object.prototype).not.toHaveProperty("polluted");
+	});
 
-		const staged = createMutableState<{ constructor: { prototype?: object; safe: boolean } }>({
-			constructor: { safe: true },
+	it("rejects a non-writable __proto__ data key, which valtio never replays through the trap", () => {
+		const carrier = {};
+
+		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: false });
+
+		expect(() => createMutableState({ held: carrier })).toThrow("reserved data path /held/__proto__");
+		expect(Object.prototype).not.toHaveProperty("polluted");
+	});
+
+	it("treats constructor and prototype as ordinary data keys", () => {
+		const state = createMutableState<{ h: { constructor: { note: number; prototype?: object } } }>({
+			h: { constructor: { note: 1 } },
 		});
 
+		transact(state, () => {
+			state.h.constructor.prototype = { x: 1 };
+		});
+
+		expect(state.h.constructor.prototype).toEqual({ x: 1 });
+		expect(state.h.constructor).not.toBe(Object);
+		expect(Object.prototype).not.toHaveProperty("x");
+		expect({}).not.toHaveProperty("x");
+	});
+
+	it("certifies a rejectable value inside a deeply aliased diamond", () => {
+		let node: Record<string, unknown> = { leaf: true };
+
+		for (let level = 0; level < 24; level++) node = { left: node, right: node };
+
+		node.hidden = new Map();
+
+		expect(() => createMutableState({ graph: node })).toThrow("Map at /graph/hidden");
+	});
+
+	it("certifies a value reachable by both a certifying and a non-certifying route", () => {
+		const shared: Record<string, unknown> = { held: { hidden: new Map() } };
+		const carrier: Record<string, unknown> = {};
+
+		// One route is non-writable, so valtio never replays it and certification stops there;
+		// the other is ordinary. The memo must not let the first route's visit mask the second.
+		Object.defineProperty(carrier, "sealed", {
+			value: shared,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+		carrier.open = shared;
+
+		expect(() => createMutableState({ carrier })).toThrow("cannot be tracked");
+
+		const reversed: Record<string, unknown> = { open: shared };
+
+		Object.defineProperty(reversed, "sealed", {
+			value: shared,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		expect(() => createMutableState({ reversed })).toThrow("cannot be tracked");
+	});
+
+	it("rejects a __proto__ write through the trap under default strictness", () => {
+		const state = createMutableState<{ value: unknown }>({ value: null });
+		const carrier = {};
+
+		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
+
 		expect(() => {
-			transact(staged, () => {
-				staged.constructor.prototype = { polluted: true };
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(state as any).__proto__ = {};
+		}).toThrow("reserved data path /__proto__");
+
+		expect(() => {
+			transact(state, () => {
+				state.value = carrier;
 			});
-		}).toThrow("reserved data path /constructor/prototype");
-		expect(staged.constructor).toEqual({ safe: true });
+		}).toThrow("reserved data path /value/__proto__");
+
+		expect(state.value).toBeNull();
+		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
 	});
 
 	it("tracks a clean class instance with fine-grained interior ops", () => {
@@ -369,22 +440,30 @@ describe("boundary: certification descends only where valtio proxies", () => {
 	});
 
 	it("keeps the reserved-path guard descending inside an ignored container", () => {
-		expect(() => createMutableState({ kept: ignore({ constructor: { prototype: { polluted: true } } }) })).toThrow(
-			"reserved data path /kept/constructor/prototype",
+		const carrier = {};
+
+		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
+
+		expect(() => createMutableState({ kept: ignore({ held: carrier }) })).toThrow(
+			"reserved data path /kept/held/__proto__",
 		);
 	});
 
 	it("keeps the reserved-path guard descending beneath a non-writable property", () => {
+		const carrier = {};
+
+		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
+
 		const nested: Record<string, unknown> = {};
 
-		Object.defineProperty(nested, "constructor", {
-			value: { prototype: { polluted: true } },
+		Object.defineProperty(nested, "held", {
+			value: carrier,
 			enumerable: true,
 			writable: false,
 			configurable: true,
 		});
 
-		expect(() => createMutableState({ box: nested })).toThrow("reserved data path /box/constructor/prototype");
+		expect(() => createMutableState({ box: nested })).toThrow("reserved data path /box/held/__proto__");
 	});
 });
 
@@ -773,17 +852,25 @@ describe("boundary: strict false", () => {
 	});
 
 	it("keeps the reserved-path guard running on both paths", () => {
-		expect(() => createMutableState({ constructor: { prototype: { polluted: true } } }, { strict: false })).toThrow(
-			"reserved data path /constructor/prototype",
+		const withOwnProto = () => {
+			const carrier = {};
+
+			Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
+
+			return carrier;
+		};
+
+		expect(() => createMutableState({ held: withOwnProto() }, { strict: false })).toThrow(
+			"reserved data path /held/__proto__",
 		);
 
 		const state = createMutableState<{ value: unknown }>({ value: null }, { strict: false });
 
 		expect(() => {
 			transact(state, () => {
-				state.value = { constructor: { prototype: { polluted: true } } };
+				state.value = { deep: withOwnProto() };
 			});
-		}).toThrow("reserved data path /value/constructor/prototype");
+		}).toThrow("reserved data path /value/deep/__proto__");
 		expect(state.value).toBeNull();
 	});
 
@@ -794,18 +881,6 @@ describe("boundary: strict false", () => {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(state as any).__proto__ = {};
 		}).toThrow("reserved data path");
-
-		const staged = createMutableState<{ constructor: { prototype?: object; safe: boolean } }>(
-			{ constructor: { safe: true } },
-			{ strict: false },
-		);
-
-		expect(() => {
-			transact(staged, () => {
-				staged.constructor.prototype = { polluted: true };
-			});
-		}).toThrow("reserved data path /constructor/prototype");
-		expect(staged.constructor).toEqual({ safe: true });
 
 		expect(() => {
 			Object.defineProperty(state, "extra", { value: 1 });

@@ -2,7 +2,7 @@ import { resolveEmitterTarget } from "../emit/resolveEmitterTarget";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
 import { getValueOriginal, isOperation, type AssignOperation, type Operation } from "./operation";
-import { assertSafePath, formatOperationPath, type OperationPath } from "./path";
+import { formatOperationPath, type OperationPath } from "./path";
 
 interface ValuePayload {
 	readonly recorded: unknown;
@@ -189,8 +189,6 @@ const resolveTraversalSegment = (parent: unknown, segment: unknown, path: Operat
 };
 
 const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal => {
-	assertSafePath(path);
-
 	if (path.length === 0) throw new Error("opshot: root operations are not supported");
 
 	let parent: unknown = root;

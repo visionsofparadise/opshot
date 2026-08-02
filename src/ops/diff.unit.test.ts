@@ -118,19 +118,26 @@ describe("diffSnapshots: atomic flat paths", () => {
 		expect(() => diffSnapshots(before, after)).not.toThrow();
 	});
 
-	it("rejects reserved paths before emitting", () => {
-		const polluted = Object.create(null);
-		const aliasedPrototype = { prototype: { polluted: true } };
+	it("emits constructor and prototype as ordinary data rather than rejecting them", () => {
+		const before = { h: { constructor: { note: 1 } } };
+		const after = { h: { constructor: { note: 1, prototype: { x: 1 } } } };
+		const ops = diffSnapshots(before, after);
 
-		Object.defineProperty(polluted, "__proto__", { value: { polluted: true }, enumerable: true });
+		expect(ops.map((op) => op.do.path)).toEqual([["h"]]);
 
-		expect(() => diffSnapshots({}, polluted)).toThrow("reserved operation path");
-		expect(() => diffSnapshots({}, { constructor: { prototype: { polluted: true } } })).toThrow(
-			"reserved operation path",
-		);
-		expect(() => diffSnapshots({}, { boundary: { safe: aliasedPrototype, constructor: aliasedPrototype } })).toThrow(
-			"reserved operation path /boundary/constructor/prototype",
-		);
+		const [first] = ops;
+
+		if (first === undefined) throw new Error("expected one op");
+
+		const carried = (first.do as { value: { constructor: { prototype: { x: number } } } }).value;
+
+		expect(carried.constructor.prototype.x).toBe(1);
+		expect(Object.prototype).not.toHaveProperty("x");
+
+		const hostile = JSON.parse('{"__proto__": {"polluted": true}}') as object;
+
+		expect(diffSnapshots({}, hostile).map((op) => op.do.path)).toEqual([["__proto__"]]);
+		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 
 	it("orders sparse growth length before tail additions and preserves holes", () => {

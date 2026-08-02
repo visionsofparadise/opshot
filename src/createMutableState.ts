@@ -3,7 +3,6 @@ import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
 import { stampSettings, type StateSettings } from "./settings";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
-import { registerTrackedRoot } from "./valtio/constructorPathGuard";
 
 /**
  * Options for `createMutableState`.
@@ -29,7 +28,7 @@ export interface MutableStateOptions extends StateSettings {
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {
 	installBoundary();
 
-	assertSafeDataPaths(properties, [], new WeakSet(), options?.strict !== false);
+	assertSafeDataPaths(properties, [], new Map(), options?.strict !== false);
 
 	const base = Object.create(Reflect.getPrototypeOf(properties)) as T;
 
@@ -38,8 +37,6 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	stampSettings(base, options);
 
 	const proxied = proxy(base);
-
-	registerTrackedRoot(base);
 
 	if (options?.group !== undefined) {
 		mintGroupedEmitter(proxied, getGroupChain(options.group));

@@ -5,12 +5,6 @@ import { getSettings, inheritSettings } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
 import { admissionLane, classifyValue, type AdmissionLane } from "./classify";
-import {
-	constructorPathTargetCount,
-	getEnumerableDataChild,
-	getRootGraphs,
-	recomputeRootGraph,
-} from "./constructorPathGuard";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
 const { proxyStateMap } = unstable_getInternalStates();
@@ -27,45 +21,43 @@ const certifyAdmission = (value: object, path?: ReadonlyArray<string>): Admissio
 	throw rejectionError(value, kind, path);
 };
 
-const walkDataPaths = (
-	value: unknown,
-	path: Array<string>,
-	activeAncestors: WeakSet<object>,
-	certifying: boolean,
-): void => {
-	if (typeof value !== "object" || value === null || activeAncestors.has(value)) return;
+const CERTIFYING_VISIT = 1;
+const UNCERTIFIED_VISIT = 2;
 
-	activeAncestors.add(value);
+const walkDataPaths = (value: unknown, path: Array<string>, visits: Map<object, number>, certifying: boolean): void => {
+	if (typeof value !== "object" || value === null) return;
 
-	try {
-		for (const key of Object.keys(value)) {
-			const nextPath = [...path, key];
+	const visit = certifying ? CERTIFYING_VISIT : UNCERTIFIED_VISIT;
+	const seen = visits.get(value) ?? 0;
 
-			if (key === "__proto__" || (key === "prototype" && path[path.length - 1] === "constructor"))
-				throw reservedDataPathError(nextPath);
+	if ((seen & visit) !== 0) return;
 
-			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+	visits.set(value, seen | visit);
 
-			if (!descriptor || !("value" in descriptor)) continue;
+	for (const key of Object.keys(value)) {
+		const nextPath = [...path, key];
 
-			const child: unknown = descriptor.value;
-			const reachable = certifying && descriptor.writable === true && typeof child === "object" && child !== null;
-			const certifyBelow = reachable && !proxyStateMap.has(child) && certifyAdmission(child, nextPath) === "track";
+		if (key === "__proto__") throw reservedDataPathError(nextPath);
 
-			walkDataPaths(child, nextPath, activeAncestors, certifyBelow);
-		}
-	} finally {
-		activeAncestors.delete(value);
+		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+
+		if (!descriptor || !("value" in descriptor)) continue;
+
+		const child: unknown = descriptor.value;
+		const reachable = certifying && descriptor.writable === true && typeof child === "object" && child !== null;
+		const certifyBelow = reachable && !proxyStateMap.has(child) && certifyAdmission(child, nextPath) === "track";
+
+		walkDataPaths(child, nextPath, visits, certifyBelow);
 	}
 };
 
 export const assertSafeDataPaths = (
 	value: unknown,
 	path = new Array<string>(),
-	activeAncestors = new WeakSet<object>(),
+	visits = new Map<object, number>(),
 	strict = true,
 ): void => {
-	walkDataPaths(value, path, activeAncestors, strict);
+	walkDataPaths(value, path, visits, strict);
 };
 
 let installed = false;
@@ -97,30 +89,10 @@ export function installBoundary(): void {
 
 			return {
 				...handler,
-				deleteProperty(target, prop) {
-					const rootGraphs = getRootGraphs(target);
-					const previousChild = rootGraphs.length > 0 ? getEnumerableDataChild(target, prop) : undefined;
-					const hadOwn = Object.hasOwn(target, prop);
-					const deleted = defaultDelete(target, prop);
-
-					if (deleted && hadOwn && previousChild && !Object.hasOwn(target, prop))
-						for (const graph of rootGraphs) recomputeRootGraph(graph);
-
-					return deleted;
-				},
 				set(target, prop, value, receiver) {
 					const assigned: unknown = value;
 
 					if (prop === "__proto__") throw reservedDataPathError(["__proto__"]);
-
-					if (prop === "prototype" && constructorPathTargetCount(target) > 0)
-						throw reservedDataPathError(["constructor", "prototype"]);
-
-					if (prop === "constructor" && typeof assigned === "object" && assigned !== null) {
-						const prototypeDescriptor = Reflect.getOwnPropertyDescriptor(assigned, "prototype");
-
-						if (prototypeDescriptor?.enumerable) throw reservedDataPathError(["constructor", "prototype"]);
-					}
 
 					const location = typeof prop === "string" ? [prop] : [];
 					const strict = getSettings(target)?.strict !== false;
@@ -129,7 +101,7 @@ export function installBoundary(): void {
 							? admissionLane(assigned) === "track"
 							: strict;
 
-					assertSafeDataPaths(assigned, location, new WeakSet(), certifyAssigned);
+					assertSafeDataPaths(assigned, location, new Map(), certifyAssigned);
 
 					const resolved: unknown =
 						typeof assigned === "object" && assigned !== null ? (getUntracked(assigned) ?? assigned) : assigned;
@@ -149,25 +121,10 @@ export function installBoundary(): void {
 						if (!proxyStateMap.has(resolved)) certifyAdmission(resolved, isInitializing() ? undefined : location);
 					}
 
-					const rootGraphs = getRootGraphs(target);
-					const previousChild = rootGraphs.length > 0 ? getEnumerableDataChild(target, prop) : undefined;
-					const previousLength: unknown =
-						rootGraphs.length > 0 && Array.isArray(target) && prop === "length"
-							? Reflect.get(target, "length")
-							: undefined;
-
 					setDepth += 1;
 
 					try {
-						const written = defaultSet(target, prop, value, receiver);
-						const currentChild = rootGraphs.length > 0 ? getEnumerableDataChild(target, prop) : undefined;
-						const currentLength: unknown =
-							previousLength === undefined ? undefined : Reflect.get(target, "length");
-
-						if (previousChild !== currentChild || previousLength !== currentLength)
-							for (const graph of rootGraphs) recomputeRootGraph(graph);
-
-						return written;
+						return defaultSet(target, prop, value, receiver);
 					} finally {
 						setDepth -= 1;
 					}

@@ -105,7 +105,7 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		expect(state.list.label).toBe("b");
 	});
 
-	it("rejects root, reserved, and invalid terminal operations before that operation mutates", () => {
+	it("rejects root and invalid terminal operations before that operation mutates", () => {
 		const state = createMutableState({
 			count: 0,
 			list: [1],
@@ -115,12 +115,6 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		});
 
 		expect(() => applyOps(state, [createAssignOperation([], {})])).toThrow("root operations");
-		expect(() => applyOps(state, [createAssignOperation(["__proto__", "polluted"], true)])).toThrow(
-			"reserved operation path",
-		);
-		expect(() => applyOps(state, [createDeleteOperation(["constructor", "prototype", "polluted"])])).toThrow(
-			"reserved operation path",
-		);
 		expect(() => applyOps(state, [createAssignOperation(["list", "0"], 2)])).toThrow("does not resolve");
 		expect(() => applyOps(state, [createDeleteOperation(["list", "length"])])).toThrow("does not resolve");
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
@@ -755,5 +749,83 @@ describe("applyOps: parent-sensitive atomic resolver", () => {
 		]);
 		expect(state.map.size).toBe(0);
 		expect(state.map.has(key)).toBe(false);
+	});
+});
+
+describe("applyOps: resolution is the pollution defence", () => {
+	it("refuses an absent own constructor exactly as it refuses an absent ordinary key", () => {
+		const state = createMutableState<{ a: number }>({ a: 1 });
+
+		// The pollution ladder itself: `constructor` then `prototype`, the shape a reserved-path
+		// rule used to reject before emission. Resolution alone must now refuse it.
+		expect(() => applyOps(state, [createAssignOperation(["constructor", "prototype", "polluted"], "PWNED")])).toThrow(
+			"does not resolve",
+		);
+		expect(() => applyOps(state, [createDeleteOperation(["constructor", "prototype", "polluted"])])).toThrow(
+			"does not resolve",
+		);
+		expect(() => applyOps(state, [createAssignOperation(["constructor", "polluted"], "PWNED")])).toThrow(
+			"does not resolve",
+		);
+		expect(() => applyOps(state, [createAssignOperation(["zzz", "added"], 1)])).toThrow("does not resolve");
+
+		expect(Object.prototype).not.toHaveProperty("polluted");
+		expect(Object).not.toHaveProperty("polluted");
+		expect(Object.prototype).not.toHaveProperty("prototype");
+		expect({}).not.toHaveProperty("polluted");
+	});
+
+	it("applies an assembled constructor path where the own key is present, refuses it where absent", () => {
+		const state = createMutableState<{ h: { constructor: { note: number; prototype?: object } } }>({
+			h: { constructor: { note: 1 } },
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.h.constructor.prototype = { x: 1 };
+		});
+
+		const ops = heard.flat();
+
+		expect(ops.map((op) => op.do.path)).toEqual([["h", "constructor", "prototype"]]);
+
+		applyOps(state, ops.map((op) => op.undo).reverse());
+		expect(Object.hasOwn(state.h.constructor, "prototype")).toBe(false);
+
+		applyOps(
+			state,
+			ops.map((op) => op.do),
+		);
+		expect(state.h.constructor.prototype).toEqual({ x: 1 });
+
+		const withoutOwnConstructor = createMutableState<{ h: Record<string, unknown> }>({ h: {} });
+
+		expect(() =>
+			applyOps(
+				withoutOwnConstructor,
+				ops.map((op) => op.do),
+			),
+		).toThrow("does not resolve");
+
+		expect(Object.prototype).not.toHaveProperty("x");
+		expect({}).not.toHaveProperty("x");
+	});
+
+	it("refuses a diffSnapshots-minted __proto__ op through the inherited-accessor guard", () => {
+		const hostile = JSON.parse('{"__proto__": {"polluted": "PWNED"}}') as object;
+		const ops = diffSnapshots({}, hostile);
+
+		expect(ops.map((op) => op.do.path)).toEqual([["__proto__"]]);
+
+		const state = createMutableState<{ a: number }>({ a: 1 });
+
+		expect(() =>
+			applyOps(
+				state,
+				ops.map((op) => op.do),
+			),
+		).toThrow("inherited accessor");
+		expect(Object.prototype).not.toHaveProperty("polluted");
+		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
 	});
 });

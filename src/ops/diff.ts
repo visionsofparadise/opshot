@@ -1,7 +1,7 @@
 import { isSameIdentity } from "../identity";
 import { cyclicError, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignOperation, createDeleteOperation, type Op } from "./operation";
-import { appendOperationPath, assertSafePath, createOperationPath, type OperationPath } from "./path";
+import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
 
 type RootKind = "plainObject" | "plainArray";
@@ -66,8 +66,6 @@ const tryCollapse = (
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
 	if (collapsedWeight < atomicWeight) {
-		assertSafeSubtree(before, path);
-		assertSafeSubtree(after, path);
 		ops.splice(opsStart, ops.length - opsStart, changePair(path, before, after));
 
 		return collapsedWeight;
@@ -102,28 +100,6 @@ const isObjectLike = (value: unknown): value is object =>
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
 
-const assertSafeSubtree = (value: unknown, path: OperationPath, activeAncestors = new WeakSet()): void => {
-	if (!isPlainArray(value) && !isPlainObject(value)) return;
-
-	if (activeAncestors.has(value)) return;
-
-	activeAncestors.add(value);
-
-	try {
-		for (const key of Object.keys(value)) {
-			const nextPath = appendOperationPath(path, key);
-
-			assertSafePath(nextPath);
-
-			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-
-			if (descriptor && "value" in descriptor) assertSafeSubtree(descriptor.value, nextPath, activeAncestors);
-		}
-	} finally {
-		activeAncestors.delete(value);
-	}
-};
-
 const isCanonicalArrayIndex = (key: string): boolean => {
 	const index = Number(key);
 
@@ -145,18 +121,14 @@ const diffObjectProperties = (
 
 		const nextPath = appendOperationPath(path, key);
 
-		assertSafePath(nextPath);
-
 		const beforeDescriptor = Reflect.getOwnPropertyDescriptor(before, key);
 		const afterDescriptor = Reflect.getOwnPropertyDescriptor(after, key);
 
 		if (beforeDescriptor?.get || afterDescriptor?.get) continue;
 
 		if (!beforeDescriptor) {
-			assertSafeSubtree(Reflect.get(after, key), nextPath);
 			weight += pushAddition(ops, nextPath, Reflect.get(after, key));
 		} else if (!afterDescriptor) {
-			assertSafeSubtree(Reflect.get(before, key), nextPath);
 			weight += pushRemoval(ops, nextPath, Reflect.get(before, key));
 		} else {
 			weight += diffValue(Reflect.get(before, key), Reflect.get(after, key), nextPath, ops, ancestors);
@@ -245,9 +217,6 @@ const diffValue = (
 	if (Object.is(before, after)) return 0;
 
 	if (path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after)) {
-		assertSafeSubtree(before, path);
-		assertSafeSubtree(after, path);
-
 		return pushChange(ops, path, before, after);
 	}
 
@@ -260,9 +229,6 @@ const diffValue = (
 			diffObjectProperties(before, after, path, ops, ancestors, false),
 		);
 	}
-
-	assertSafeSubtree(before, path);
-	assertSafeSubtree(after, path);
 
 	return pushChange(ops, path, before, after);
 };

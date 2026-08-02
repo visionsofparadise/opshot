@@ -19,13 +19,3 @@ const formatSegment = (segment: string | number): string =>
 
 export const formatOperationPath = (path: OperationPath): string =>
 	path.length === 0 ? "" : `/${path.map(formatSegment).join("/")}`;
-
-export const assertSafePath = (path: OperationPath): void => {
-	for (let index = 0; index < path.length; index++) {
-		const segment = path[index];
-
-		if (segment === "__proto__" || (segment === "prototype" && path[index - 1] === "constructor")) {
-			throw new Error(`opshot: reserved operation path ${formatOperationPath(path)}`);
-		}
-	}
-};
