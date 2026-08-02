@@ -300,18 +300,44 @@ describe("scope", () => {
 		expect(screen.getByTestId("memo-count").textContent).toBe("3");
 	});
 
-	it("respects maxDepth and does not wrap states beyond it", () => {
+	it("finds a state deeper than the retired depth cap", () => {
 		const deep = createMutableState({ label: "deep" });
-		const holder = { a: { b: { c: { d: deep } } } };
+		const depth = 15;
+		let nested: Record<string, unknown> = { child: deep };
 
-		const Shallow = scope<{ holder: typeof holder }>(
-			({ holder: h }) => <span data-testid="label">{(h.a.b.c.d as { label: string }).label}</span>,
-			{ maxDepth: 2 },
-		);
+		for (let level = 1; level < depth; level += 1) nested = { child: nested };
 
-		render(<Shallow holder={holder} />);
+		const holder = nested;
+		const resolveDeep = (root: Record<string, unknown>): Record<string, unknown> => {
+			let current = root;
+
+			for (let level = 0; level < depth; level += 1) current = current.child as Record<string, unknown>;
+
+			return current;
+		};
+
+		let renders = 0;
+		let seen: object | undefined;
+
+		const Deep = scope<{ holder: Record<string, unknown> }>(({ holder: h }) => {
+			renders += 1;
+			seen = resolveDeep(h);
+
+			return <span data-testid="label">{(seen as { label: string }).label}</span>;
+		});
+
+		render(<Deep holder={holder} />);
 		expect(screen.getByTestId("label").textContent).toBe("deep");
-		expect(isWrapper((holder.a.b.c as { d: object }).d)).toBe(false);
+		expect(isWrapper(seen as object)).toBe(true);
+
+		const before = renders;
+
+		act(() => {
+			deep.label = "deeper";
+		});
+
+		expect(renders).toBeGreaterThan(before);
+		expect(screen.getByTestId("label").textContent).toBe("deeper");
 	});
 
 	it("tracks TrackedMap membership granularly", async () => {

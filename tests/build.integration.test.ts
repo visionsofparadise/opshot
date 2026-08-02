@@ -55,8 +55,8 @@ describe("package build", () => {
 			).toBe(true);
 
 			expect(
-				/\/\*\*[\s\S]*?\*\/\s*readonly\s+maxDepth\s*\?/.test(declaration),
-				"maxDepth must be preceded by a /** */ block",
+				/\/\*\*[\s\S]*?\*\/\s*readonly\s+emitOn\s*\?/.test(declaration),
+				"emitOn must be preceded by a /** */ block",
 			).toBe(true);
 		} finally {
 			await rm(outDir, { recursive: true, force: true });

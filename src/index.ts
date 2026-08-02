@@ -16,6 +16,6 @@ export { TrackedSet } from "./tracked/trackedSet";
 export { type GroupListener, type StateListener } from "./emit/emitterRegistry";
 export { subscribe, type Context } from "./subscribe";
 export { transact } from "./transact";
-export { scope, type ScopeOptions } from "./react/scope";
+export { scope } from "./react/scope";
 export { useGroup } from "./react/useGroup";
 export { useMutableState } from "./react/useMutableState";

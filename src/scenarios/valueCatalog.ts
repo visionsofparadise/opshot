@@ -238,7 +238,6 @@ const unsafePrivateCycle = {
 } satisfies Record<BehaviorName, boolean>;
 
 const scopeRenders = { rendersOnChange: true, walkThrows: false } satisfies Record<ScopeBehaviorName, boolean>;
-const scopeThrows = { rendersOnChange: false, walkThrows: true } satisfies Record<ScopeBehaviorName, boolean>;
 const scopeInert = { rendersOnChange: false, walkThrows: false } satisfies Record<ScopeBehaviorName, boolean>;
 
 export const catalog = [
@@ -329,7 +328,7 @@ export const catalog = [
 	{ name: "frozenCleanClass", create: () => Object.freeze(new CleanPoint()), expect: autoIgnoredFrozen },
 	{ name: "rawMap", create: () => new Map([["a", 1]]), expect: rejected, scopeExpect: scopeInert },
 	{ name: "rawSet", create: () => new Set([1, 2]), expect: rejected, scopeExpect: scopeInert },
-	{ name: "rawDate", create: () => new Date(0), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "rawDate", create: () => new Date(0), expect: rejected, scopeExpect: scopeInert },
 	{ name: "cleanClassInstance", create: () => new CleanPoint(), expect: trackedData, scopeExpect: scopeRenders },
 	{
 		name: "cleanMutatingClassInstance",
@@ -344,43 +343,43 @@ export const catalog = [
 		expect: trackedData,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "privateFieldClassInstance", create: () => new PrivateBox(), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "privateFieldClassInstance", create: () => new PrivateBox(), expect: rejected, scopeExpect: scopeInert },
 	{
 		name: "unsafeTrackedPrivateClass",
 		create: () => unsafeTrack(new PrivatePublicBox()),
 		expect: unsafePrivate,
-		scopeExpect: scopeThrows,
+		scopeExpect: scopeInert,
 	},
 	{
 		name: "unsafeTrackedPrivateCycle",
 		create: () => unsafeTrack(new PrivatePublicCycle()),
 		expect: unsafePrivateCycle,
-		scopeExpect: scopeThrows,
+		scopeExpect: scopeInert,
 	},
-	{ name: "arraySubclass", create: () => new ArraySubclass(), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "arraySubclass", create: () => new ArraySubclass(), expect: rejected, scopeExpect: scopeInert },
 	{ name: "mapSubclass", create: () => new MapSubclass(), expect: rejected, scopeExpect: scopeInert },
-	{ name: "regExp", create: () => /catalog/g, expect: rejected, scopeExpect: scopeThrows },
-	{ name: "errorValue", create: () => new Error("catalog"), expect: rejected, scopeExpect: scopeThrows },
-	{ name: "promise", create: () => Promise.resolve(1), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
-	{ name: "url", create: () => new URL("https://example.com"), expect: rejected, scopeExpect: scopeThrows },
-	{ name: "urlSearchParams", create: () => new URLSearchParams("a=1"), expect: rejected, scopeExpect: scopeThrows },
-	{ name: "typedArray", create: () => new Uint8Array([1, 2, 3]), expect: rejected, scopeExpect: scopeThrows },
-	{ name: "arrayBuffer", create: () => new ArrayBuffer(8), expect: rejected, scopeExpect: scopeThrows },
+	{ name: "regExp", create: () => /catalog/g, expect: rejected, scopeExpect: scopeInert },
+	{ name: "errorValue", create: () => new Error("catalog"), expect: rejected, scopeExpect: scopeInert },
+	{ name: "promise", create: () => Promise.resolve(1), expect: rejectedEmptyMethods, scopeExpect: scopeInert },
+	{ name: "url", create: () => new URL("https://example.com"), expect: rejected, scopeExpect: scopeInert },
+	{ name: "urlSearchParams", create: () => new URLSearchParams("a=1"), expect: rejected, scopeExpect: scopeInert },
+	{ name: "typedArray", create: () => new Uint8Array([1, 2, 3]), expect: rejected, scopeExpect: scopeInert },
+	{ name: "arrayBuffer", create: () => new ArrayBuffer(8), expect: rejected, scopeExpect: scopeInert },
 	{
 		name: "dataView",
 		create: () => new DataView(new ArrayBuffer(8)),
 		expect: rejectedEmptyMethods,
-		scopeExpect: scopeThrows,
+		scopeExpect: scopeInert,
 	},
-	{ name: "weakMap", create: () => new WeakMap(), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
-	{ name: "weakSet", create: () => new WeakSet(), expect: rejectedEmptyMethods, scopeExpect: scopeThrows },
+	{ name: "weakMap", create: () => new WeakMap(), expect: rejectedEmptyMethods, scopeExpect: scopeInert },
+	{ name: "weakSet", create: () => new WeakSet(), expect: rejectedEmptyMethods, scopeExpect: scopeInert },
 	{ name: "ignoredMap", create: () => ignore(new Map([["a", 1]])), expect: ignored, scopeExpect: scopeInert },
-	{ name: "ignoredClassInstance", create: () => ignore(new CleanPoint()), expect: ignored, scopeExpect: scopeRenders },
+	{ name: "ignoredClassInstance", create: () => ignore(new CleanPoint()), expect: ignored, scopeExpect: scopeInert },
 	{
 		name: "ignoredCycle",
 		create: () => ignore(makeSelfCycle() as object),
 		expect: ignored,
-		scopeExpect: scopeRenders,
+		scopeExpect: scopeInert,
 	},
 	{
 		name: "trackedMap",

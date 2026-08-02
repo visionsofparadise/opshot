@@ -85,6 +85,8 @@ const Child = scope<{ user: User }>(({ user }) => <p>{user.age}</p>);
 
 This is how you optimize re-rendering across your component tree: place `scope` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useMutableState` is a boundary itself.
 
+`scope` searches props for states through plain data, following the same constraints as state creation, and ignoring React internals.
+
 ## Creating State
 
 ```tsx
@@ -124,7 +126,7 @@ Creation takes an options bag: `{ group?, emitOn?, strict? }`.
 
 ### `emitOn`
 
-Bare writes emit ona microtask. Pass `emitOn` to choose a different window:
+Bare writes emit on a microtask. Pass `emitOn` to choose a different window:
 
 ```ts
 const state = createMutableState({ x: 0, y: 0 }, { emitOn: (flush) => requestAnimationFrame(flush) });

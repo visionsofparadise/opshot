@@ -3,156 +3,10 @@ import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { isSameIdentity } from "../identity";
 import { isState } from "../isState";
 import { addressOf } from "../tracked/address";
-import { constructorName } from "../utils/constructorName";
-import { classifyValue } from "../valtio/classify";
 import { createBoundary, type Boundary } from "./boundary";
-import { unwrapWrapper } from "./resolveWrapper";
+import { substituteStates } from "./propWalk";
 
-/**
- * Options for `scope`.
- *
- * @example
- * scope(Child, { maxDepth: 20 })
- */
-export interface ScopeOptions {
-	/**
-	 * How deep to search props for state. Defaults to 10.
-	 */
-	readonly maxDepth?: number;
-}
-
-type PropPath = Array<string | number>;
-
-const isPlainPrototype = (value: object): boolean => {
-	const prototype = Reflect.getPrototypeOf(value);
-
-	return prototype === Object.prototype || prototype === null;
-};
-
-const assertSubstitutableContainer = (container: object): void => {
-	if (isPlainPrototype(container)) return;
-
-	const kind = classifyValue(container);
-
-	if (kind === "plain" || kind === "plainArray" || kind === "cleanClass") return;
-
-	const className = constructorName(container.constructor);
-
-	if (kind === "arraySubclass") {
-		throw new Error(
-			`opshot: scope found a state inside ${className}, an array subclass whose prototype can't survive substitution. Move the state to a plain array, or ignore() the ${className}.`,
-		);
-	}
-
-	const hidden = kind === "privateClass" ? "private fields" : "internal slots";
-
-	throw new Error(
-		`opshot: scope found a state inside ${className}, whose ${hidden} can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`,
-	);
-};
-
-function findStatePaths(
-	value: unknown,
-	maxDepth: number,
-	path: PropPath = [],
-	paths: Array<PropPath> = [],
-	ancestors = new Set<object>(),
-): Array<PropPath> {
-	if (isState(value)) {
-		paths.push(path);
-
-		return paths;
-	}
-
-	if (value === null || typeof value !== "object") return paths;
-
-	if ("$$typeof" in value) return paths;
-
-	if (ancestors.has(value)) return paths;
-
-	if (path.length >= maxDepth) return paths;
-
-	ancestors.add(value);
-
-	if (Array.isArray(value)) {
-		const foundCount = paths.length;
-
-		value.forEach((item, index) => {
-			findStatePaths(item, maxDepth, [...path, index], paths, ancestors);
-		});
-
-		if (paths.length > foundCount) assertSubstitutableContainer(value);
-	} else {
-		const foundCount = paths.length;
-
-		for (const [key, propertyValue] of Object.entries(value)) {
-			if (key.startsWith("__react")) continue;
-
-			findStatePaths(propertyValue, maxDepth, [...path, key], paths, ancestors);
-		}
-
-		if (paths.length > foundCount) assertSubstitutableContainer(value);
-	}
-
-	ancestors.delete(value);
-
-	return paths;
-}
-
-function getAtPath(object: unknown, path: PropPath): unknown {
-	let current = object;
-
-	for (const segment of path) {
-		if (current === null || current === undefined) return undefined;
-
-		current = (current as Record<string | number, unknown>)[segment];
-	}
-
-	return current;
-}
-
-function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
-	if (path.length === 0) return value as T;
-
-	const head = path[0];
-
-	if (head === undefined) throw new Error("setAtPath: non-empty path yielded no head segment");
-
-	const tail = path.slice(1);
-	const current = (object as Record<string | number, unknown>)[head];
-	const updated = setAtPath(current, tail, value);
-
-	if (Array.isArray(object)) {
-		const clone = [...object];
-
-		clone[head as number] = updated;
-
-		return clone as T;
-	}
-
-	const prototype = Reflect.getPrototypeOf(object as object);
-
-	if (prototype === Object.prototype || prototype === null) return { ...object, [head]: updated };
-
-	const descriptor = Object.getOwnPropertyDescriptor(object, head);
-
-	if (descriptor?.get !== undefined || descriptor?.set !== undefined) {
-		const className = constructorName((object as object).constructor);
-
-		throw new Error(
-			`opshot: scope found a state behind the accessor "${String(head)}" on ${className}, which can't survive substitution. Move the state to a plain container, or ignore() the ${className}.`,
-		);
-	}
-
-	const clone = Object.create(prototype) as Record<string | number, unknown>;
-
-	Object.defineProperties(clone, Object.getOwnPropertyDescriptors(object as object));
-	clone[head] = updated;
-
-	return clone as T;
-}
-
-const sourcesKey = (sources: Array<object>): string =>
+const sourcesKey = (sources: ReadonlyArray<object>): string =>
 	`${sources.length}:${sources.map((source) => addressOf(source)).join(",")}`;
 
 const arePropsEqual = (previous: object, next: object): boolean => {
@@ -188,14 +42,13 @@ const arePropsEqual = (previous: object, next: object): boolean => {
 
 /**
  * Wraps a component so it re-renders only when fields it read change.
+ * Searches props for states through plain data, under the same constraints as state creation.
  *
  * @typeParam P - Props type.
  * @param Component - Component to wrap.
- * @param options - Scope options.
  * @returns The wrapped component.
  */
-export function scope<P extends object>(Component: ComponentType<P>, options?: ScopeOptions): FC<P> {
-	const maxDepth = options?.maxDepth ?? 10;
+export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 	const Scoped: FC<P> = (props) => {
 		const boundaryRef = useRef<Boundary | undefined>(undefined);
 
@@ -206,31 +59,7 @@ export function scope<P extends object>(Component: ComponentType<P>, options?: S
 
 		boundary.resetReads();
 
-		const paths = findStatePaths(props, maxDepth);
-		const sources: Array<object> = [];
-		let nextProps = props;
-		let changed = false;
-
-		for (const path of paths) {
-			const value = getAtPath(props, path);
-
-			if (!isState(value)) continue;
-
-			const source = unwrapWrapper(value);
-
-			if (typeof source !== "object" || source === null) continue;
-
-			const wrapped = boundary.wrap(source);
-
-			if (!sources.includes(source)) sources.push(source);
-
-			if (wrapped !== value) {
-				nextProps = setAtPath(nextProps, path, wrapped);
-				changed = true;
-			}
-		}
-
-		const renderedProps = changed ? nextProps : props;
+		const { props: renderedProps, sources } = substituteStates(props, (source) => boundary.wrap(source));
 		const versionsAtRender = sources.map((source) => getVersion(source));
 
 		useEffect(() => {
