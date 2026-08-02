@@ -3,8 +3,11 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
-import { identify } from "../identity";
+import { createMutableState } from "../createMutableState";
+import { identify, isSameIdentity } from "../identity";
 import { subscribe } from "../subscribe";
+import { transact } from "../transact";
+import { isWrapper } from "./boundary";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 import type { Op } from "../ops/operation";
@@ -489,5 +492,104 @@ describe("useMutableState", () => {
 
 		expect(stateSaves).toEqual(["hello"]);
 		expect(controlSaves).toEqual(["hello"]);
+	});
+
+	it("resolves a handle assigned into another state to its live proxy", () => {
+		interface Held {
+			nested: { n: number };
+		}
+
+		const holder = createMutableState<{ current?: Held }>({});
+		const heard = new Array<Array<string>>();
+
+		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
+
+		let handle: Held | undefined;
+
+		const Child = scope<{ state: Held }>(({ state }) => {
+			handle = state;
+
+			return <span>{state.nested.n}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Held>(() => ({ nested: { n: 0 } }));
+
+			return <Child state={state} />;
+		};
+
+		render(<Parent />);
+
+		if (handle === undefined) throw new Error("missing handle");
+
+		const assigned = handle;
+
+		act(() => {
+			transact(holder, () => {
+				holder.current = assigned;
+			});
+		});
+
+		expect(heard).toEqual([["current"]]);
+		expect(isWrapper(holder.current)).toBe(false);
+		expect(isSameIdentity(holder.current as object, assigned)).toBe(true);
+
+		act(() => {
+			transact(holder, () => {
+				assigned.nested.n = 5;
+			});
+		});
+
+		expect(heard).toEqual([["current"], ["current/nested/n"]]);
+		expect(holder.current?.nested.n).toBe(5);
+	});
+
+	it("assigns a handle carrying an array into another state", () => {
+		interface Held {
+			items: Array<number>;
+		}
+
+		const holder = createMutableState<{ current?: Held }>({});
+		const heard = new Array<Array<string>>();
+
+		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
+
+		let handle: Held | undefined;
+
+		const Child = scope<{ state: Held }>(({ state }) => {
+			handle = state;
+
+			return <span>{state.items.length}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Held>(() => ({ items: [1, 2, 3] }));
+
+			return <Child state={state} />;
+		};
+
+		render(<Parent />);
+
+		if (handle === undefined) throw new Error("missing handle");
+
+		const assigned = handle;
+
+		act(() => {
+			transact(holder, () => {
+				holder.current = assigned;
+			});
+		});
+
+		expect(heard).toEqual([["current"]]);
+		expect(Array.isArray(holder.current?.items)).toBe(true);
+
+		act(() => {
+			transact(holder, () => {
+				assigned.items.push(4);
+			});
+		});
+
+		expect(holder.current?.items).toEqual([1, 2, 3, 4]);
+		expect(heard).toHaveLength(2);
 	});
 });

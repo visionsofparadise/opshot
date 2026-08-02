@@ -78,7 +78,11 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 			const target = getRegisteredTarget(value);
 
 			if (target !== undefined) {
-				setOrThrow(attached, key, target);
+				const present: unknown = attachedDescriptor?.value;
+
+				if (!isObjectLike(present) || resolveIdentity(present) !== resolveIdentity(target)) {
+					setOrThrow(attached, key, target);
+				}
 
 				const child: unknown = Reflect.get(attached, key);
 

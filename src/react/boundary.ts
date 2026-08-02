@@ -1,5 +1,6 @@
 import { isChanged } from "proxy-compare";
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
+import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
 import { getRegisteredWrapperTarget, registerWrapperTarget } from "./wrapperRegistry";
 
 const { refSet, proxyStateMap } = unstable_getInternalStates();
@@ -45,6 +46,10 @@ export interface Boundary {
 	captureReads(): void;
 
 	advanceBaselines(): void;
+
+	retain(): void;
+
+	dispose(): void;
 }
 
 const getUsage = (affected: Map<object, UsageRecord>, target: object): UsageRecord => {
@@ -119,6 +124,7 @@ export function createBoundary(): Boundary {
 	const partitions = new Map<object, SourcePartition>();
 	const targets = new Map<object, CacheTarget>();
 	let afterRender = false;
+	let releasing = false;
 
 	const getPartition = (sourceProxy: object): SourcePartition => {
 		let partition = partitions.get(sourceProxy);
@@ -137,32 +143,26 @@ export function createBoundary(): Boundary {
 		return partition;
 	};
 
+	const shouldRecord = (): boolean => !afterRender || isRendering();
+
 	const trackUsage = (partition: SourcePartition, liveProxy: object): UsageRecord =>
-		afterRender ? {} : getUsage(partition.affected, liveProxy);
+		shouldRecord() ? getUsage(partition.affected, liveProxy) : {};
 
-	const ensureBaseline = (partition: SourcePartition, liveProxy: object): object => {
-		if (afterRender) return snapshot(liveProxy);
+	const ensureBaseline = (partition: SourcePartition, liveProxy: object): void => {
+		if (!shouldRecord()) return;
 
-		const existing = partition.baselines.get(liveProxy);
+		if (partition.baselines.has(liveProxy)) return;
 
-		if (existing !== undefined) return existing;
-
-		const baseline = snapshot(liveProxy);
-
-		partition.baselines.set(liveProxy, baseline);
-
-		return baseline;
+		partition.baselines.set(liveProxy, snapshot(liveProxy));
 	};
 
-	const ensureRootBaseline = (partition: SourcePartition): object => {
-		if (afterRender) return partition.previousRootSnapshot ?? snapshot(partition.sourceProxy);
+	const ensureRootBaseline = (partition: SourcePartition): void => {
+		if (!shouldRecord()) return;
 
-		if (partition.previousRootSnapshot === undefined) {
-			partition.previousRootSnapshot = snapshot(partition.sourceProxy);
-			partition.baselines.set(partition.sourceProxy, partition.previousRootSnapshot);
-		}
+		if (partition.previousRootSnapshot !== undefined) return;
 
-		return partition.previousRootSnapshot;
+		partition.previousRootSnapshot = snapshot(partition.sourceProxy);
+		partition.baselines.set(partition.sourceProxy, partition.previousRootSnapshot);
 	};
 
 	const registerTarget = (liveProxy: object): void => {
@@ -251,7 +251,7 @@ export function createBoundary(): Boundary {
 			},
 		};
 
-		const wrapper = new Proxy(Object.create(null) as object, handler);
+		const wrapper = new Proxy(liveProxy, handler);
 
 		wrapperBox.current = wrapper;
 		registerWrapperTarget(wrapper, liveProxy);
@@ -298,6 +298,8 @@ export function createBoundary(): Boundary {
 		},
 
 		captureReads(): void {
+			learnNonRenderDispatcher();
+
 			afterRender = true;
 		},
 
@@ -334,6 +336,22 @@ export function createBoundary(): Boundary {
 				partition.previousRootSnapshot = snapshot(partition.sourceProxy);
 				partition.baselines.set(partition.sourceProxy, partition.previousRootSnapshot);
 			}
+		},
+
+		retain(): void {
+			releasing = false;
+		},
+
+		dispose(): void {
+			releasing = true;
+
+			void Promise.resolve().then(() => {
+				if (!releasing) return;
+
+				releasing = false;
+				partitions.clear();
+				targets.clear();
+			});
 		},
 	};
 }

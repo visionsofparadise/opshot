@@ -6,7 +6,7 @@ import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { emitBareFlush } from "./emitterBare";
 import { getEmitter } from "./emitterRegistry";
-import { addStateListener } from "./emitterListeners";
+import { addStateListener, holdsBinding } from "./emitterListeners";
 
 vi.mock(import("../ops/diff"), { spy: true });
 
@@ -320,5 +320,96 @@ describe("emitterListeners", () => {
 		expect(ownHeard).toEqual([
 			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
 		]);
+	});
+
+	it("releases what a spent unsubscribe captured, and stays a no-op when called again", () => {
+		const state = createMutableState({ count: 0 });
+		const heard = new Array<Array<Op>>();
+		const stop = subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		stop();
+		stop();
+		stop();
+
+		transact(state, () => {
+			state.count = 2;
+		});
+
+		expect(heard).toHaveLength(1);
+
+		const resumed = new Array<Array<Op>>();
+		const again = subscribe(state, (ops) => resumed.push([...ops]));
+
+		transact(state, () => {
+			state.count = 3;
+		});
+
+		again();
+
+		expect(resumed).toHaveLength(1);
+	});
+
+	it("releases the binding a spent unsubscribe held, on both the teardown and the already-gone path", () => {
+		const state = createMutableState({ count: 0 });
+		const listener = (): void => undefined;
+		const first = subscribe(state, listener);
+		const duplicate = subscribe(state, listener);
+
+		expect(holdsBinding(first)).toBe(true);
+		expect(holdsBinding(duplicate)).toBe(true);
+
+		first();
+
+		expect(holdsBinding(first)).toBe(false);
+		expect(holdsBinding(duplicate)).toBe(true);
+
+		duplicate();
+
+		expect(holdsBinding(duplicate)).toBe(false);
+	});
+
+	it("keeps its binding when a co-listener throws during the teardown fence, so the unsubscribe can be retried", () => {
+		const state = createMutableState({ count: 0 });
+		const heard = new Array<string>();
+		const failure = new Error("co-listener failure");
+
+		const stopThrower = subscribe(state, () => {
+			throw failure;
+		});
+
+		const stop = subscribe(state, () => heard.push("kept"));
+
+		state.count = 1;
+
+		expect(() => stop()).toThrow(failure);
+		expect(holdsBinding(stop)).toBe(true);
+
+		stop();
+
+		expect(holdsBinding(stop)).toBe(false);
+		expect(heard).toEqual(["kept"]);
+
+		stopThrower();
+
+		transact(state, () => {
+			state.count = 2;
+		});
+
+		expect(heard).toEqual(["kept"]);
+	});
+
+	it("releases a spent group unsubscribe's binding", () => {
+		const group = createGroup();
+		const stop = subscribe(group, () => undefined);
+
+		expect(holdsBinding(stop)).toBe(true);
+
+		stop();
+
+		expect(holdsBinding(stop)).toBe(false);
 	});
 });

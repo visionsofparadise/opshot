@@ -7,7 +7,7 @@
 export type OperationPath = ReadonlyArray<string | number>;
 
 export const createOperationPath = (segments: ReadonlyArray<string | number>): OperationPath =>
-	Object.freeze([...segments]);
+	Array.isArray(segments) && Object.isFrozen(segments) ? segments : Object.freeze([...segments]);
 
 export const appendOperationPath = (path: OperationPath, segment: string | number): OperationPath =>
 	Object.freeze([...path, segment]);

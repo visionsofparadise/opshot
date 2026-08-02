@@ -1,6 +1,7 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
+import { unwrapWrapper } from "../react/resolveWrapper";
 import { getSettings, inheritSettings } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
@@ -21,10 +22,30 @@ const certifyAdmission = (value: object, path?: ReadonlyArray<string>): Admissio
 	throw rejectionError(value, kind, path);
 };
 
+const resolveAssigned = (value: unknown): unknown => {
+	let current: unknown = value;
+
+	while (typeof current === "object" && current !== null) {
+		const untracked: unknown = getUntracked(current);
+		const next: unknown = unwrapWrapper(untracked ?? current);
+
+		if (next === current) break;
+
+		current = next;
+	}
+
+	return current;
+};
+
 const CERTIFYING_VISIT = 1;
 const UNCERTIFIED_VISIT = 2;
 
-const walkDataPaths = (value: unknown, path: Array<string>, visits: Map<object, number>, certifying: boolean): void => {
+const walkDataPaths = (
+	value: unknown,
+	path: Array<string> | undefined,
+	visits: Map<object, number>,
+	certifying: boolean,
+): void => {
 	if (typeof value !== "object" || value === null) return;
 
 	const visit = certifying ? CERTIFYING_VISIT : UNCERTIFIED_VISIT;
@@ -35,9 +56,9 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Map<object, 
 	visits.set(value, seen | visit);
 
 	for (const key of Object.keys(value)) {
-		const nextPath = [...path, key];
+		const nextPath = path === undefined ? undefined : [...path, key];
 
-		if (key === "__proto__") throw reservedDataPathError(nextPath);
+		if (key === "__proto__") throw reservedDataPathError(nextPath ?? [key]);
 
 		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
@@ -53,9 +74,9 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Map<object, 
 
 export const assertSafeDataPaths = (
 	value: unknown,
-	path = new Array<string>(),
-	visits = new Map<object, number>(),
-	strict = true,
+	path: Array<string> | undefined,
+	visits: Map<object, number>,
+	strict: boolean,
 ): void => {
 	walkDataPaths(value, path, visits, strict);
 };
@@ -94,17 +115,16 @@ export function installBoundary(): void {
 
 					if (prop === "__proto__") throw reservedDataPathError(["__proto__"]);
 
+					const resolved: unknown = resolveAssigned(assigned);
+
 					const location = typeof prop === "string" ? [prop] : [];
 					const strict = getSettings(target)?.strict !== false;
 					const certifyAssigned =
-						strict && typeof assigned === "object" && assigned !== null
-							? admissionLane(assigned) === "track"
+						strict && typeof resolved === "object" && resolved !== null
+							? admissionLane(resolved) === "track"
 							: strict;
 
-					assertSafeDataPaths(assigned, location, new Map(), certifyAssigned);
-
-					const resolved: unknown =
-						typeof assigned === "object" && assigned !== null ? (getUntracked(assigned) ?? assigned) : assigned;
+					assertSafeDataPaths(resolved, isInitializing() ? undefined : location, new Map(), certifyAssigned);
 
 					if (typeof resolved === "object" && resolved !== null) {
 						if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
@@ -124,7 +144,7 @@ export function installBoundary(): void {
 					setDepth += 1;
 
 					try {
-						return defaultSet(target, prop, value, receiver);
+						return defaultSet(target, prop, resolved, receiver);
 					} finally {
 						setDepth -= 1;
 					}

@@ -35,13 +35,14 @@ export class TrackedSet<T> {
 	add(value: T): this {
 		assertMutableFacade(this, "count");
 
-		const addr = addressOf(value);
+		const stored = Object.is(value, -0) ? (0 as T) : value;
+		const addr = addressOf(stored);
 
 		if (this.index[addr] !== undefined) return this;
 
 		const slot = this.slots.length;
 
-		this.slots.push([value]);
+		this.slots.push([stored]);
 		this.index[addr] = slot;
 		this.count += 1;
 
@@ -51,7 +52,9 @@ export class TrackedSet<T> {
 	delete(value: T): boolean {
 		assertMutableFacade(this, "count");
 
-		return deleteFromStore(this as unknown as SlotStore<readonly [T]>, addressOf(value));
+		return deleteFromStore(this as unknown as SlotStore<readonly [T]>, addressOf(value), (member) =>
+			addressOf(member[0]),
+		);
 	}
 
 	clear(): void {
@@ -60,7 +63,7 @@ export class TrackedSet<T> {
 	}
 
 	entries(): IterableIterator<[T, T]> {
-		const members = iterateSlots<readonly [T]>(() => this.slots);
+		const members = iterateSlots<readonly [T]>(this, () => this.slots);
 
 		return (function* () {
 			for (const member of members) yield [member[0], member[0]];
@@ -72,7 +75,7 @@ export class TrackedSet<T> {
 	}
 
 	values(): IterableIterator<T> {
-		const members = iterateSlots<readonly [T]>(() => this.slots);
+		const members = iterateSlots<readonly [T]>(this, () => this.slots);
 
 		return (function* () {
 			for (const member of members) yield member[0];
@@ -80,7 +83,7 @@ export class TrackedSet<T> {
 	}
 
 	forEach(callback: (value: T, key: T, set: TrackedSet<T>) => void): void {
-		for (const member of iterateSlots<readonly [T]>(() => this.slots)) callback(member[0], member[0], this);
+		for (const member of iterateSlots<readonly [T]>(this, () => this.slots)) callback(member[0], member[0], this);
 	}
 
 	[Symbol.iterator](): IterableIterator<T> {

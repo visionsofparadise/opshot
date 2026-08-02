@@ -3,6 +3,9 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 /**
  * Schedules when bare writes notify listeners. Call `flush` once.
  *
+ * Governs bare writes only. A `transact` delivers synchronously and ignores this.
+ * Invoked once per window, a microtask after the first write of a burst.
+ *
  * @param flush - Delivers pending ops.
  * @returns Nothing.
  */
@@ -17,6 +20,7 @@ export type EmitOn = (flush: () => void) => void;
 export interface StateSettings {
 	/**
 	 * When bare writes notify listeners. Defaults to a microtask.
+	 * A `transact` delivers synchronously regardless.
 	 */
 	readonly emitOn?: EmitOn;
 

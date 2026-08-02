@@ -1,6 +1,7 @@
 import { createChannel } from "./createChannel";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
+import { applyOps } from "./ops/applyOps";
 import { type Op } from "./ops/operation";
 import { subscribe, type Context } from "./subscribe";
 import { transact } from "./transact";
@@ -262,6 +263,180 @@ describe("subscribe", () => {
 					undo: { op: "assign", path: ["a", "x"], value: 0 },
 				},
 			],
+		]);
+	});
+
+	it("delivers a transaction below the root to a group listener and to its channel", () => {
+		const channel = createChannel<{ replay: boolean }>({ replay: false });
+		const group = createGroup();
+		const state = group.createMutableState({ a: { n: 0 } });
+		const plainHeard = new Array<unknown>();
+		const channelHeard = new Array<Context<{ replay: boolean }>>();
+
+		subscribe(group, (_state, _ops, meta) => plainHeard.push(meta));
+		channel.subscribe(group, (_state, _ops, context) => channelHeard.push(context));
+
+		channel.transact(
+			state.a,
+			() => {
+				state.a.n = 1;
+			},
+			{ replay: true },
+		);
+
+		expect(plainHeard).toEqual([{ replay: true }]);
+		expect(channelHeard).toEqual([{ isTransaction: true, meta: { replay: true } }]);
+	});
+
+	it("carries an applyOps replay flag to a subscriber below the applied node", () => {
+		const state = createMutableState({ a: { n: 0 } });
+		const recorded = new Array<Op>();
+		const stopRecording = subscribe(state, (ops) => recorded.push(...ops));
+
+		transact(state, () => {
+			state.a.n = 1;
+		});
+		stopRecording();
+
+		const heard = new Array<unknown>();
+
+		subscribe(state.a, (_ops, meta) => heard.push(meta));
+
+		applyOps(
+			state,
+			recorded.map((op) => op.undo),
+			{ replay: true },
+		);
+
+		expect(heard).toEqual([{ replay: true }]);
+		expect(state.a.n).toBe(0);
+	});
+
+	it("keeps an applyOps replay flag off the enclosing transaction it runs inside", () => {
+		const state = createMutableState({ a: { n: 0 }, top: 0 });
+		const recorded = new Array<Op>();
+		const stopRecording = subscribe(state.a, (ops) => recorded.push(...ops));
+
+		transact(state, () => {
+			state.a.n = 1;
+		});
+		stopRecording();
+
+		const rootHeard = new Array<unknown>();
+		const nodeHeard = new Array<unknown>();
+
+		subscribe(state, (_ops, meta) => rootHeard.push(meta));
+		subscribe(state.a, (_ops, meta) => nodeHeard.push(meta));
+
+		transact(
+			state,
+			() => {
+				applyOps(
+					state.a,
+					recorded.map((op) => op.undo),
+					{ replay: true },
+				);
+				state.top = 1;
+			},
+			{ transactionKey: "user-drag" },
+		);
+
+		expect(rootHeard).toEqual([{ transactionKey: "user-drag" }]);
+		expect(nodeHeard).toEqual([{ replay: true }]);
+	});
+
+	it("refuses applyOps on the node an enclosing transact already holds", () => {
+		const state = createMutableState({ n: 0 });
+		const recorded = new Array<Op>();
+
+		subscribe(state, (ops) => recorded.push(...ops));
+
+		transact(state, () => {
+			state.n = 1;
+		});
+
+		expect(() =>
+			transact(state, () => {
+				applyOps(
+					state,
+					recorded.map((op) => op.undo),
+					{ replay: true },
+				);
+			}),
+		).toThrow("opshot: nested transact on the same state");
+	});
+
+	it("bounds bare writes to one net diff per window under the default latch", async () => {
+		const state = createMutableState({ n: 0 });
+		const heard = new Array<Array<Op>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		state.n = 1;
+		state.n = 2;
+		state.n = 3;
+
+		expect(heard).toHaveLength(0);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([
+			[{ do: { op: "assign", path: ["n"], value: 3 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+		]);
+	});
+
+	it("invokes a synchronous emitOn once per window rather than once per write", async () => {
+		let invocations = 0;
+		const state = createMutableState(
+			{ n: 0 },
+			{
+				emitOn: (flush) => {
+					invocations += 1;
+					flush();
+				},
+			},
+		);
+		const heard = new Array<Array<Op>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		state.n = 1;
+		state.n = 2;
+		state.n = 3;
+
+		expect(invocations).toBe(0);
+		expect(heard).toHaveLength(0);
+
+		await Promise.resolve();
+
+		expect(invocations).toBe(1);
+		expect(heard).toEqual([
+			[{ do: { op: "assign", path: ["n"], value: 3 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+		]);
+	});
+
+	it("invokes a deferring emitOn once per window and delivers only when it flushes", async () => {
+		const scheduled = new Array<() => void>();
+		const state = createMutableState({ n: 0 }, { emitOn: (flush) => scheduled.push(flush) });
+		const heard = new Array<Array<Op>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		state.n = 1;
+		state.n = 2;
+		state.n = 3;
+
+		expect(scheduled).toHaveLength(0);
+
+		await Promise.resolve();
+
+		expect(scheduled).toHaveLength(1);
+		expect(heard).toHaveLength(0);
+
+		for (const flush of scheduled) flush();
+
+		expect(heard).toEqual([
+			[{ do: { op: "assign", path: ["n"], value: 3 }, undo: { op: "assign", path: ["n"], value: 0 } }],
 		]);
 	});
 

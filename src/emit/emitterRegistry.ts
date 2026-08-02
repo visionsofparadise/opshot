@@ -35,6 +35,8 @@ export interface EmitterRecord {
 	readonly target: object;
 	emitOn?: EmitOn;
 	pending: boolean;
+	hasUnreported: boolean;
+	claimedBy: object | undefined;
 }
 
 const emitters = new WeakMap<object, EmitterRecord>();
@@ -65,6 +67,8 @@ export function getOrCreateEmitter(target: object, groupChain?: ReadonlyArray<Gr
 		target: resolved,
 		emitOn,
 		pending: false,
+		hasUnreported: false,
+		claimedBy: undefined,
 	};
 
 	emitters.set(resolved, record);

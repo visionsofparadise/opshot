@@ -283,7 +283,7 @@ describe("scenarios", () => {
 		expect(persisted).toEqual([undefined, { replay: true }, { replay: true }]);
 	});
 
-	it("completes the stream under entanglement: the sharer hears faithful side-effect ops for an owned write elsewhere", async () => {
+	it("completes the stream under entanglement: a bare write elsewhere reaches the sharer on its own window", async () => {
 		const shared = { x: 1 };
 		const a = createMutableState({ box: shared });
 		const b = createMutableState({ box: shared });
@@ -297,27 +297,14 @@ describe("scenarios", () => {
 			bHeard.push({ ops: [...ops], meta });
 		});
 
-		transact(a, () => {
-			a.box.x = 2;
-		});
+		a.box.x = 2;
 
-		expect(aHeard).toEqual([
-			{
-				ops: [
-					{
-						do: { op: "assign", path: ["box", "x"], value: 2 },
-						undo: { op: "assign", path: ["box", "x"], value: 1 },
-					},
-				],
-				meta: undefined,
-			},
-		]);
+		expect(aHeard).toHaveLength(0);
 		expect(bHeard).toHaveLength(0);
 
 		await Promise.resolve();
 
-		expect(aHeard).toHaveLength(1);
-		expect(bHeard).toEqual([
+		const shape = [
 			{
 				ops: [
 					{
@@ -327,7 +314,54 @@ describe("scenarios", () => {
 				],
 				meta: undefined,
 			},
-		]);
+		];
+
+		expect(aHeard).toEqual(shape);
+		expect(bHeard).toEqual(shape);
+		expect(b.box.x).toBe(2);
+	});
+
+	it("completes the stream under entanglement: the sharer hears a transaction elsewhere with its meta", async () => {
+		const shared = { x: 1 };
+		const a = createMutableState({ box: shared });
+		const b = createMutableState({ box: shared });
+		const aHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const bHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+
+		subscribe(a, (ops, meta) => {
+			aHeard.push({ ops: [...ops], meta });
+		});
+		subscribe(b, (ops, meta) => {
+			bHeard.push({ ops: [...ops], meta });
+		});
+
+		transact(
+			a,
+			() => {
+				a.box.x = 2;
+			},
+			{ transactionKey: "drag" },
+		);
+
+		const shape = [
+			{
+				ops: [
+					{
+						do: { op: "assign", path: ["box", "x"], value: 2 },
+						undo: { op: "assign", path: ["box", "x"], value: 1 },
+					},
+				],
+				meta: { transactionKey: "drag" },
+			},
+		];
+
+		expect(aHeard).toEqual(shape);
+		expect(bHeard).toEqual(shape);
+
+		await Promise.resolve();
+
+		expect(aHeard).toHaveLength(1);
+		expect(bHeard).toHaveLength(1);
 		expect(b.box.x).toBe(2);
 	});
 

@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 
 import { act, render, screen } from "@testing-library/react";
-import { memo, useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
+import {
+	Component,
+	memo,
+	StrictMode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type FC,
+	type ReactNode,
+} from "react";
 
 import { createMutableState } from "../createMutableState";
 import { TrackedMap } from "../tracked/trackedMap";
 import { isWrapper } from "./boundary";
+import { isRendering } from "./renderPhase";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
@@ -674,5 +685,299 @@ describe("scope", () => {
 		expect({ owner: ownerRenders, child: childRenders }).toEqual({ owner: 3, child: 2 });
 		expect(childSaw).toEqual([0, 9]);
 		expect(screen.getByTestId("b").textContent).toBe("9");
+	});
+
+	it("subscribes a descendant that re-renders on its own local state and reads a new field", async () => {
+		interface Doc {
+			title: string;
+			details: string;
+		}
+
+		let expand: (() => void) | undefined;
+
+		const Details = scope<{ state: Doc }>(({ state }) => {
+			const [expanded, setExpanded] = useState(false);
+
+			expand = () => setExpanded(true);
+
+			return <span data-testid="details">{expanded ? state.details : state.title}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Doc>(() => ({ title: "t", details: "hidden" }));
+
+			useEffect(() => {
+				(globalThis as { __doc?: Doc }).__doc = state;
+			});
+
+			return <Details state={state} />;
+		};
+
+		render(<Parent />);
+		expect(screen.getByTestId("details").textContent).toBe("t");
+
+		await act(async () => {
+			expand?.();
+		});
+
+		expect(screen.getByTestId("details").textContent).toBe("hidden");
+
+		await act(async () => {
+			const doc = (globalThis as { __doc?: Doc }).__doc;
+
+			if (doc === undefined) throw new Error("missing state");
+
+			doc.details = "revealed";
+		});
+
+		expect(screen.getByTestId("details").textContent).toBe("revealed");
+	});
+
+	it("subscribes a descendant re-rendering on its own local state under StrictMode", async () => {
+		interface Doc {
+			title: string;
+			details: string;
+		}
+
+		let expand: (() => void) | undefined;
+		let held: Doc | undefined;
+
+		const Details = scope<{ state: Doc }>(({ state }) => {
+			const [expanded, setExpanded] = useState(false);
+
+			expand = () => setExpanded(true);
+
+			return <span data-testid="strict">{expanded ? state.details : state.title}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Doc>(() => ({ title: "t", details: "hidden" }));
+
+			held = state;
+
+			return <Details state={state} />;
+		};
+
+		render(
+			<StrictMode>
+				<Parent />
+			</StrictMode>,
+		);
+
+		await act(async () => {
+			expand?.();
+		});
+
+		expect(screen.getByTestId("strict").textContent).toBe("hidden");
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.details = "revealed";
+		});
+
+		expect(screen.getByTestId("strict").textContent).toBe("revealed");
+	});
+
+	it("keeps a class component rendering under a boundary reactive", async () => {
+		interface Doc {
+			n: number;
+		}
+
+		let held: Doc | undefined;
+
+		class Reader extends Component<{ state: Doc }> {
+			override render(): ReactNode {
+				return <span data-testid="class">{this.props.state.n}</span>;
+			}
+		}
+
+		const Scoped = scope(Reader);
+
+		const Parent: FC = () => {
+			const state = useMutableState<Doc>(() => ({ n: 0 }));
+
+			held = state;
+
+			return <Scoped state={state} />;
+		};
+
+		render(<Parent />);
+		expect(screen.getByTestId("class").textContent).toBe("0");
+
+		for (const next of [1, 2, 3]) {
+			await act(async () => {
+				if (held === undefined) throw new Error("missing state");
+
+				held.n = next;
+			});
+
+			expect(screen.getByTestId("class").textContent).toBe(String(next));
+		}
+	});
+
+	it("reads the render phase from the React it is built against", async () => {
+		let bump: (() => void) | undefined;
+		const duringRender = new Array<boolean>();
+		const duringEffect = new Array<boolean>();
+
+		const Probe: FC = () => {
+			const [n, setN] = useState(0);
+
+			bump = () => setN(n + 1);
+			duringRender.push(isRendering());
+
+			useEffect(() => {
+				duringEffect.push(isRendering());
+			});
+
+			return <span data-testid="probe">{n}</span>;
+		};
+
+		const Parent: FC = () => {
+			const state = useMutableState({ n: 0 });
+
+			return (
+				<>
+					<span>{state.n}</span>
+					<Probe />
+				</>
+			);
+		};
+
+		render(<Parent />);
+
+		await act(async () => {
+			bump?.();
+		});
+
+		expect(duringRender[duringRender.length - 1]).toBe(true);
+		expect(duringEffect[duringEffect.length - 1]).toBe(false);
+		expect(isRendering()).toBe(false);
+	});
+
+	it("records no read from an effect, an event handler, or outside React", async () => {
+		interface Counter {
+			shown: number;
+			hidden: number;
+		}
+
+		let renders = 0;
+		let held: Counter | undefined;
+		let bump: (() => void) | undefined;
+		const readOutside = new Array<number>();
+
+		const View = scope<{ state: Counter }>(({ state }) => {
+			const [local, setLocal] = useState(0);
+
+			renders += 1;
+			bump = () => setLocal(local + 1);
+
+			useEffect(() => {
+				readOutside.push(state.hidden);
+			});
+
+			return (
+				<button data-testid="button" onClick={() => readOutside.push(state.hidden)}>
+					{state.shown}
+					{local}
+				</button>
+			);
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Counter>(() => ({ shown: 0, hidden: 0 }));
+
+			held = state;
+
+			return <View state={state} />;
+		};
+
+		render(<Parent />);
+
+		await act(async () => {
+			bump?.();
+		});
+
+		await act(async () => {
+			screen.getByTestId("button").click();
+		});
+
+		if (held === undefined) throw new Error("missing state");
+
+		readOutside.push(held.hidden);
+
+		const before = renders;
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.hidden += 1;
+		});
+
+		expect(renders).toBe(before);
+
+		await act(async () => {
+			if (held === undefined) throw new Error("missing state");
+
+			held.shown += 1;
+		});
+
+		expect(renders).toBe(before + 1);
+	});
+
+	it("gives a handle the object protocol of the value it wraps", () => {
+		interface Shape {
+			name: string;
+			items: Array<number>;
+			nested: { n: number };
+			map: TrackedMap<string, number>;
+		}
+
+		let handle: Shape | undefined;
+
+		const Child = scope<{ state: Shape }>(({ state }) => {
+			handle = state;
+
+			return <span data-testid="name">{state.name}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Shape>(() => ({
+				name: "doc",
+				items: [1, 2, 3],
+				nested: { n: 1 },
+				map: new TrackedMap<string, number>([["k", 1]]),
+			}));
+
+			return <Child state={state} />;
+		};
+
+		render(<Parent />);
+
+		if (handle === undefined) throw new Error("missing handle");
+
+		expect(isWrapper(handle)).toBe(true);
+		expect(Array.isArray(handle.items)).toBe(true);
+		expect(handle.items instanceof Array).toBe(true);
+		expect(handle.nested instanceof Object).toBe(true);
+		expect(handle.map instanceof TrackedMap).toBe(true);
+		expect(Object.keys(handle.items)).toEqual(["0", "1", "2"]);
+		expect(Object.entries(handle.nested)).toEqual([["n", 1]]);
+		expect([...handle.items]).toEqual([1, 2, 3]);
+		expect({ ...handle.nested }).toEqual({ n: 1 });
+		expect(JSON.stringify(handle.items)).toBe("[1,2,3]");
+		expect(JSON.stringify(handle.nested)).toBe('{"n":1}');
+		expect(JSON.parse(JSON.stringify(handle))).toMatchObject({ name: "doc", items: [1, 2, 3], nested: { n: 1 } });
+
+		const iterated = new Array<number>();
+
+		for (const item of handle.items) iterated.push(item);
+
+		expect(iterated).toEqual([1, 2, 3]);
+		expect(handle.items.length).toBe(3);
+		expect(handle.map.get("k")).toBe(1);
+		expect(() => structuredClone(handle)).toThrow();
+		expect(() => structuredClone(createMutableState({ n: 1 }))).toThrow();
 	});
 });

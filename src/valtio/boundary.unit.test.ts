@@ -898,4 +898,31 @@ describe("boundary: strict false", () => {
 			(state as any).donated = (snap as any).item;
 		}).toThrow(/snapshot|donation|registered/i);
 	});
+
+	it("gives a rejectable value nested below a replayed property no location at all", () => {
+		const carrier = (): object => {
+			const holder = {};
+
+			Object.defineProperty(holder, "b", {
+				value: { hidden: { m: new Map() } },
+				enumerable: false,
+				writable: true,
+				configurable: true,
+			});
+
+			return holder;
+		};
+
+		expect(() => createMutableState({ a: carrier() })).toThrow("opshot: Map cannot be tracked");
+		expect(() => createMutableState({ a: carrier() })).not.toThrow(/ at \//);
+		expect(() => createMutableState({ outer: { a: carrier() } })).not.toThrow(/ at \//);
+	});
+
+	it("still names the key and the relative path beneath a consumer's own assignment", () => {
+		const state = createMutableState<{ a: { b: object } }>({ a: { b: {} } });
+
+		expect(() => {
+			state.a.b = { hidden: { m: new Map() } };
+		}).toThrow("opshot: Map at /b/hidden/m cannot be tracked");
+	});
 });

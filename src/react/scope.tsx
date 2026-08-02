@@ -5,6 +5,7 @@ import { isState } from "../isState";
 import { addressOf } from "../tracked/address";
 import { createBoundary, type Boundary } from "./boundary";
 import { substituteStates } from "./propWalk";
+import { useCommitEffect } from "./useCommitEffect";
 
 const sourcesKey = (sources: ReadonlyArray<object>): string =>
 	`${sources.length}:${sources.map((source) => addressOf(source)).join(",")}`;
@@ -62,9 +63,15 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 		const { props: renderedProps, sources } = substituteStates(props, (source) => boundary.wrap(source));
 		const versionsAtRender = sources.map((source) => getVersion(source));
 
-		useEffect(() => {
+		useCommitEffect(() => {
 			boundary.captureReads();
 		});
+
+		useEffect(() => {
+			boundary.retain();
+
+			return () => boundary.dispose();
+		}, [boundary]);
 
 		useEffect(() => {
 			const unsubscribes = sources.map((source) =>

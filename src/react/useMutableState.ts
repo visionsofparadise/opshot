@@ -2,6 +2,7 @@ import { useEffect, useReducer, useState } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { createMutableState, type MutableStateOptions } from "../createMutableState";
 import { createBoundary, type Boundary } from "./boundary";
+import { useCommitEffect } from "./useCommitEffect";
 
 interface MutableStateHolder<T extends object> {
 	readonly proxy: T;
@@ -28,9 +29,15 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 
 	const wrapper = boundary.wrap(proxy);
 
-	useEffect(() => {
+	useCommitEffect(() => {
 		boundary.captureReads();
 	});
+
+	useEffect(() => {
+		boundary.retain();
+
+		return () => boundary.dispose();
+	}, [boundary]);
 
 	useEffect(() => {
 		const onSignal = (): void => {

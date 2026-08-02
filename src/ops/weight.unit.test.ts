@@ -47,11 +47,17 @@ describe("weighValue", () => {
 		const withTombstone = new TrackedMap<number, number>([
 			[1, 10],
 			[2, 20],
+			[3, 30],
+			[4, 40],
 		]);
 
 		withTombstone.delete(1);
 
-		const liveOnly = new TrackedMap<number, number>([[2, 20]]);
+		const liveOnly = new TrackedMap<number, number>([
+			[2, 20],
+			[3, 30],
+			[4, 40],
+		]);
 		const budget = Number.MAX_SAFE_INTEGER;
 
 		expect(weighValue(withTombstone, budget)).toBeGreaterThan(weighValue(liveOnly, budget));

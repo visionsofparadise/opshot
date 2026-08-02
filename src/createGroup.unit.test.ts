@@ -255,6 +255,117 @@ describe("createGroup", () => {
 		expect(callCount).toBe(2);
 	});
 
+	it("runs every listener at every tier when one throws, and aggregates the failures", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const state = child.createMutableState<Counter>({ count: 0 });
+		const called = new Array<string>();
+		const parentFailure = new Error("parent listener failure");
+		const childFailure = new Error("child listener failure");
+
+		subscribe(parent, () => {
+			called.push("parent");
+
+			throw parentFailure;
+		});
+		subscribe(child, () => {
+			called.push("child");
+
+			throw childFailure;
+		});
+		subscribe(state, () => called.push("own"));
+
+		let raised: unknown;
+
+		try {
+			transact(state, () => {
+				state.count = 1;
+			});
+		} catch (error) {
+			raised = error;
+		}
+
+		expect(called).toEqual(["parent", "child", "own"]);
+		expect(raised).toBeInstanceOf(AggregateError);
+		expect((raised as AggregateError).errors).toEqual([parentFailure, childFailure]);
+	});
+
+	it("delivers a queued emission to a group listener removed during the delivery that queued it", () => {
+		const group = createGroup();
+		const cause = group.createMutableState({ name: "cause", n: 0 });
+		const effect = group.createMutableState({ name: "effect", n: 0 });
+		const heard = new Array<string>();
+		const removeGroup = subscribe(group, (state) => heard.push((state as { name: string }).name));
+
+		subscribe(cause, () => {
+			transact(effect, () => {
+				effect.n += 1;
+			});
+
+			removeGroup();
+		});
+
+		transact(cause, () => {
+			cause.n += 1;
+		});
+
+		expect(heard).toEqual(["cause", "effect"]);
+	});
+
+	it("does not invert the inner tier when an outer-tier listener writes beneath it", () => {
+		const parent = createGroup();
+		const child = createGroup(parent);
+		const cause = child.createMutableState({ name: "cause", n: 0 });
+		const effect = child.createMutableState({ name: "effect", n: 0 });
+		const heardByParent = new Array<string>();
+		const heardByChild = new Array<string>();
+
+		subscribe(parent, (state) => {
+			heardByParent.push((state as { name: string }).name);
+
+			if ((state as { name: string }).name !== "cause") return;
+
+			transact(effect, () => {
+				effect.n += 1;
+			});
+		});
+		subscribe(child, (state) => heardByChild.push((state as { name: string }).name));
+
+		transact(cause, () => {
+			cause.n += 1;
+		});
+
+		expect(heardByParent).toEqual(["cause", "effect"]);
+		expect(heardByChild).toEqual(["cause", "effect"]);
+	});
+
+	it("orders cause before effect at every tier of a three-tier chain", () => {
+		const root = createGroup();
+		const mid = createGroup(root);
+		const leaf = createGroup(mid);
+		const cause = leaf.createMutableState({ name: "cause", n: 0 });
+		const effect = leaf.createMutableState({ name: "effect", n: 0 });
+		const heard: Record<string, Array<string>> = { root: [], mid: [], leaf: [] };
+
+		subscribe(root, (state) => {
+			heard.root?.push((state as { name: string }).name);
+
+			if ((state as { name: string }).name !== "cause") return;
+
+			transact(effect, () => {
+				effect.n += 1;
+			});
+		});
+		subscribe(mid, (state) => heard.mid?.push((state as { name: string }).name));
+		subscribe(leaf, (state) => heard.leaf?.push((state as { name: string }).name));
+
+		transact(cause, () => {
+			cause.n += 1;
+		});
+
+		expect(heard).toEqual({ root: ["cause", "effect"], mid: ["cause", "effect"], leaf: ["cause", "effect"] });
+	});
+
 	it("delivers merged meta from a channel through a group subscriber", () => {
 		const channel = createChannel<{ replay: boolean; transactionKey?: string }>({ replay: false });
 		const group = createGroup();

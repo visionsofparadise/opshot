@@ -106,6 +106,28 @@ const isCanonicalArrayIndex = (key: string): boolean => {
 	return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === key;
 };
 
+const collectComparedKeys = (
+	before: Record<string, unknown> | Array<unknown>,
+	after: Record<string, unknown> | Array<unknown>,
+	ignoreArrayIndexes: boolean,
+): Iterable<string> => {
+	const keys = new Set<string>();
+
+	for (const key of Object.keys(before)) {
+		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
+
+		keys.add(key);
+	}
+
+	for (const key of Object.keys(after)) {
+		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
+
+		keys.add(key);
+	}
+
+	return keys;
+};
+
 const diffObjectProperties = (
 	before: Record<string, unknown> | Array<unknown>,
 	after: Record<string, unknown> | Array<unknown>,
@@ -116,9 +138,7 @@ const diffObjectProperties = (
 ): number => {
 	let weight = 0;
 
-	for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
-
+	for (const key of collectComparedKeys(before, after, ignoreArrayIndexes)) {
 		const nextPath = appendOperationPath(path, key);
 
 		const beforeDescriptor = Reflect.getOwnPropertyDescriptor(before, key);
@@ -151,9 +171,10 @@ const diffArray = (
 	for (let index = 0; index < overlap; index++) {
 		const beforePresent = Object.hasOwn(before, index);
 		const afterPresent = Object.hasOwn(after, index);
-		const nextPath = appendOperationPath(path, index);
 
 		if (!beforePresent && !afterPresent) continue;
+
+		const nextPath = appendOperationPath(path, index);
 
 		if (!beforePresent) weight += pushAddition(ops, nextPath, after[index]);
 		else if (!afterPresent) weight += pushRemoval(ops, nextPath, before[index]);

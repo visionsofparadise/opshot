@@ -1,8 +1,18 @@
+import { isSameIdentity } from "../identity";
 import { installBoundary } from "../valtio/boundary";
 import { addressOf } from "./address";
 import { assertMutableFacade } from "./facadeGuard";
 import { iterateSlots } from "./iterateSlots";
 import { clearStore, deleteFromStore, type SlotStore } from "./slotStore";
+
+const isObjectLike = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
+
+const isStoredValue = (stored: unknown, incoming: unknown): boolean => {
+	if (Object.is(stored, incoming)) return true;
+
+	return isObjectLike(stored) && isObjectLike(incoming) && isSameIdentity(stored, incoming);
+};
 
 /**
  * Tracked `Map` for use in state.
@@ -46,19 +56,22 @@ export class TrackedMap<K, V> {
 	set(key: K, value: V): this {
 		assertMutableFacade(this, "count");
 
-		const addr = addressOf(key);
+		const stored = Object.is(key, -0) ? (0 as K) : key;
+		const addr = addressOf(stored);
 		const slot = this.index[addr];
 
 		if (slot === undefined) {
 			const newSlot = this.slots.length;
 
-			this.slots.push([key, value]);
+			this.slots.push([stored, value]);
 			this.index[addr] = newSlot;
 			this.count += 1;
 		} else {
 			const pair = this.slots[slot];
 
 			if (pair === null || pair === undefined) throw new Error("opshot: TrackedMap resolved an empty slot");
+
+			if (isStoredValue(pair[1], value)) return this;
 
 			this.slots[slot] = [pair[0], value];
 		}
@@ -69,7 +82,9 @@ export class TrackedMap<K, V> {
 	delete(key: K): boolean {
 		assertMutableFacade(this, "count");
 
-		return deleteFromStore(this as unknown as SlotStore<readonly [K, V]>, addressOf(key));
+		return deleteFromStore(this as unknown as SlotStore<readonly [K, V]>, addressOf(key), (pair) =>
+			addressOf(pair[0]),
+		);
 	}
 
 	clear(): void {
@@ -78,7 +93,7 @@ export class TrackedMap<K, V> {
 	}
 
 	entries(): IterableIterator<[K, V]> {
-		const pairs = iterateSlots<readonly [K, V]>(() => this.slots);
+		const pairs = iterateSlots<readonly [K, V]>(this, () => this.slots);
 
 		return (function* () {
 			for (const pair of pairs) yield [pair[0], pair[1]];
@@ -86,7 +101,7 @@ export class TrackedMap<K, V> {
 	}
 
 	keys(): IterableIterator<K> {
-		const pairs = iterateSlots<readonly [K, V]>(() => this.slots);
+		const pairs = iterateSlots<readonly [K, V]>(this, () => this.slots);
 
 		return (function* () {
 			for (const pair of pairs) yield pair[0];
@@ -94,7 +109,7 @@ export class TrackedMap<K, V> {
 	}
 
 	values(): IterableIterator<V> {
-		const pairs = iterateSlots<readonly [K, V]>(() => this.slots);
+		const pairs = iterateSlots<readonly [K, V]>(this, () => this.slots);
 
 		return (function* () {
 			for (const pair of pairs) yield pair[1];
@@ -102,7 +117,7 @@ export class TrackedMap<K, V> {
 	}
 
 	forEach(callback: (value: V, key: K, map: TrackedMap<K, V>) => void): void {
-		for (const pair of iterateSlots<readonly [K, V]>(() => this.slots)) callback(pair[1], pair[0], this);
+		for (const pair of iterateSlots<readonly [K, V]>(this, () => this.slots)) callback(pair[1], pair[0], this);
 	}
 
 	[Symbol.iterator](): IterableIterator<[K, V]> {

@@ -314,4 +314,68 @@ describe("Boundary wrapper", () => {
 		expect(next).not.toBe(first);
 		expect(next.nested).toBe(nested);
 	});
+
+	it("releases every partition and target on dispose", async () => {
+		const boundary = createBoundary();
+		const documents = Array.from({ length: 20 }, (_, index) => createLive({ id: index, body: { text: "x" } }));
+		const retained = documents.map((document) => {
+			const wrapper = boundary.wrap(document);
+
+			void wrapper.id;
+			void wrapper.body.text;
+
+			return wrapper;
+		});
+
+		expect(boundary.readsChanged(documents[0] as object)).toBe(false);
+
+		boundary.dispose();
+		await Promise.resolve();
+
+		for (const document of documents) {
+			expect(boundary.readsChanged(document)).toBe(false);
+		}
+
+		for (const wrapper of retained) {
+			expect(isWrapper(wrapper)).toBe(true);
+			expect(wrapper.body.text).toBe("x");
+		}
+
+		for (const document of documents) {
+			expect(boundary.readsChanged(document)).toBe(false);
+		}
+	});
+
+	it("keeps its partitions when a dispose is retained before it settles", async () => {
+		const boundary = createBoundary();
+		const state = createLive({ shown: 0, hidden: 0 });
+		const wrapper = boundary.wrap(state);
+
+		void wrapper.shown;
+
+		boundary.dispose();
+		boundary.retain();
+
+		await Promise.resolve();
+
+		state.shown = 1;
+
+		expect(boundary.readsChanged(state)).toBe(true);
+	});
+
+	it("stops reporting reads once a dispose has settled", async () => {
+		const boundary = createBoundary();
+		const state = createLive({ shown: 0 });
+		const wrapper = boundary.wrap(state);
+
+		void wrapper.shown;
+
+		boundary.dispose();
+
+		await Promise.resolve();
+
+		state.shown = 1;
+
+		expect(boundary.readsChanged(state)).toBe(false);
+	});
 });

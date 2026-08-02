@@ -47,6 +47,14 @@ const constructDate = (args: DateConstructorArgs): Date => {
 	}
 };
 
+const MAX_TIME = 8.64e15;
+
+const clipTime = (epochMs: number): number => {
+	if (!Number.isFinite(epochMs) || Math.abs(epochMs) > MAX_TIME) return Number.NaN;
+
+	return Math.trunc(epochMs) + 0;
+};
+
 /**
  * Tracked `Date` for use in state.
  *
@@ -64,6 +72,10 @@ export class TrackedDate {
 
 	private readDate(): Date {
 		return new Date(this.epochMs);
+	}
+
+	private readEpochMs(): number {
+		return clipTime(this.epochMs);
 	}
 
 	private write(mutate: (value: Date) => number): number {
@@ -101,11 +113,11 @@ export class TrackedDate {
 	}
 
 	valueOf(): number {
-		return this.readDate().valueOf();
+		return this.readEpochMs();
 	}
 
 	getTime(): number {
-		return this.readDate().getTime();
+		return this.readEpochMs();
 	}
 
 	getFullYear(): number {
@@ -258,9 +270,9 @@ export class TrackedDate {
 	}
 
 	[Symbol.toPrimitive](hint: "default" | "string" | "number"): string | number {
-		const date = this.readDate();
+		if (hint === "number") return this.readEpochMs();
 
-		return hint === "number" ? date[Symbol.toPrimitive]("number") : date[Symbol.toPrimitive](hint);
+		return this.readDate()[Symbol.toPrimitive](hint);
 	}
 
 	declare readonly [Symbol.toStringTag]: "TrackedDate";

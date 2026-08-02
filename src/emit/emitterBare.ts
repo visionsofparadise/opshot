@@ -2,7 +2,7 @@ import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getCyclicPath } from "../ops/cloneValue";
 import { diffSnapshots } from "../ops/diff";
 import { formatOperationPath } from "../ops/path";
-import { deliver } from "./emitterDeliver";
+import { deliver, raiseFailures } from "./emitterDeliver";
 import {
 	getEmitter,
 	getOrCreateEmitter,
@@ -10,6 +10,15 @@ import {
 	type EmitterRecord,
 	type GroupListeners,
 } from "./emitterRegistry";
+
+interface Claim {
+	readonly record: EmitterRecord;
+	readonly wasDirty: boolean;
+}
+
+export interface TransactFrame {
+	readonly claimed: Array<Claim>;
+}
 
 const augmentBareCycleError = (error: unknown): Error | undefined => {
 	const path = getCyclicPath(error);
@@ -21,35 +30,86 @@ const augmentBareCycleError = (error: unknown): Error | undefined => {
 	);
 };
 
-export const requireObjectSnapshot = (value: unknown): object => {
+const requireObjectSnapshot = (value: unknown): object => {
 	if (value !== null && (typeof value === "object" || typeof value === "function")) return value;
 
 	throw new Error("opshot: state snapshots must have an object root");
 };
 
 const scheduleFlush = (record: EmitterRecord): void => {
-	if (record.emitOn === undefined) {
-		emitBareFlush(record.target);
-
-		return;
-	}
-
 	if (record.pending) return;
 
 	record.pending = true;
-	record.emitOn(() => {
-		record.pending = false;
-		emitBareFlush(record.target);
+
+	void Promise.resolve().then(() => {
+		const { emitOn } = record;
+
+		if (emitOn === undefined) {
+			record.pending = false;
+			emitBareFlush(record.target);
+
+			return;
+		}
+
+		emitOn(() => {
+			record.pending = false;
+			emitBareFlush(record.target);
+		});
 	});
+};
+
+const frames: Array<TransactFrame> = [];
+
+const claimFor = (frame: TransactFrame, record: EmitterRecord, wasDirty: boolean): void => {
+	if (record.claimedBy !== undefined) return;
+
+	record.claimedBy = frame;
+	frame.claimed.push({ record, wasDirty });
+};
+
+export const openFrame = (transacted: EmitterRecord | undefined): TransactFrame => {
+	const frame: TransactFrame = { claimed: [] };
+
+	frames.push(frame);
+
+	if (transacted !== undefined) claimFor(frame, transacted, transacted.hasUnreported);
+
+	return frame;
+};
+
+export const closeFrame = (frame: TransactFrame): void => {
+	const index = frames.lastIndexOf(frame);
+
+	if (index === -1) return;
+
+	frames.splice(index, 1);
+
+	for (const claim of frame.claimed) claim.record.claimedBy = undefined;
 };
 
 export const armWatchdog = (record: EmitterRecord): void => {
 	if (record.disarm !== undefined) return;
 
 	record.lastReported = snapshot(record.target);
-	record.disarm = valtioSubscribe(record.target, () => {
-		scheduleFlush(record);
-	});
+	record.disarm = valtioSubscribe(
+		record.target,
+		() => {
+			const wasDirty = record.hasUnreported;
+
+			record.hasUnreported = true;
+
+			const outermost = frames[0];
+
+			if (outermost === undefined) {
+				scheduleFlush(record);
+
+				return;
+			}
+
+			claimFor(outermost, record, wasDirty);
+		},
+		true,
+	);
 };
 
 export const disarmWatchdog = (record: EmitterRecord): void => {
@@ -57,8 +117,10 @@ export const disarmWatchdog = (record: EmitterRecord): void => {
 	record.disarm = undefined;
 };
 
-const reportBareDiff = (record: EmitterRecord): void => {
+const reportRecord = (record: EmitterRecord, meta: unknown): void => {
 	const current = snapshot(record.target);
+
+	record.hasUnreported = false;
 
 	if (current === record.lastReported) return;
 
@@ -68,15 +130,37 @@ const reportBareDiff = (record: EmitterRecord): void => {
 
 	if (!hasListeners(record)) return;
 
+	const ops = diffSnapshots(requireObjectSnapshot(previous), requireObjectSnapshot(current));
+
+	if (ops.length === 0) return;
+
+	deliver(record, ops, meta);
+};
+
+const reportBareDiff = (record: EmitterRecord): void => {
 	try {
-		const ops = diffSnapshots(requireObjectSnapshot(previous), requireObjectSnapshot(current));
-
-		if (ops.length === 0) return;
-
-		deliver(record, ops, undefined);
+		reportRecord(record, undefined);
 	} catch (error) {
 		throw augmentBareCycleError(error) ?? error;
 	}
+};
+
+export const reportFrame = (frame: TransactFrame, meta: unknown): void => {
+	const failures: Array<unknown> = [];
+
+	for (const claim of frame.claimed) {
+		try {
+			reportRecord(claim.record, claim.wasDirty ? undefined : meta);
+		} catch (error) {
+			failures.push(error);
+		}
+	}
+
+	raiseFailures(failures);
+};
+
+export const releaseFrameToWindows = (frame: TransactFrame): void => {
+	for (const claim of frame.claimed) scheduleFlush(claim.record);
 };
 
 export const settlePendingBare = (record: EmitterRecord): void => {
