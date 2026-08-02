@@ -23,12 +23,11 @@ interface UsageRecord {
 }
 
 interface SourcePartition {
-	readonly sourceProxy: object;
 	readonly affected: Map<object, UsageRecord>;
-	readonly prevValues: Map<object, Map<string | symbol, unknown>>;
-	readonly prevHas: Map<object, Map<string | symbol, boolean>>;
-	readonly prevHasOwn: Map<object, Map<string | symbol, boolean>>;
-	readonly prevOwnKeys: Map<object, ReadonlyArray<string | symbol>>;
+	readonly previousValues: Map<object, Map<string | symbol, unknown>>;
+	readonly previousHas: Map<object, Map<string | symbol, boolean>>;
+	readonly previousHasOwn: Map<object, Map<string | symbol, boolean>>;
+	readonly previousOwnKeys: Map<object, ReadonlyArray<string | symbol>>;
 	readonly versionAtRecord: Map<object, number>;
 	readonly proxyCache: WeakMap<object, { wrapper: object; version: number }>;
 }
@@ -141,12 +140,11 @@ export function createBoundary(): Boundary {
 
 		if (partition === undefined) {
 			partition = {
-				sourceProxy,
 				affected: new Map(),
-				prevValues: new Map(),
-				prevHas: new Map(),
-				prevHasOwn: new Map(),
-				prevOwnKeys: new Map(),
+				previousValues: new Map(),
+				previousHas: new Map(),
+				previousHasOwn: new Map(),
+				previousOwnKeys: new Map(),
 				versionAtRecord: new Map(),
 				proxyCache: new WeakMap(),
 			};
@@ -164,7 +162,7 @@ export function createBoundary(): Boundary {
 	const storeValue = (partition: SourcePartition, liveProxy: object, key: string | symbol, value: unknown): void => {
 		if (!shouldRecord()) return;
 
-		storeFirst(partition.prevValues, liveProxy, key, value);
+		storeFirst(partition.previousValues, liveProxy, key, value);
 
 		if (isObjectLike(value) && isLiveProxy(value) && !partition.versionAtRecord.has(value)) {
 			partition.versionAtRecord.set(value, getProxyVersion(value));
@@ -174,21 +172,26 @@ export function createBoundary(): Boundary {
 	const storeHas = (partition: SourcePartition, liveProxy: object, key: string | symbol): void => {
 		if (!shouldRecord()) return;
 
-		storeFirst(partition.prevHas, liveProxy, key, Reflect.has(liveProxy, key));
+		storeFirst(partition.previousHas, liveProxy, key, Reflect.has(liveProxy, key));
 	};
 
 	const storeHasOwn = (partition: SourcePartition, liveProxy: object, key: string | symbol): void => {
 		if (!shouldRecord()) return;
 
-		storeFirst(partition.prevHasOwn, liveProxy, key, Reflect.getOwnPropertyDescriptor(liveProxy, key) !== undefined);
+		storeFirst(
+			partition.previousHasOwn,
+			liveProxy,
+			key,
+			Reflect.getOwnPropertyDescriptor(liveProxy, key) !== undefined,
+		);
 	};
 
 	const storeOwnKeys = (partition: SourcePartition, liveProxy: object): void => {
 		if (!shouldRecord()) return;
 
-		if (partition.prevOwnKeys.has(liveProxy)) return;
+		if (partition.previousOwnKeys.has(liveProxy)) return;
 
-		partition.prevOwnKeys.set(liveProxy, Reflect.ownKeys(liveProxy));
+		partition.previousOwnKeys.set(liveProxy, Reflect.ownKeys(liveProxy));
 	};
 
 	const isComparableProxy = (value: unknown): value is object => isObjectLike(value) && isLiveProxy(value);
@@ -225,7 +228,7 @@ export function createBoundary(): Boundary {
 		const keys = used[KEYS_PROPERTY];
 
 		if (keys !== undefined) {
-			const stored = partition.prevValues.get(previousNode);
+			const stored = partition.previousValues.get(previousNode);
 
 			for (const key of keys) {
 				if (!stored?.has(key)) return true;
@@ -246,7 +249,7 @@ export function createBoundary(): Boundary {
 		const hasKeys = used[HAS_KEY_PROPERTY];
 
 		if (hasKeys !== undefined) {
-			const stored = partition.prevHas.get(previousNode);
+			const stored = partition.previousHas.get(previousNode);
 
 			for (const key of hasKeys) {
 				if (!stored?.has(key)) return true;
@@ -258,7 +261,7 @@ export function createBoundary(): Boundary {
 		const hasOwnKeys = used[HAS_OWN_KEY_PROPERTY];
 
 		if (hasOwnKeys !== undefined) {
-			const stored = partition.prevHasOwn.get(previousNode);
+			const stored = partition.previousHasOwn.get(previousNode);
 
 			for (const key of hasOwnKeys) {
 				if (!stored?.has(key)) return true;
@@ -268,7 +271,7 @@ export function createBoundary(): Boundary {
 		}
 
 		if (used[ALL_OWN_KEYS_PROPERTY] === true) {
-			const previousKeys = partition.prevOwnKeys.get(previousNode);
+			const previousKeys = partition.previousOwnKeys.get(previousNode);
 
 			if (previousKeys === undefined) return true;
 
@@ -395,10 +398,10 @@ export function createBoundary(): Boundary {
 
 			for (const partition of partitions.values()) {
 				partition.affected.clear();
-				partition.prevValues.clear();
-				partition.prevHas.clear();
-				partition.prevHasOwn.clear();
-				partition.prevOwnKeys.clear();
+				partition.previousValues.clear();
+				partition.previousHas.clear();
+				partition.previousHasOwn.clear();
+				partition.previousOwnKeys.clear();
 				partition.versionAtRecord.clear();
 			}
 		},

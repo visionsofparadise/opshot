@@ -73,13 +73,25 @@ describe("Boundary wrapper", () => {
 		expect(boundary.readsChanged(state)).toBe(false);
 	});
 
-	it("compares against the value stored at the first read of the window", () => {
+	it("compares against the value stored at read time, not the value live at comparison", () => {
 		const state = createLive({ count: 0 });
 		const boundary = createBoundary();
 		const wrapper = boundary.wrap(state);
 
 		void wrapper.count;
 		wrapper.count = 5;
+		expect(boundary.readsChanged(state)).toBe(true);
+	});
+
+	it("compares against the value stored at the first read of the window, not the last", () => {
+		const state = createLive({ count: 0 });
+		const boundary = createBoundary();
+		const wrapper = boundary.wrap(state);
+
+		void wrapper.count;
+		wrapper.count = 5;
+		void wrapper.count;
+
 		expect(boundary.readsChanged(state)).toBe(true);
 	});
 
