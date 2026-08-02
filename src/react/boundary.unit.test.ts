@@ -73,7 +73,7 @@ describe("Boundary wrapper", () => {
 		expect(boundary.readsChanged(state)).toBe(false);
 	});
 
-	it("anchors baselines before mutation in the same lifecycle", () => {
+	it("compares against the value stored at the first read of the window", () => {
 		const state = createLive({ count: 0 });
 		const boundary = createBoundary();
 		const wrapper = boundary.wrap(state);
@@ -99,7 +99,7 @@ describe("Boundary wrapper", () => {
 		expect(nestedSecond).toBe(nestedFirst);
 	});
 
-	it("evicts changed target wrappers and retains untouched siblings", () => {
+	it("remints a wrapper whose node's version moved and retains untouched siblings", () => {
 		const state = createLive({ left: { value: 1 }, right: { value: 2 } });
 		const boundary = createBoundary();
 		const wrapper = boundary.wrap(state);
@@ -110,7 +110,6 @@ describe("Boundary wrapper", () => {
 		void right.value;
 
 		state.left.value = 9;
-		boundary.evictChangedTargets();
 
 		const next = boundary.wrap(state);
 
@@ -273,26 +272,24 @@ describe("Boundary wrapper", () => {
 		expect(second).toBe(first);
 	});
 
-	it("evicts the root wrapper after a read field mutates", () => {
+	it("remints the root wrapper after a read field mutates", () => {
 		const state = createLive({ count: 0 });
 		const boundary = createBoundary();
 		const first = boundary.wrap(state);
 
 		void first.count;
 		state.count = 1;
-		boundary.evictChangedTargets();
 
 		expect(boundary.wrap(state)).not.toBe(first);
 	});
 
-	it("evicts the root wrapper after an unread field mutates", () => {
+	it("remints the root wrapper after an unread field mutates", () => {
 		const state = createLive({ count: 0, other: 0 });
 		const boundary = createBoundary();
 		const first = boundary.wrap(state);
 
 		void first.count;
 		state.other = 1;
-		boundary.evictChangedTargets();
 
 		expect(boundary.wrap(state)).not.toBe(first);
 	});
@@ -307,7 +304,6 @@ describe("Boundary wrapper", () => {
 		void nested.value;
 
 		state.other = 1;
-		boundary.evictChangedTargets();
 
 		const next = boundary.wrap(state);
 
@@ -315,7 +311,7 @@ describe("Boundary wrapper", () => {
 		expect(next.nested).toBe(nested);
 	});
 
-	it("releases every partition and target on dispose", async () => {
+	it("releases every partition on dispose", async () => {
 		const boundary = createBoundary();
 		const documents = Array.from({ length: 20 }, (_, index) => createLive({ id: index, body: { text: "x" } }));
 		const retained = documents.map((document) => {

@@ -41,10 +41,7 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 
 	useEffect(() => {
 		const onSignal = (): void => {
-			boundary.evictChangedTargets();
-
 			if (boundary.readsChanged(proxy)) bump();
-			else boundary.advanceBaselines();
 		};
 
 		return valtioSubscribe(proxy, onSignal, true);
@@ -52,8 +49,6 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 
 	useEffect(() => {
 		if (getVersion(proxy) === versionAtRender) return;
-
-		boundary.evictChangedTargets();
 
 		if (boundary.readsChanged(proxy)) bump();
 	});

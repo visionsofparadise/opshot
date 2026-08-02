@@ -981,3 +981,208 @@ describe("scope", () => {
 		expect(() => structuredClone(createMutableState({ n: 1 }))).toThrow();
 	});
 });
+
+describe("per-key comparison", () => {
+	const mountReader = <T extends object>(state: T, read: (value: T) => ReactNode) => {
+		let renders = 0;
+
+		const View = scope<{ state: T }>(({ state: scoped }) => {
+			renders += 1;
+
+			return <span data-testid="read">{read(scoped)}</span>;
+		});
+
+		render(<View state={state} />);
+
+		return {
+			renders: () => renders,
+			text: () => screen.getByTestId("read").textContent,
+		};
+	};
+
+	it("leaves an unread key of a read node silent", () => {
+		const state = createMutableState({ box: { n: 1, m: 1 } });
+		const reader = mountReader(state, (value) => value.box.n);
+
+		act(() => {
+			state.box.m = 5;
+		});
+
+		expect(reader.renders()).toBe(1);
+	});
+
+	it("leaves an unread sibling subtree silent", () => {
+		const state = createMutableState({ a: { x: 1 }, b: { y: 1, deep: { z: 1 } } });
+		const reader = mountReader(state, (value) => value.a.x);
+
+		act(() => {
+			state.b.y = 9;
+		});
+		act(() => {
+			state.b.deep.z = 9;
+		});
+
+		expect(reader.renders()).toBe(1);
+	});
+
+	it("keeps a length read silent under element churn and signals on push", () => {
+		const state = createMutableState({ rows: [{ v: 1 }, { v: 2 }] });
+		const reader = mountReader(state, (value) => value.rows.length);
+
+		act(() => {
+			const row = state.rows[0];
+
+			if (row === undefined) throw new Error("missing row");
+
+			row.v = 99;
+		});
+
+		expect(reader.renders()).toBe(1);
+
+		act(() => {
+			state.rows.push({ v: 3 });
+		});
+
+		expect(reader.renders()).toBe(2);
+		expect(reader.text()).toBe("3");
+	});
+
+	it("signals an equal-content replacement under an identity-only read", () => {
+		const state = createMutableState({ box: { n: 1 } });
+		const reader = mountReader(state, (value) => typeof value.box);
+
+		act(() => {
+			state.box = { n: 1 };
+		});
+
+		expect(reader.renders()).toBe(2);
+	});
+
+	it("stays silent on an equal-content replacement where the component read into the object", () => {
+		const state = createMutableState({ box: { n: 1 } });
+		const reader = mountReader(state, (value) => value.box.n);
+
+		act(() => {
+			state.box = { n: 1 };
+		});
+
+		expect(reader.renders()).toBe(1);
+	});
+
+	it("detects a wholesale node replacement through the parent's key", () => {
+		const state = createMutableState<{ box: { n: number; extra?: number } }>({ box: { n: 1 } });
+		const reader = mountReader(state, (value) => value.box.n);
+
+		act(() => {
+			state.box = { n: 99 };
+		});
+
+		expect(reader.renders()).toBe(2);
+		expect(reader.text()).toBe("99");
+
+		act(() => {
+			state.box = { n: 99, extra: 1 };
+		});
+
+		expect(reader.renders()).toBe(2);
+	});
+
+	it("signals an own getter on its dependency and stays silent on an unrelated write", () => {
+		interface Doubler {
+			count: number;
+			other: number;
+			readonly double: number;
+		}
+
+		const state = createMutableState({
+			count: 2,
+			other: 0,
+			get double() {
+				return this.count * 2;
+			},
+		} as Doubler);
+		const reader = mountReader(state, (value) => value.double);
+
+		act(() => {
+			state.other = 1;
+		});
+
+		expect(reader.renders()).toBe(1);
+
+		act(() => {
+			state.count = 5;
+		});
+
+		expect(reader.renders()).toBe(2);
+		expect(reader.text()).toBe("10");
+	});
+
+	it("signals an in-place deep change under an identity-only read", () => {
+		const state = createMutableState({ box: { inner: { deep: 1 } } });
+		const reader = mountReader(state, (value) => typeof value.box);
+
+		act(() => {
+			state.box.inner.deep = 2;
+		});
+
+		expect(reader.renders()).toBe(2);
+	});
+
+	it("leaves an identity-only read silent when a sibling churns", () => {
+		const state = createMutableState({ box: { inner: 1 }, other: { n: 1 } });
+		const reader = mountReader(state, (value) => typeof value.box);
+
+		act(() => {
+			state.other.n = 2;
+		});
+
+		expect(reader.renders()).toBe(1);
+	});
+
+	it("signals an added key through in and Object.keys reads", () => {
+		const state = createMutableState<{ x: number; y?: number }>({ x: 1 });
+		const reader = mountReader(state, (value) => `${"y" in value}:${Object.keys(value).length}`);
+
+		act(() => {
+			state.y = 2;
+		});
+
+		expect(reader.renders()).toBe(2);
+		expect(reader.text()).toBe("true:2");
+	});
+
+	it("signals a delete of a read key", () => {
+		const state = createMutableState<{ n?: number; keep: number }>({ n: 1, keep: 0 });
+		const reader = mountReader(state, (value) => String(value.n));
+
+		act(() => {
+			delete state.n;
+		});
+
+		expect(reader.renders()).toBe(2);
+		expect(reader.text()).toBe("undefined");
+	});
+
+	it("leaves a TrackedMap read key silent when another key churns", () => {
+		const state = createMutableState({
+			map: new TrackedMap<string, number>([
+				["a", 1],
+				["b", 2],
+			]),
+		});
+		const reader = mountReader(state, (value) => String(value.map.get("a")));
+
+		act(() => {
+			state.map.set("b", 99);
+		});
+
+		expect(reader.renders()).toBe(1);
+
+		act(() => {
+			state.map.set("a", 42);
+		});
+
+		expect(reader.renders()).toBe(2);
+		expect(reader.text()).toBe("42");
+	});
+});

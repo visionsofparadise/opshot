@@ -78,10 +78,7 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 				valtioSubscribe(
 					source,
 					() => {
-						boundary.evictChangedTargets();
-
 						if (boundary.readsChanged(source)) bump();
-						else boundary.advanceBaselines();
 					},
 					true,
 				),
@@ -102,8 +99,6 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 				if (source === undefined || captured === undefined) continue;
 
 				if (getVersion(source) !== captured) {
-					boundary.evictChangedTargets();
-
 					if (boundary.readsChanged(source)) shouldBump = true;
 				}
 			}

@@ -47,6 +47,42 @@ describe("valtio assumptions", () => {
 		expect(before.left.value).toBe(1);
 	});
 
+	it("moves a node's version exactly when snapshot mints a fresh object for it", () => {
+		const state = proxy({ left: { value: 1 }, right: { value: 2 } });
+		const left = state.left;
+		const right = state.right;
+
+		const first = snapshot(state);
+		const versions = { root: getVersion(state), left: getVersion(left), right: getVersion(right) };
+
+		expect(snapshot(state)).toBe(first);
+		expect(getVersion(state)).toBe(versions.root);
+
+		state.left.value = 10;
+
+		const second = snapshot(state);
+
+		expect(second).not.toBe(first);
+		expect(second.left).not.toBe(first.left);
+		expect(second.right).toBe(first.right);
+
+		expect(getVersion(state)).not.toBe(versions.root);
+		expect(getVersion(left)).not.toBe(versions.left);
+		expect(getVersion(right)).toBe(versions.right);
+
+		const afterLeft = { root: getVersion(state), left: getVersion(left) };
+
+		state.right.value = 20;
+
+		const third = snapshot(state);
+
+		expect(third.right).not.toBe(second.right);
+		expect(third.left).toBe(second.left);
+
+		expect(getVersion(state)).not.toBe(afterLeft.root);
+		expect(getVersion(left)).toBe(afterLeft.left);
+	});
+
 	it("caches the snapshot until a write, then rebuilds it synchronously", () => {
 		const state = proxy({ count: 1 });
 
