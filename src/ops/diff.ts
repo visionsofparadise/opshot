@@ -1,5 +1,5 @@
 import { isSameIdentity } from "../identity";
-import { cyclicError, isPlainArray, isPlainObject } from "./cloneValue";
+import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignOperation, createDeleteOperation, type Op } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
@@ -33,19 +33,56 @@ const changePair = (path: OperationPath, before: unknown, after: unknown): Op =>
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
 
+const assertAcyclic = (value: unknown, path: OperationPath): void => {
+	if (!isCloneable(value)) return;
+
+	const grey = new WeakSet<object>();
+	const black = new WeakSet<object>();
+
+	const visit = (node: unknown): void => {
+		if (!isCloneable(node)) return;
+
+		if (black.has(node)) return;
+
+		if (grey.has(node)) throw cyclicError(path);
+
+		grey.add(node);
+
+		for (const key of Object.keys(node)) {
+			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
+
+			if (!descriptor || !("value" in descriptor)) continue;
+
+			visit(descriptor.value);
+		}
+
+		grey.delete(node);
+		black.add(node);
+	};
+
+	visit(value);
+};
+
 const pushAddition = (ops: Array<Op>, path: OperationPath, after: unknown): number => {
+	assertAcyclic(after, path);
+
 	ops.push(additionPair(path, after));
 
 	return OPERATION_WEIGHT + weighCarried(after);
 };
 
 const pushRemoval = (ops: Array<Op>, path: OperationPath, before: unknown): number => {
+	assertAcyclic(before, path);
+
 	ops.push(removalPair(path, before));
 
 	return OPERATION_WEIGHT + weighCarried(before);
 };
 
 const pushChange = (ops: Array<Op>, path: OperationPath, before: unknown, after: unknown): number => {
+	assertAcyclic(before, path);
+	assertAcyclic(after, path);
+
 	ops.push(changePair(path, before, after));
 
 	return OPERATION_WEIGHT + weighCarried(before) + weighCarried(after);

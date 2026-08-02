@@ -9,6 +9,7 @@ import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { transact } from "../transact";
 import { applyOps } from "./applyOps";
+import { getCyclicPath } from "./cloneValue";
 import { diffSnapshots } from "./diff";
 import { type Op, type Operation } from "./operation";
 
@@ -573,5 +574,155 @@ describe("diffSnapshots: container collapse", () => {
 		replayDo(state, ops);
 		expect(state.big.length).toBe(5);
 		expect(state.small.flag).toBe(true);
+	});
+});
+
+interface Formation {
+	readonly name: string;
+	readonly path: ReadonlyArray<string>;
+	readonly start: () => { readonly state: object; readonly form: () => void };
+}
+
+const buildAliasedDiamond = (levels: number): object => {
+	let node: object = { leaf: 1 };
+
+	for (let level = 0; level < levels; level++) node = { left: node, right: node };
+
+	return node;
+};
+
+describe("diffSnapshots: cyclic values", () => {
+	const formations: ReadonlyArray<Formation> = [
+		{
+			name: "a child self-cycle",
+			path: ["box", "self"],
+			start: () => {
+				const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
+
+				return {
+					state,
+					form: () => {
+						state.box.self = state.box;
+					},
+				};
+			},
+		},
+		{
+			name: "a root self-cycle",
+			path: ["self"],
+			start: () => {
+				const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
+
+				return {
+					state,
+					form: () => {
+						state.self = state;
+					},
+				};
+			},
+		},
+		{
+			name: "a back-link to the root",
+			path: ["child", "back"],
+			start: () => {
+				const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
+
+				return {
+					state,
+					form: () => {
+						state.child.back = state;
+					},
+				};
+			},
+		},
+		{
+			name: "a wholesale cyclic object",
+			path: ["node"],
+			start: () => {
+				const state = createMutableState<{ n: number; node?: object }>({ n: 1 });
+
+				return {
+					state,
+					form: () => {
+						const node: { m: number; self?: object } = { m: 1 };
+
+						node.self = node;
+						state.node = node;
+					},
+				};
+			},
+		},
+		{
+			name: "a two-node cycle",
+			path: ["a", "peer"],
+			start: () => {
+				const state = createMutableState<{ a: { n: number; peer?: object }; b: { n: number; peer?: object } }>({
+					a: { n: 1 },
+					b: { n: 2 },
+				});
+
+				return {
+					state,
+					form: () => {
+						state.a.peer = state.b;
+						state.b.peer = state.a;
+					},
+				};
+			},
+		},
+	];
+
+	it.each(formations.map((formation) => [formation.name, formation] as const))(
+		"throws at the transact forming %s, naming the path and delivering no op",
+		(_name, formation) => {
+			const { state, form } = formation.start();
+			const heard = record(state);
+			let caught: unknown;
+
+			try {
+				transact(state, form);
+			} catch (error) {
+				caught = error;
+			}
+
+			expect(getCyclicPath(caught)).toEqual(formation.path);
+			expect(heard).toHaveLength(0);
+		},
+	);
+
+	it("routes a bare forming write to the flush with the transact message and delivers no op", async () => {
+		const thrown = new Array<unknown>();
+		const emitOn = (flush: () => void): void => {
+			try {
+				flush();
+			} catch (error) {
+				thrown.push(error);
+			}
+		};
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn });
+		const heard = record(state);
+
+		state.box.self = state.box;
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(thrown).toHaveLength(1);
+		expect(thrown[0]).toBeInstanceOf(Error);
+		expect((thrown[0] as Error).message).toMatch(/bare write created a cyclic value at \/box\/self/);
+		expect((thrown[0] as Error).message).toMatch(/Use transact for catchable cycle errors/);
+		expect(heard).toHaveLength(0);
+	});
+
+	it("diffs a deeply aliased diamond, walking each shared subgraph once", () => {
+		const state = createMutableState<{ n: number; diamond?: object }>({ n: 1 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.diamond = buildAliasedDiamond(64);
+		});
+
+		expect(heard[0]).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ op: "assign", path: ["diamond"] });
 	});
 });
