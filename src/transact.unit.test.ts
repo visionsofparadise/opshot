@@ -280,6 +280,93 @@ describe("transact", () => {
 		expect(heard).toEqual([undefined]);
 	});
 
+	it("never flushes a claimed record bare when a listener transacts it", () => {
+		const transacted = createMutableState({ x: 0 });
+		const claimed = createMutableState({ n: 0 });
+		const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
+
+		subscribe(claimed, (ops, meta) => heard.push({ ops: [...ops], meta }));
+		subscribe(transacted, () => {
+			transact(
+				claimed,
+				() => {
+					claimed.n += 10;
+				},
+				{ tag: "tap" },
+			);
+		});
+
+		transact(
+			transacted,
+			() => {
+				transacted.x = 1;
+				claimed.n = 5;
+			},
+			{ tag: "outer" },
+		);
+
+		expect(heard).toEqual([
+			{
+				ops: [{ do: { op: "assign", path: ["n"], value: 5 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+				meta: { tag: "outer" },
+			},
+			{
+				ops: [{ do: { op: "assign", path: ["n"], value: 15 }, undo: { op: "assign", path: ["n"], value: 5 } }],
+				meta: { tag: "tap" },
+			},
+		]);
+	});
+
+	it("never files a replicator's write as a user edit when a listener transacts the claimed record", () => {
+		const transacted = createMutableState({ x: 0 });
+		const claimed = createMutableState({ n: 0 });
+		const recorded = new Array<Op>();
+
+		subscribe(claimed, (ops, meta) => {
+			if ((meta as { replay?: boolean } | undefined)?.replay === true) return;
+
+			recorded.push(...ops);
+		});
+		subscribe(transacted, () => {
+			transact(claimed, () => {
+				claimed.n += 10;
+			});
+		});
+
+		transact(
+			transacted,
+			() => {
+				transacted.x = 1;
+				claimed.n = 5;
+			},
+			{ replay: true },
+		);
+
+		expect(recorded).toEqual([
+			{ do: { op: "assign", path: ["n"], value: 15 }, undo: { op: "assign", path: ["n"], value: 5 } },
+		]);
+	});
+
+	it("never flushes a claimed record bare when a listener unsubscribes its listener", () => {
+		const transacted = createMutableState({ x: 0 });
+		const claimed = createMutableState({ n: 0 });
+		const heard = new Array<unknown>();
+		const stopClaimed = subscribe(claimed, (_ops, meta) => heard.push(meta));
+
+		subscribe(transacted, () => stopClaimed());
+
+		transact(
+			transacted,
+			() => {
+				transacted.x = 1;
+				claimed.n = 5;
+			},
+			{ tag: "outer" },
+		);
+
+		expect(heard).toEqual([{ tag: "outer" }]);
+	});
+
 	it("reports every covering node exactly once, in no promised order", () => {
 		const state = createMutableState({ a: { deep: { n: 0 } } });
 		const heard = new Array<string>();

@@ -46,7 +46,7 @@ const runDelivery = (pending: PendingDelivery, failures: Array<unknown>): void =
 	}
 };
 
-export const raiseFailures = (failures: ReadonlyArray<unknown>): void => {
+const raiseFailures = (failures: ReadonlyArray<unknown>): void => {
 	if (failures.length === 0) return;
 
 	if (failures.length > 1) throw new AggregateError(failures, "opshot: listeners failed during delivery");
@@ -58,6 +58,36 @@ const queuedDeliveries: Array<PendingDelivery> = [];
 
 let isDelivering = false;
 
+const drainQueuedDeliveries = (failures: Array<unknown>): void => {
+	while (queuedDeliveries.length > 0) {
+		for (const queued of queuedDeliveries.splice(0, queuedDeliveries.length)) runDelivery(queued, failures);
+	}
+};
+
+export const bracketDelivery = (report: (failures: Array<unknown>) => void): void => {
+	const failures: Array<unknown> = [];
+
+	if (isDelivering) {
+		report(failures);
+
+		raiseFailures(failures);
+
+		return;
+	}
+
+	isDelivering = true;
+
+	try {
+		report(failures);
+
+		drainQueuedDeliveries(failures);
+	} finally {
+		isDelivering = false;
+	}
+
+	raiseFailures(failures);
+};
+
 export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Op>, meta: unknown): void => {
 	const pending: PendingDelivery = { target: record.target, deliveries: collectDeliveries(record), ops, meta };
 
@@ -67,19 +97,5 @@ export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Op>, meta: unk
 		return;
 	}
 
-	isDelivering = true;
-
-	try {
-		const failures: Array<unknown> = [];
-
-		runDelivery(pending, failures);
-
-		while (queuedDeliveries.length > 0) {
-			for (const queued of queuedDeliveries.splice(0, queuedDeliveries.length)) runDelivery(queued, failures);
-		}
-
-		raiseFailures(failures);
-	} finally {
-		isDelivering = false;
-	}
+	bracketDelivery((failures) => runDelivery(pending, failures));
 };

@@ -312,6 +312,23 @@ describe("createGroup", () => {
 		expect(heard).toEqual(["cause", "effect"]);
 	});
 
+	it("delivers a frame's later record to a group listener removed while an earlier record delivered", () => {
+		const group = createGroup();
+		const transacted = group.createMutableState({ name: "transacted", n: 0 });
+		const other = group.createMutableState({ name: "other", n: 0 });
+		const heard = new Array<string>();
+		const removeGroup = subscribe(group, (state) => heard.push((state as { name: string }).name));
+
+		subscribe(transacted, () => removeGroup());
+
+		transact(transacted, () => {
+			transacted.n += 1;
+			other.n += 1;
+		});
+
+		expect(heard).toEqual(["transacted", "other"]);
+	});
+
 	it("does not invert the inner tier when an outer-tier listener writes beneath it", () => {
 		const parent = createGroup();
 		const child = createGroup(parent);

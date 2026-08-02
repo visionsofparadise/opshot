@@ -76,6 +76,80 @@ describe("deliver", () => {
 		expect(order).toEqual(["first hears cause", "second hears cause", "hears effect"]);
 	});
 
+	it("orders cause before effect for an observer of two records reported in one frame", () => {
+		const transacted = createMutableState<Counter>({ n: 0 });
+		const cause = createMutableState<Counter>({ n: 0 });
+		const effect = createMutableState<Counter>({ n: 0 });
+		const observed = new Array<string>();
+
+		subscribe(cause, () => observed.push("cause"));
+		subscribe(effect, () => observed.push("effect"));
+		subscribe(transacted, () => {
+			transact(effect, () => {
+				effect.n += 1;
+			});
+		});
+
+		transact(transacted, () => {
+			transacted.n += 1;
+			cause.n += 1;
+		});
+
+		expect(observed).toEqual(["cause", "effect"]);
+	});
+
+	it("runs a second record's listeners when the first record's listener throws, aggregating both failures", () => {
+		const transacted = createMutableState<Counter>({ n: 0 });
+		const other = createMutableState<Counter>({ n: 0 });
+		const heard = new Array<string>();
+		const transactedFailure = new Error("transacted listener failure");
+		const otherFailure = new Error("other listener failure");
+
+		subscribe(transacted, () => {
+			heard.push("transacted");
+
+			throw transactedFailure;
+		});
+		subscribe(other, () => {
+			heard.push("other");
+
+			throw otherFailure;
+		});
+
+		let raised: unknown;
+
+		try {
+			transact(transacted, () => {
+				transacted.n += 1;
+				other.n += 1;
+			});
+		} catch (error) {
+			raised = error;
+		}
+
+		expect([...heard].sort()).toEqual(["other", "transacted"]);
+		expect(raised).toBeInstanceOf(AggregateError);
+		expect((raised as AggregateError).errors).toEqual([transactedFailure, otherFailure]);
+	});
+
+	it("does not deliver a frame's later record to a listener subscribed while an earlier record delivered", () => {
+		const transacted = createMutableState<Counter>({ n: 0 });
+		const other = createMutableState<Counter>({ n: 0 });
+		const heard = new Array<string>();
+
+		subscribe(other, () => heard.push("subscribed before the frame"));
+		subscribe(transacted, () => {
+			subscribe(other, () => heard.push("subscribed mid-frame"));
+		});
+
+		transact(transacted, () => {
+			transacted.n += 1;
+			other.n += 1;
+		});
+
+		expect(heard).toEqual(["subscribed before the frame"]);
+	});
+
 	it("delivers both emissions before the outermost transact returns", () => {
 		const cause = createMutableState<Counter>({ n: 0 });
 		const effect = createMutableState<Counter>({ n: 0 });

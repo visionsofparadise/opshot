@@ -2,7 +2,7 @@ import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getCyclicPath } from "../ops/cloneValue";
 import { diffSnapshots } from "../ops/diff";
 import { formatOperationPath } from "../ops/path";
-import { deliver, raiseFailures } from "./emitterDeliver";
+import { bracketDelivery, deliver } from "./emitterDeliver";
 import {
 	getEmitter,
 	getOrCreateEmitter,
@@ -146,17 +146,15 @@ const reportBareDiff = (record: EmitterRecord): void => {
 };
 
 export const reportFrame = (frame: TransactFrame, meta: unknown): void => {
-	const failures: Array<unknown> = [];
-
-	for (const claim of frame.claimed) {
-		try {
-			reportRecord(claim.record, claim.wasDirty ? undefined : meta);
-		} catch (error) {
-			failures.push(error);
+	bracketDelivery((failures) => {
+		for (const claim of frame.claimed) {
+			try {
+				reportRecord(claim.record, claim.wasDirty ? undefined : meta);
+			} catch (error) {
+				failures.push(error);
+			}
 		}
-	}
-
-	raiseFailures(failures);
+	});
 };
 
 export const releaseFrameToWindows = (frame: TransactFrame): void => {
