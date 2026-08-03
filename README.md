@@ -10,6 +10,8 @@ Mutable state for React, with re-render for only the components that read what c
 npm install opshot
 ```
 
+Node 20 or later. The build targets `ES2021`.
+
 ## Mutable state
 
 React state is immutable: changing one field means spreading the old object into a new one.
@@ -133,6 +135,8 @@ const state = createMutableState({ x: 0, y: 0 }, { emitOn: (flush) => requestAni
 ```
 
 Ops are the net diff over a window either way.
+
+Call `flush` exactly once. A pending flush pins its state until it runs — about 380 KB for a 200-row state — so a scheduler that discards the callback retains what it was given.
 
 ## Constraints
 

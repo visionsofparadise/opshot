@@ -2,8 +2,23 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
-		globals: true,
-		environment: "node",
-		exclude: ["**/node_modules/**", "**/dist/**", "**/scratch/**"],
+		projects: [
+			{
+				test: {
+					name: "unit",
+					globals: true,
+					environment: "node",
+					include: ["src/**/*.unit.test.{ts,tsx}"],
+				},
+			},
+			{
+				test: {
+					name: "integration",
+					globals: true,
+					environment: "node",
+					include: ["src/**/*.integration.test.{ts,tsx}", "tests/**/*.integration.test.{ts,tsx}"],
+				},
+			},
+		],
 	},
 });
