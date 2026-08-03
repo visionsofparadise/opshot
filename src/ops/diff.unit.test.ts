@@ -1,6 +1,6 @@
 import { snapshot } from "valtio/vanilla";
 
-import { createMutableState } from "../createMutableState";
+import { createMutableState, type MutableStateOptions } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { subscribe } from "../subscribe";
 import { addressOf } from "../tracked/address";
@@ -780,6 +780,71 @@ describe("diffSnapshots: cyclic values", () => {
 
 		expect(getCyclicPath(caught)).toEqual(["holder"]);
 		expect(heard).toHaveLength(0);
+	});
+
+	const startRepair = (
+		options?: MutableStateOptions,
+	): { state: { box: { n: number; self?: object } }; repair: () => void } => {
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, options);
+
+		state.box.self = state.box;
+
+		return {
+			state,
+			repair: () => {
+				delete state.box.self;
+			},
+		};
+	};
+
+	it("delivers a removal for the documented repair breaking the cycle by reference", () => {
+		const { state, repair } = startRepair();
+		const heard = record(state);
+
+		transact(state, repair);
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ op: "delete", path: ["box", "self"] });
+		expect(state.box.self).toBeUndefined();
+	});
+
+	it("delivers the same repair on the bare lane, raising nothing at the flush", async () => {
+		const thrown = new Array<unknown>();
+		const emitOn = (flush: () => void): void => {
+			try {
+				flush();
+			} catch (error) {
+				thrown.push(error);
+			}
+		};
+		const { state, repair } = startRepair({ emitOn });
+		const heard = record(state);
+
+		repair();
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(thrown).toHaveLength(0);
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ op: "delete", path: ["box", "self"] });
+	});
+
+	it("carries an undo on the repair that throws when its value is read and when it is applied", () => {
+		const { state, repair } = startRepair();
+		const heard = record(state);
+
+		transact(state, repair);
+
+		const delivered = heard[0] ?? [];
+		const undo = delivered[0]?.undo;
+
+		expect(undo?.op).toBe("assign");
+		expect(() => readValue(undo ?? { op: "delete", path: [] })).toThrow(/cyclic value at \/box\/self/);
+		expect(() => {
+			replayUndo(state, delivered);
+		}).toThrow(/cyclic value at \/box\/self/);
 	});
 
 	it.each(rideAlongBackEdges)(

@@ -74,15 +74,12 @@ const pushAddition = (ops: Array<Op>, path: OperationPath, after: unknown): numb
 };
 
 const pushRemoval = (ops: Array<Op>, path: OperationPath, before: unknown): number => {
-	assertAcyclic(before, path);
-
 	ops.push(removalPair(path, before));
 
 	return OPERATION_WEIGHT + weighCarried(before);
 };
 
 const pushChange = (ops: Array<Op>, path: OperationPath, before: unknown, after: unknown): number => {
-	assertAcyclic(before, path);
 	assertAcyclic(after, path);
 
 	ops.push(changePair(path, before, after));
@@ -105,7 +102,6 @@ const tryCollapse = (
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
 	if (collapsedWeight < atomicWeight) {
-		assertAcyclic(before, path);
 		assertAcyclic(after, path);
 
 		ops.splice(opsStart, ops.length - opsStart, changePair(path, before, after));
