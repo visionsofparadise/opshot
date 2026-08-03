@@ -93,7 +93,7 @@ export class TrackedMap<K, V> {
 	}
 
 	entries(): IterableIterator<[K, V]> {
-		const pairs = iterateSlots<readonly [K, V]>(this, () => this.slots);
+		const pairs = iterateSlots<readonly [K, V]>(() => this.slots);
 
 		return (function* () {
 			for (const pair of pairs) yield [pair[0], pair[1]];
@@ -101,7 +101,7 @@ export class TrackedMap<K, V> {
 	}
 
 	keys(): IterableIterator<K> {
-		const pairs = iterateSlots<readonly [K, V]>(this, () => this.slots);
+		const pairs = iterateSlots<readonly [K, V]>(() => this.slots);
 
 		return (function* () {
 			for (const pair of pairs) yield pair[0];
@@ -109,7 +109,7 @@ export class TrackedMap<K, V> {
 	}
 
 	values(): IterableIterator<V> {
-		const pairs = iterateSlots<readonly [K, V]>(this, () => this.slots);
+		const pairs = iterateSlots<readonly [K, V]>(() => this.slots);
 
 		return (function* () {
 			for (const pair of pairs) yield pair[1];
@@ -117,7 +117,7 @@ export class TrackedMap<K, V> {
 	}
 
 	forEach(callback: (value: V, key: K, map: TrackedMap<K, V>) => void): void {
-		for (const pair of iterateSlots<readonly [K, V]>(this, () => this.slots)) callback(pair[1], pair[0], this);
+		for (const pair of iterateSlots<readonly [K, V]>(() => this.slots)) callback(pair[1], pair[0], this);
 	}
 
 	[Symbol.iterator](): IterableIterator<[K, V]> {

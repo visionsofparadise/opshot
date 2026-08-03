@@ -63,7 +63,7 @@ export class TrackedSet<T> {
 	}
 
 	entries(): IterableIterator<[T, T]> {
-		const members = iterateSlots<readonly [T]>(this, () => this.slots);
+		const members = iterateSlots<readonly [T]>(() => this.slots);
 
 		return (function* () {
 			for (const member of members) yield [member[0], member[0]];
@@ -75,7 +75,7 @@ export class TrackedSet<T> {
 	}
 
 	values(): IterableIterator<T> {
-		const members = iterateSlots<readonly [T]>(this, () => this.slots);
+		const members = iterateSlots<readonly [T]>(() => this.slots);
 
 		return (function* () {
 			for (const member of members) yield member[0];
@@ -83,7 +83,7 @@ export class TrackedSet<T> {
 	}
 
 	forEach(callback: (value: T, key: T, set: TrackedSet<T>) => void): void {
-		for (const member of iterateSlots<readonly [T]>(this, () => this.slots)) callback(member[0], member[0], this);
+		for (const member of iterateSlots<readonly [T]>(() => this.slots)) callback(member[0], member[0], this);
 	}
 
 	[Symbol.iterator](): IterableIterator<T> {

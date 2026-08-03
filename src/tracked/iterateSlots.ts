@@ -1,29 +1,23 @@
-import { beginIteration, endIteration } from "./slotStore";
+import { translateCursor } from "./slotStore";
 
-export function* iterateSlots<T>(owner: object, getSlots: () => ReadonlyArray<T | null>): IterableIterator<T> {
-	beginIteration(owner);
+export function* iterateSlots<T>(getSlots: () => ReadonlyArray<T | null>): IterableIterator<T> {
+	let slots = getSlots();
+	let index = 0;
 
-	try {
-		let slots = getSlots();
-		let index = 0;
+	for (;;) {
+		const current = getSlots();
 
-		for (;;) {
-			const current = getSlots();
-
-			if (current !== slots) {
-				slots = current;
-				index = 0;
-			}
-
-			if (index >= slots.length) return;
-
-			const entry = slots[index];
-
-			index += 1;
-
-			if (entry !== null && entry !== undefined) yield entry;
+		if (current !== slots) {
+			index = translateCursor(slots, index, current);
+			slots = current;
 		}
-	} finally {
-		endIteration(owner);
+
+		if (index >= slots.length) return;
+
+		const entry = slots[index];
+
+		index += 1;
+
+		if (entry !== null && entry !== undefined) yield entry;
 	}
 }
