@@ -842,9 +842,15 @@ describe("diffSnapshots: cyclic values", () => {
 
 		expect(undo?.op).toBe("assign");
 		expect(() => readValue(undo ?? { op: "delete", path: [] })).toThrow(/cyclic value at \/box\/self/);
+
+		const before = heard.length;
+
 		expect(() => {
 			replayUndo(state, delivered);
 		}).toThrow(/cyclic value at \/box\/self/);
+
+		expect(state.box.self).toBe(state.box);
+		expect(heard).toHaveLength(before);
 	});
 
 	it.each(rideAlongBackEdges)(
