@@ -51,6 +51,10 @@ jobs:
            if: steps.check.outputs.skip == 'false'
            run: npm run integration
 
+         - name: Run heavy integration tests
+           if: steps.check.outputs.skip == 'false'
+           run: npm run integration:heavy
+
          - name: Build
            if: steps.check.outputs.skip == 'false'
            run: npm run build

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const react18File = "src/react/renderPhase18.integration.test.tsx";
-const react18Modules = fileURLToPath(new URL("test/react18/node_modules/", import.meta.url));
+const react18Modules = fileURLToPath(new URL("fixtures/react18/node_modules/", import.meta.url));
 
 export default defineConfig({
 	test: {
@@ -22,7 +22,7 @@ export default defineConfig({
 					globals: true,
 					environment: "node",
 					include: ["src/**/*.integration.test.{ts,tsx}", "tests/**/*.integration.test.{ts,tsx}"],
-					exclude: [react18File],
+					exclude: ["**/node_modules/**", react18File],
 				},
 			},
 			{
