@@ -28,14 +28,6 @@ describe("renderPhase", () => {
 		reactSlots.legacy = undefined;
 	});
 
-	it("answers not-rendering until the non-render dispatcher is learned", async () => {
-		reactSlots.modern = { H: mountRender };
-
-		const detector = await loadDetector();
-
-		expect(detector.isRendering()).toBe(false);
-	});
-
 	it("distinguishes both render dispatchers from the learned one by identity", async () => {
 		reactSlots.modern = { H: nonRender };
 
@@ -72,22 +64,6 @@ describe("renderPhase", () => {
 		expect(detector.isRendering()).toBe(false);
 
 		reactSlots.modern.H = mountRender;
-		expect(detector.isRendering()).toBe(true);
-	});
-
-	it("reads React 18's dispatcher slot when React 19's is absent", async () => {
-		reactSlots.legacy = { ReactCurrentDispatcher: { current: nonRender } };
-
-		const detector = await loadDetector();
-
-		detector.learnNonRenderDispatcher();
-
-		expect(detector.isRendering()).toBe(false);
-
-		if (reactSlots.legacy.ReactCurrentDispatcher === undefined) throw new Error("missing dispatcher");
-
-		reactSlots.legacy.ReactCurrentDispatcher.current = updateRender;
-
 		expect(detector.isRendering()).toBe(true);
 	});
 

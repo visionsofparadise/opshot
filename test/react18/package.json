@@ -1,0 +1,10 @@
+{
+	"name": "opshot-react18",
+	"version": "0.0.0",
+	"private": true,
+	"description": "React 18 held as its own package so npm nests it beneath the root React 19, giving the render-phase pins a real React 18 instance to render against",
+	"dependencies": {
+		"react": "18.3.1",
+		"react-dom": "18.3.1"
+	}
+}
