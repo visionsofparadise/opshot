@@ -49,6 +49,8 @@ const assertAcyclic = (value: unknown, path: OperationPath): void => {
 		grey.add(node);
 
 		for (const key of Reflect.ownKeys(node)) {
+			if (key === "__proto__") continue;
+
 			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
 
 			if (!descriptor || !("value" in descriptor)) continue;

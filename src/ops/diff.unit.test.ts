@@ -139,6 +139,16 @@ describe("diffSnapshots: atomic flat paths", () => {
 
 		expect(diffSnapshots({}, hostile).map((op) => op.do.path)).toEqual([["__proto__"]]);
 		expect(Object.prototype).not.toHaveProperty("polluted");
+
+		const nestedHostile = JSON.parse('{"__proto__": {"polluted": true}, "keep": 2}') as object;
+
+		expect(Object.getOwnPropertyNames(nestedHostile)).toEqual(["__proto__", "keep"]);
+
+		const [sanitized] = diffSnapshots({}, { a: nestedHostile });
+
+		if (sanitized === undefined) throw new Error("expected one op");
+
+		expect(Object.getOwnPropertyNames((sanitized.do as { value: object }).value)).toEqual(["keep"]);
 	});
 
 	it("orders sparse growth length before tail additions and preserves holes", () => {

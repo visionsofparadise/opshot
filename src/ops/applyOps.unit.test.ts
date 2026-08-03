@@ -867,18 +867,6 @@ describe("applyOps: resolution is the pollution defence", () => {
 			expect(Object.prototype).not.toHaveProperty("a");
 		};
 
-		expect(
-			Reflect.deleteProperty(
-				Object.defineProperty({}, "__proto__", {
-					value: "poison",
-					writable: false,
-					enumerable: false,
-					configurable: false,
-				}),
-				"__proto__",
-			),
-		).toBe(false);
-
 		roundTrip({ value: "poison", writable: false, enumerable: false, configurable: false });
 		roundTrip({ value: "poison", writable: false, enumerable: false, configurable: true });
 	});
