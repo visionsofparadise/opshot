@@ -651,6 +651,61 @@ describe("boundary: meta-mutation trap gates", () => {
 		expect(Object.hasOwn(second, "injected")).toBe(false);
 	});
 
+	it("throws when a consumer calls Object.preventExtensions, freeze, or seal, leaving no side effect behind", () => {
+		const state = createMutableState<{ count: number; items: Array<number>; added?: number }>({
+			count: 0,
+			items: [1, 2],
+		});
+		const emissions = recordEmissions(state);
+
+		expect(() => Object.preventExtensions(state)).toThrow(
+			"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (a non-extensible target silently drops tracked writes)",
+		);
+		expect(() => Object.freeze(state)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		expect(() => Object.seal(state)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		expect(() => Object.preventExtensions(state.items)).toThrow(
+			"opshot: preventExtensions is not supported on tracked state",
+		);
+		expect(() => Object.freeze(state.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		expect(() => Object.seal(state.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
+
+		expect(Object.isExtensible(state)).toBe(true);
+		expect(Object.isExtensible(state.items)).toBe(true);
+
+		transact(state, () => {
+			state.added = 1;
+			state.items.push(3);
+		});
+
+		expect(state.added).toBe(1);
+		expect(state.items).toEqual([1, 2, 3]);
+		expect(2 in state.items).toBe(true);
+		expect(emissions).toHaveLength(1);
+	});
+
+	it("leaves freezing a snapshot and an op's recorded value untouched", () => {
+		const state = createMutableState<{ document: { title: string } }>({ document: { title: "a" } });
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.document = { title: "b" };
+		});
+
+		const recorded = emissions[0]?.ops[0]?.undo;
+
+		if (recorded?.op !== "assign") throw new Error("missing recorded assign");
+
+		const undoValue = recorded.value;
+
+		expect(() => Object.freeze(undoValue as object)).not.toThrow();
+		expect(Object.isFrozen(undoValue as object)).toBe(true);
+
+		const snap = snapshot(state);
+
+		expect(() => Object.freeze(snap)).not.toThrow();
+		expect(Object.isFrozen(snap)).toBe(true);
+	});
+
 	it("leaves ordinary set, delete, and nested writes through mutate unaffected", () => {
 		interface Nested {
 			count: number;

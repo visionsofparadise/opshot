@@ -830,6 +830,59 @@ describe("applyOps: resolution is the pollution defence", () => {
 		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
 	});
 
+	it("keeps an own __proto__ ride-along out of the record and restores it at its original descriptor", () => {
+		const roundTrip = (rideAlong: PropertyDescriptor): void => {
+			const container = { a: 1 };
+
+			Object.defineProperty(container, "__proto__", rideAlong);
+
+			const state = createMutableState<{ held: { a: number } }>({ held: container });
+			const before = Reflect.getOwnPropertyDescriptor(state.held, "__proto__");
+			const heard = record(state);
+
+			transact(state, () => {
+				state.held = { a: 2 };
+			});
+
+			const ops = heard.flat();
+
+			for (const op of ops) {
+				if (op.undo.op !== "assign") continue;
+
+				expect(Object.getOwnPropertyNames(op.undo.value as object)).not.toContain("__proto__");
+			}
+
+			applyOps(state, ops.map((op) => op.undo).reverse());
+
+			expect(state.held.a).toBe(1);
+			expect(Reflect.getOwnPropertyDescriptor(state.held, "__proto__")).toEqual(before);
+
+			applyOps(
+				state,
+				ops.map((op) => op.do),
+			);
+
+			expect(state.held.a).toBe(2);
+			expect(Reflect.getPrototypeOf(state.held)).toBe(Object.prototype);
+			expect(Object.prototype).not.toHaveProperty("a");
+		};
+
+		expect(
+			Reflect.deleteProperty(
+				Object.defineProperty({}, "__proto__", {
+					value: "poison",
+					writable: false,
+					enumerable: false,
+					configurable: false,
+				}),
+				"__proto__",
+			),
+		).toBe(false);
+
+		roundTrip({ value: "poison", writable: false, enumerable: false, configurable: false });
+		roundTrip({ value: "poison", writable: false, enumerable: false, configurable: true });
+	});
+
 	it("does not re-assign a child that is already the recorded target, and still restores its interior", () => {
 		const state = createMutableState<{ tree: { child?: { n: number; deep?: { m: number } } } }>({
 			tree: { child: { n: 1, deep: { m: 1 } } },

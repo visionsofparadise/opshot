@@ -98,6 +98,8 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 	}
 
 	for (const key of Reflect.ownKeys(attached)) {
+		if (key === "__proto__") continue;
+
 		if (Object.hasOwn(recorded, key)) continue;
 
 		const descriptor = Reflect.getOwnPropertyDescriptor(attached, key);

@@ -23,6 +23,8 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 	snapCache.set(target, [version, snap]);
 
 	for (const key of Reflect.ownKeys(target)) {
+		if (key === "__proto__") continue;
+
 		if (Object.getOwnPropertyDescriptor(snap, key)) continue;
 
 		const descriptor = Reflect.getOwnPropertyDescriptor(target, key);

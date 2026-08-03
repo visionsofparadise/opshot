@@ -980,6 +980,52 @@ describe("scope", () => {
 		expect(() => structuredClone(handle)).toThrow();
 		expect(() => structuredClone(createMutableState({ n: 1 }))).toThrow();
 	});
+
+	it("rejects preventExtensions, freeze, and seal through a handle while writes through it keep working", () => {
+		interface Shape {
+			count: number;
+			items: Array<number>;
+		}
+
+		let handle: Shape | undefined;
+
+		const Child = scope<{ state: Shape }>(({ state }) => {
+			handle = state;
+
+			return <span data-testid="count">{state.count}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Shape>(() => ({ count: 0, items: [1, 2] }));
+
+			return <Child state={state} />;
+		};
+
+		render(<Parent />);
+
+		const wrapped = handle;
+
+		if (wrapped === undefined) throw new Error("missing handle");
+
+		expect(() => Object.preventExtensions(wrapped)).toThrow(
+			"opshot: preventExtensions is not supported on tracked state",
+		);
+		expect(() => Object.freeze(wrapped)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		expect(() => Object.seal(wrapped)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		expect(() => Object.freeze(wrapped.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		expect(() => Object.seal(wrapped.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
+
+		expect(Object.isExtensible(wrapped)).toBe(true);
+		expect(Object.isExtensible(wrapped.items)).toBe(true);
+
+		act(() => {
+			wrapped.count = 1;
+			wrapped.items.push(3);
+		});
+
+		expect(screen.getByTestId("count").textContent).toBe("1");
+		expect([...wrapped.items]).toEqual([1, 2, 3]);
+	});
 });
 
 describe("per-key comparison", () => {

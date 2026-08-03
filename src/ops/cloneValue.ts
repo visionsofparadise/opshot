@@ -46,6 +46,8 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 	Reflect.setPrototypeOf(clone, Reflect.getPrototypeOf(value));
 
 	for (const key of Reflect.ownKeys(value)) {
+		if (key === "__proto__") continue;
+
 		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
 		if (!descriptor) continue;

@@ -159,6 +159,11 @@ export function installBoundary(): void {
 				setPrototypeOf() {
 					throw new Error("opshot: setPrototypeOf is not supported on tracked state");
 				},
+				preventExtensions() {
+					throw new Error(
+						"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (a non-extensible target silently drops tracked writes)",
+					);
+				},
 			};
 		},
 	);
