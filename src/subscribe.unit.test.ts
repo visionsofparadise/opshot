@@ -3,7 +3,7 @@ import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { applyOperations } from "./ops/applyOperations";
 import { type Operation } from "./ops/operation";
-import { subscribe, type Context } from "./subscribe";
+import { subscribe, type EmissionContext } from "./subscribe";
 import { transact } from "./transact";
 
 describe("subscribe", () => {
@@ -143,7 +143,7 @@ describe("subscribe", () => {
 		const a = createChannel<{ tag: string }>({ tag: "a" });
 		const b = createChannel<{ tag: string }>({ tag: "b" });
 		const heard = new Array<string>();
-		const listener = (_ops: ReadonlyArray<Operation>, context: Context<{ tag: string }>): void => {
+		const listener = (_ops: ReadonlyArray<Operation>, context: EmissionContext<{ tag: string }>): void => {
 			heard.push(context.isTransaction ? context.meta.tag : "foreign");
 		};
 
@@ -271,7 +271,7 @@ describe("subscribe", () => {
 		const group = createGroup();
 		const state = group.createMutableState({ a: { n: 0 } });
 		const plainHeard = new Array<unknown>();
-		const channelHeard = new Array<Context<{ replay: boolean }>>();
+		const channelHeard = new Array<EmissionContext<{ replay: boolean }>>();
 
 		subscribe(group, (_state, _ops, meta) => plainHeard.push(meta));
 		channel.subscribe(group, (_state, _ops, context) => channelHeard.push(context));

@@ -8,7 +8,7 @@ import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { applyOperations } from "./applyOperations";
-import { diffSnapshots } from "./diff";
+import { diffObjects } from "./diff";
 import { createAssignMutation, createDeleteMutation, type Operation, type Mutation } from "./operation";
 
 const record = <T extends object>(state: T): Array<Array<Operation>> => {
@@ -64,7 +64,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 	});
 
 	it("undoes a diff-produced assignment of undefined onto an absent key back to absence", () => {
-		const ops = diffSnapshots({} as { value?: number }, { value: undefined });
+		const ops = diffObjects({} as { value?: number }, { value: undefined });
 		const state = createMutableState<{ value?: number }>({});
 
 		applyOperations(
@@ -391,7 +391,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 	it("applies public diff halves exactly", () => {
 		const state = createMutableState({ count: 0 });
-		const ops = diffSnapshots({ count: 0 }, { count: 2 });
+		const ops = diffObjects({ count: 0 }, { count: 2 });
 
 		applyOperations(
 			state,
@@ -812,9 +812,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		expect({}).not.toHaveProperty("x");
 	});
 
-	it("refuses a diffSnapshots-minted __proto__ op through the inherited-accessor guard", () => {
+	it("refuses a diffObjects-minted __proto__ op through the inherited-accessor guard", () => {
 		const hostile = JSON.parse('{"__proto__": {"polluted": "PWNED"}}') as object;
-		const ops = diffSnapshots({}, hostile);
+		const ops = diffObjects({}, hostile);
 
 		expect(ops.map((op) => op.do.path)).toEqual([["__proto__"]]);
 

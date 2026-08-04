@@ -7,7 +7,7 @@ import type { GroupListener, StateListener } from "./emit/emitterRegistry";
  *
  * @typeParam M - Meta type for this channel.
  */
-export type Context<M> =
+export type EmissionContext<M> =
 	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
 
 /**
@@ -75,7 +75,7 @@ export function toChannelContext<M extends object>(
 	channelId: object,
 	defaults: M | undefined,
 	meta: unknown,
-): Context<M> {
+): EmissionContext<M> {
 	if (isOwnChannelStamp(meta, channelId)) {
 		return { isTransaction: true, meta: { ...defaults, ...meta.meta } as M };
 	}

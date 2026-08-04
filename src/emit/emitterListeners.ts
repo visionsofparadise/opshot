@@ -1,5 +1,5 @@
 import { snapshot } from "valtio/vanilla";
-import { armWatchdog, disarmWatchdog, settlePendingBare } from "./emitterBare";
+import { armEmitter, disarmEmitter, settlePendingBare } from "./emitterBare";
 import {
 	deleteEmitter,
 	getOrCreateEmitter,
@@ -37,8 +37,8 @@ export function addStateListener(
 	const writeProxy = resolveWriteProxy(state);
 	const record = getOrCreateEmitter(writeProxy);
 
-	if (record.disarm === undefined && record.groupChain === undefined) {
-		armWatchdog(record);
+	if (record.disarmEmission === undefined && record.groupChain === undefined) {
+		armEmitter(record);
 	}
 
 	if (!hasListeners(record)) {
@@ -73,7 +73,7 @@ export function addStateListener(
 		if (channels.size === 0) held.record.listeners.delete(held.listener);
 
 		if (held.record.groupChain === undefined && held.record.listeners.size === 0) {
-			disarmWatchdog(held.record);
+			disarmEmitter(held.record);
 			deleteEmitter(held.writeProxy);
 		}
 

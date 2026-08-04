@@ -1,7 +1,7 @@
 import { createGroup } from "../createGroup";
 import { getGroupChain } from "../createGroup";
 import { createMutableState } from "../createMutableState";
-import { diffSnapshots } from "../ops/diff";
+import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
@@ -39,15 +39,15 @@ describe("emitterBare", () => {
 		const state = createMutableState({ count: 0 });
 		const record = mintGroupedEmitter(state, chain);
 
-		expect(record.disarm).toBeTypeOf("function");
+		expect(record.disarmEmission).toBeTypeOf("function");
 
-		vi.mocked(diffSnapshots).mockClear();
+		vi.mocked(diffObjects).mockClear();
 
 		state.count = 1;
 
 		await Promise.resolve();
 
-		expect(diffSnapshots).not.toHaveBeenCalled();
+		expect(diffObjects).not.toHaveBeenCalled();
 		expect(state.count).toBe(1);
 
 		const heard = new Array<ReadonlyArray<Operation>>();
@@ -69,11 +69,11 @@ describe("emitterBare", () => {
 		const state = createMutableState({ count: 0 });
 		const record = getOrCreateEmitter(state);
 
-		vi.mocked(diffSnapshots).mockClear();
+		vi.mocked(diffObjects).mockClear();
 
 		emitBareFlush(record.writeProxy);
 
-		expect(diffSnapshots).not.toHaveBeenCalled();
+		expect(diffObjects).not.toHaveBeenCalled();
 	});
 
 	it("augments a bare-flush cycle error naming transact as the catchable lane", async () => {

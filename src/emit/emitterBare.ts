@@ -1,6 +1,6 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getCyclicPath } from "../ops/cloneValue";
-import { diffSnapshots } from "../ops/diff";
+import { diffObjects } from "../ops/diff";
 import { formatOperationPath } from "../ops/path";
 import { bracketDelivery, deliver } from "./emitterDeliver";
 import {
@@ -87,11 +87,11 @@ export const closeFrame = (frame: TransactFrame): void => {
 	for (const claim of frame.claimed) claim.record.claimedBy = undefined;
 };
 
-export const armWatchdog = (record: EmitterRecord): void => {
-	if (record.disarm !== undefined) return;
+export const armEmitter = (record: EmitterRecord): void => {
+	if (record.disarmEmission !== undefined) return;
 
 	record.lastReported = snapshot(record.writeProxy);
-	record.disarm = valtioSubscribe(
+	record.disarmEmission = valtioSubscribe(
 		record.writeProxy,
 		() => {
 			const wasDirty = record.hasUnreported;
@@ -112,9 +112,9 @@ export const armWatchdog = (record: EmitterRecord): void => {
 	);
 };
 
-export const disarmWatchdog = (record: EmitterRecord): void => {
-	record.disarm?.();
-	record.disarm = undefined;
+export const disarmEmitter = (record: EmitterRecord): void => {
+	record.disarmEmission?.();
+	record.disarmEmission = undefined;
 };
 
 const reportRecord = (record: EmitterRecord, meta: unknown): void => {
@@ -130,7 +130,7 @@ const reportRecord = (record: EmitterRecord, meta: unknown): void => {
 
 	if (!hasListeners(record)) return;
 
-	const ops = diffSnapshots(requireObjectSnapshot(previous), requireObjectSnapshot(current));
+	const ops = diffObjects(requireObjectSnapshot(previous), requireObjectSnapshot(current));
 
 	if (ops.length === 0) return;
 
@@ -176,7 +176,7 @@ export function emitBareFlush(state: object): void {
 export function mintGroupedEmitter(state: object, groupChain: ReadonlyArray<GroupListeners>): EmitterRecord {
 	const record = getOrCreateEmitter(state, groupChain);
 
-	armWatchdog(record);
+	armEmitter(record);
 
 	return record;
 }

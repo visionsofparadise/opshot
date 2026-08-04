@@ -10,7 +10,7 @@ import { TrackedSet } from "../tracked/trackedSet";
 import { transact } from "../transact";
 import { applyOperations } from "./applyOperations";
 import { getCyclicPath } from "./cloneValue";
-import { diffSnapshots } from "./diff";
+import { diffObjects } from "./diff";
 import { type Operation, type Mutation } from "./operation";
 
 const readValue = (operation: Mutation): unknown => ("value" in operation ? operation.value : undefined);
@@ -34,9 +34,9 @@ const replayDo = <T extends object>(state: T, ops: Array<Operation>): void =>
 		ops.map((pair) => pair.do),
 	);
 
-describe("diffSnapshots: atomic flat paths", () => {
+describe("diffObjects: atomic flat paths", () => {
 	it("emits addition, change, and removal pairs at frozen array paths", () => {
-		const ops = diffSnapshots({ kept: 1, changed: 2, removed: 3 }, { kept: 1, changed: 4, added: 5 });
+		const ops = diffObjects({ kept: 1, changed: 2, removed: 3 }, { kept: 1, changed: 4, added: 5 });
 
 		expect(ops).toEqual([
 			{ do: { verb: "assign", path: ["changed"], value: 4 }, undo: { verb: "assign", path: ["changed"], value: 2 } },
@@ -47,7 +47,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 	});
 
 	it("carries added-versus-changed on the undo half, both halves assigning", () => {
-		const ops = diffSnapshots({ changed: 1 }, { changed: 2, added: 3 });
+		const ops = diffObjects({ changed: 1 }, { changed: 2, added: 3 });
 		const change = ops.find((pair) => pair.do.path[0] === "changed");
 		const addition = ops.find((pair) => pair.do.path[0] === "added");
 
@@ -60,7 +60,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 	});
 
 	it("undoes an assignment of undefined onto an absent key with a delete, not a stored undefined", () => {
-		const ops = diffSnapshots({}, { value: undefined } as { value?: number });
+		const ops = diffObjects({}, { value: undefined } as { value?: number });
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do.verb).toBe("assign");
@@ -77,15 +77,15 @@ describe("diffSnapshots: atomic flat paths", () => {
 			state.replaced = { count: 2 };
 		});
 
-		const ops = diffSnapshots(before, snapshot(state));
+		const ops = diffObjects(before, snapshot(state));
 
 		expect(ops.map((pair) => pair.do.path)).toEqual([["retained", "count"], ["replaced"]]);
 		expect(readValue(ops[1]?.do ?? { verb: "delete", path: [] })).toEqual({ count: 2 });
 	});
 
 	it("compares leaves with Object.is so NaN equals NaN and 0 differs from -0", () => {
-		expect(diffSnapshots({ n: Number.NaN }, { n: Number.NaN })).toEqual([]);
-		expect(diffSnapshots({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([
+		expect(diffObjects({ n: Number.NaN }, { n: Number.NaN })).toEqual([]);
+		expect(diffObjects({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([
 			{ verb: "assign", path: ["z"], value: -0 },
 		]);
 	});
@@ -105,24 +105,24 @@ describe("diffSnapshots: atomic flat paths", () => {
 	});
 
 	it("rejects primitive, unsupported, and incompatible roots", () => {
-		expect(() => diffSnapshots(1 as unknown as object, 2 as unknown as object)).toThrow(
+		expect(() => diffObjects(1 as unknown as object, 2 as unknown as object)).toThrow(
 			"compatible supported object roots",
 		);
-		expect(() => diffSnapshots({}, [])).toThrow("compatible supported object roots");
-		expect(() => diffSnapshots(new Map(), new Map())).toThrow("compatible supported object roots");
+		expect(() => diffObjects({}, [])).toThrow("compatible supported object roots");
+		expect(() => diffObjects(new Map(), new Map())).toThrow("compatible supported object roots");
 	});
 
 	it("accepts plain-data facades as object-container roots", () => {
 		const before = new TrackedMap([["a", 1]]);
 		const after = new TrackedMap([["a", 2]]);
 
-		expect(() => diffSnapshots(before, after)).not.toThrow();
+		expect(() => diffObjects(before, after)).not.toThrow();
 	});
 
 	it("emits constructor and prototype as ordinary data rather than rejecting them", () => {
 		const before = { h: { constructor: { note: 1 } } };
 		const after = { h: { constructor: { note: 1, prototype: { x: 1 } } } };
-		const ops = diffSnapshots(before, after);
+		const ops = diffObjects(before, after);
 
 		expect(ops.map((op) => op.do.path)).toEqual([["h"]]);
 
@@ -137,14 +137,14 @@ describe("diffSnapshots: atomic flat paths", () => {
 
 		const hostile = JSON.parse('{"__proto__": {"polluted": true}}') as object;
 
-		expect(diffSnapshots({}, hostile).map((op) => op.do.path)).toEqual([["__proto__"]]);
+		expect(diffObjects({}, hostile).map((op) => op.do.path)).toEqual([["__proto__"]]);
 		expect(Object.prototype).not.toHaveProperty("polluted");
 
 		const nestedHostile = JSON.parse('{"__proto__": {"polluted": true}, "keep": 2}') as object;
 
 		expect(Object.getOwnPropertyNames(nestedHostile)).toEqual(["__proto__", "keep"]);
 
-		const [sanitized] = diffSnapshots({}, { a: nestedHostile });
+		const [sanitized] = diffObjects({}, { a: nestedHostile });
 
 		if (sanitized === undefined) throw new Error("expected one op");
 
@@ -160,7 +160,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 		after.length = 4;
 		after[3] = undefined;
 
-		const ops = diffSnapshots(before, after);
+		const ops = diffObjects(before, after);
 
 		expect(ops.map((pair) => pair.do)).toEqual([
 			{ verb: "assign", path: ["length"], value: 4 },
@@ -175,7 +175,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 	it("orders truncated removals before shrink and reverse undo expands first", () => {
 		const before = [1, 2, 3];
 		const after = [1];
-		const ops = diffSnapshots(before, after);
+		const ops = diffObjects(before, after);
 
 		expect(ops.map((pair) => pair.do)).toEqual([
 			{ verb: "delete", path: [1] },
@@ -193,8 +193,8 @@ describe("diffSnapshots: atomic flat paths", () => {
 		const hole = new Array<unknown>(1);
 		const stored = [undefined];
 
-		expect(diffSnapshots(hole, stored)[0]?.do).toEqual({ verb: "assign", path: [0], value: undefined });
-		expect(diffSnapshots(stored, hole)[0]?.do).toEqual({ verb: "delete", path: [0] });
+		expect(diffObjects(hole, stored)[0]?.do).toEqual({ verb: "assign", path: [0], value: undefined });
+		expect(diffObjects(stored, hole)[0]?.do).toEqual({ verb: "delete", path: [0] });
 	});
 
 	it("emits enumerable array non-index string properties as ordinary paths", () => {
@@ -204,7 +204,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 		Object.defineProperty(before, "label", { value: "a", enumerable: true });
 		Object.defineProperty(after, "label", { value: "b", enumerable: true });
 
-		expect(diffSnapshots(before, after)[0]?.do).toEqual({ verb: "assign", path: ["label"], value: "b" });
+		expect(diffObjects(before, after)[0]?.do).toEqual({ verb: "assign", path: ["label"], value: "b" });
 	});
 
 	it("emits stable Map key and value interiors through slots", () => {
@@ -365,7 +365,7 @@ describe("diffSnapshots: atomic flat paths", () => {
 	});
 });
 
-describe("diffSnapshots: container collapse", () => {
+describe("diffObjects: container collapse", () => {
 	it("mass shrink emits one assign at the array path and round-trips", () => {
 		const state = createMutableState({ list: Array.from({ length: 2000 }, (_, index) => index) });
 		const heard = record(state);
@@ -510,13 +510,13 @@ describe("diffSnapshots: container collapse", () => {
 			after[`k${index}`] = index + 1;
 		}
 
-		const ops = diffSnapshots(before, after);
+		const ops = diffObjects(before, after);
 
 		expect(ops.length).toBe(50);
 		expect(ops.every((pair) => pair.do.verb === "assign" && pair.do.path.length === 1)).toBe(true);
 	});
 
-	it("watchdog mass edit reaches the stream as one side-effect container assign", async () => {
+	it("bare mass edit reaches the stream as one side-effect container assign", async () => {
 		const state = createMutableState({ list: Array.from({ length: 200 }, (_, index) => index) });
 		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
@@ -624,7 +624,7 @@ const buildAliasedDiamond = (levels: number): object => {
 	return node;
 };
 
-describe("diffSnapshots: cyclic values", () => {
+describe("diffObjects: cyclic values", () => {
 	const formations: ReadonlyArray<Formation> = [
 		{
 			name: "a child self-cycle",

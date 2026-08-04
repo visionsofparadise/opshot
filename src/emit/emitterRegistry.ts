@@ -1,5 +1,5 @@
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
-import { getSettings, type EmitOn } from "../settings";
+import { getOptions, type EmissionScheduler } from "../settings";
 import { resolveWriteProxy } from "./resolveWriteProxy";
 import type { Operation } from "../ops/operation";
 
@@ -30,10 +30,10 @@ export interface EmitterRecord {
 	listeners: StateListeners;
 	groupChain?: ReadonlyArray<GroupListeners>;
 	lastReported: object;
-	disarm?: () => void;
+	disarmEmission?: () => void;
 	isMutating: boolean;
 	readonly writeProxy: object;
-	emitOn?: EmitOn;
+	emitOn?: EmissionScheduler;
 	pending: boolean;
 	hasUnreported: boolean;
 	claimedBy: object | undefined;
@@ -57,7 +57,7 @@ export function getOrCreateEmitter(state: object, groupChain?: ReadonlyArray<Gro
 	if (existing !== undefined) return existing;
 
 	const target = proxyStateMap.get(resolved)?.[0] ?? resolved;
-	const emitOn = getSettings(target)?.emitOn;
+	const emitOn = getOptions(target)?.emitOn;
 
 	const record: EmitterRecord = {
 		listeners: new Map(),

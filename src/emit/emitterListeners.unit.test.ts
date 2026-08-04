@@ -1,6 +1,6 @@
 import { createGroup } from "../createGroup";
 import { createMutableState } from "../createMutableState";
-import { diffSnapshots } from "../ops/diff";
+import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
@@ -14,14 +14,14 @@ describe("emitterListeners", () => {
 	it("stays silent with no subscriber: no record, no diff", () => {
 		const state = createMutableState({ count: 0 });
 
-		vi.mocked(diffSnapshots).mockClear();
+		vi.mocked(diffObjects).mockClear();
 
 		transact(state, () => {
 			state.count = 1;
 		});
 
 		expect(getEmitter(state)).toBeUndefined();
-		expect(diffSnapshots).not.toHaveBeenCalled();
+		expect(diffObjects).not.toHaveBeenCalled();
 		expect(state.count).toBe(1);
 	});
 

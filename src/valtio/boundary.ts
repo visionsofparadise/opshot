@@ -2,7 +2,7 @@ import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
 import { peelReadProxy } from "../react/peelReadProxy";
-import { getSettings, inheritSettings } from "../settings";
+import { getOptions, inheritOptions } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
 import { admissionLane, classifyValue, type AdmissionLane } from "./classify";
@@ -118,7 +118,7 @@ export function installBoundary(): void {
 					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 
 					const location = typeof prop === "string" ? [prop] : [];
-					const strict = getSettings(target)?.strict !== false;
+					const strict = getOptions(target)?.strict !== false;
 					const certifyAssigned =
 						strict && typeof resolved === "object" && resolved !== null
 							? admissionLane(resolved) === "track"
@@ -129,10 +129,10 @@ export function installBoundary(): void {
 					if (typeof resolved === "object" && resolved !== null) {
 						if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
-						inheritSettings(target, resolved);
+						inheritOptions(target, resolved);
 
 						if (
-							getSettings(target)?.strict === false &&
+							getOptions(target)?.strict === false &&
 							!proxyStateMap.has(resolved) &&
 							admissionLane(resolved) === "reject"
 						)

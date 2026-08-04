@@ -4,7 +4,7 @@ import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { resolveIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
-import { diffSnapshots } from "../ops/diff";
+import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { addressOf } from "./address";
 
@@ -84,7 +84,7 @@ describe("addressOf", () => {
 		const snapB = snapshot(proxied) as { item: { label: string }; sibling: number };
 		const addressSnapB = addressOf(snapB.item);
 
-		const ops = diffSnapshots(snapA, snapB);
+		const ops = diffObjects(snapA, snapB);
 
 		undo(state, ops);
 

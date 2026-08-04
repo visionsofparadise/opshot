@@ -12,7 +12,7 @@ import { unstable_getInternalStates } from "valtio/vanilla";
  * @param flush - Delivers pending ops.
  * @returns Nothing.
  */
-export type EmitOn = (flush: () => void) => void;
+export type EmissionScheduler = (flush: () => void) => void;
 
 /**
  * State creation options.
@@ -20,12 +20,12 @@ export type EmitOn = (flush: () => void) => void;
  * @example
  * createMutableState({ x: 0 }, { emitOn: (flush) => requestAnimationFrame(flush), strict: false })
  */
-export interface StateSettings {
+export interface MutableNodeOptions {
 	/**
 	 * When bare writes notify listeners. Defaults to a microtask.
 	 * A `transact` delivers synchronously regardless.
 	 */
-	readonly emitOn?: EmitOn;
+	readonly emitOn?: EmissionScheduler;
 
 	/**
 	 * When false, tracks values that would otherwise be rejected. Defaults to true.
@@ -33,33 +33,33 @@ export interface StateSettings {
 	readonly strict?: boolean;
 }
 
-const settingsByTarget = new WeakMap<object, StateSettings>();
+const optionsByTarget = new WeakMap<object, MutableNodeOptions>();
 
 const { proxyStateMap } = unstable_getInternalStates();
 
-export function stampSettings(target: object, settings: StateSettings | undefined): void {
-	if (settings === undefined) return;
+export function stampOptions(target: object, options: MutableNodeOptions | undefined): void {
+	if (options === undefined) return;
 
-	const { emitOn, strict } = settings;
+	const { emitOn, strict } = options;
 
 	if (emitOn === undefined && strict === undefined) return;
 
-	const stamped: StateSettings =
+	const stamped: MutableNodeOptions =
 		emitOn === undefined ? { strict } : strict === undefined ? { emitOn } : { emitOn, strict };
 
-	settingsByTarget.set(target, stamped);
+	optionsByTarget.set(target, stamped);
 }
 
-export function getSettings(target: object): StateSettings | undefined {
-	return settingsByTarget.get(target);
+export function getOptions(target: object): MutableNodeOptions | undefined {
+	return optionsByTarget.get(target);
 }
 
-export function inheritSettings(parentTarget: object, childTarget: object): void {
-	const parent = settingsByTarget.get(parentTarget);
+export function inheritOptions(parentTarget: object, childTarget: object): void {
+	const parent = optionsByTarget.get(parentTarget);
 
 	if (parent === undefined) return;
 
 	if (proxyStateMap.has(childTarget)) return;
 
-	settingsByTarget.set(childTarget, parent);
+	optionsByTarget.set(childTarget, parent);
 }

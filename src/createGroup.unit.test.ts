@@ -2,7 +2,7 @@ import { createGroup } from "./createGroup";
 import { createChannel } from "./createChannel";
 import { createMutableState } from "./createMutableState";
 import { isSameIdentity } from "./identity";
-import { diffSnapshots } from "./ops/diff";
+import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
@@ -130,13 +130,13 @@ describe("createGroup", () => {
 		const first = group.createMutableState<Counter>({ count: 0 });
 		const second = group.createMutableState<Counter>({ count: 0 });
 
-		vi.mocked(diffSnapshots).mockClear();
+		vi.mocked(diffObjects).mockClear();
 
 		transact(first, () => {
 			first.count = 1;
 		});
 
-		expect(diffSnapshots).not.toHaveBeenCalled();
+		expect(diffObjects).not.toHaveBeenCalled();
 
 		const emissions = new Array<Array<Operation>>();
 		const remove = subscribe(group, (_state, ops) => {
@@ -150,7 +150,7 @@ describe("createGroup", () => {
 			second.count = 5;
 		});
 
-		expect(diffSnapshots).toHaveBeenCalledTimes(2);
+		expect(diffObjects).toHaveBeenCalledTimes(2);
 		expect(emissions).toHaveLength(2);
 
 		remove();
@@ -159,7 +159,7 @@ describe("createGroup", () => {
 			first.count = 3;
 		});
 
-		expect(diffSnapshots).toHaveBeenCalledTimes(2);
+		expect(diffObjects).toHaveBeenCalledTimes(2);
 		expect(emissions).toHaveLength(2);
 		expect(first.count).toBe(3);
 	});

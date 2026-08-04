@@ -9,10 +9,10 @@ type Ancestors = Map<object, Set<object>>;
 
 const UNCAPPED_WEIGHT = Number.MAX_SAFE_INTEGER;
 
-class IncompatibleSnapshotRootsError extends Error {
+class IncompatibleObjectRootsError extends Error {
 	constructor() {
-		super("opshot: diffSnapshots requires compatible supported object roots");
-		this.name = "IncompatibleSnapshotRootsError";
+		super("opshot: diffObjects requires compatible supported object roots");
+		this.name = "IncompatibleObjectRootsError";
 	}
 }
 
@@ -301,17 +301,18 @@ const getRootKind = (value: object): RootKind | undefined => {
 };
 
 /**
- * Diffs two plain objects into ops.
+ * Produces invertible assign/delete pairs for the structural differences between two plain objects or arrays.
+ * Neither argument need be a valtio snapshot.
  *
  * @param before - Earlier value.
  * @param after - Later value.
  * @returns Ops from before to after.
  */
-export function diffSnapshots(before: object, after: object): Array<Operation> {
+export function diffObjects(before: object, after: object): Array<Operation> {
 	const beforeKind = getRootKind(before);
 	const afterKind = getRootKind(after);
 
-	if (beforeKind === undefined || beforeKind !== afterKind) throw new IncompatibleSnapshotRootsError();
+	if (beforeKind === undefined || beforeKind !== afterKind) throw new IncompatibleObjectRootsError();
 
 	const ops = new Array<Operation>();
 

@@ -1,6 +1,6 @@
 import { createMutableState } from "./createMutableState";
 import type { GroupListeners } from "./emit/emitterRegistry";
-import type { StateSettings } from "./settings";
+import type { MutableNodeOptions } from "./settings";
 
 /**
  * Creates states and receives their changes on one stream, including from nested groups.
@@ -20,7 +20,7 @@ export interface Group {
 	 * @param options - Creation options.
 	 * @returns The state.
 	 */
-	createMutableState<T extends object>(properties: T, options?: StateSettings): T;
+	createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): T;
 }
 
 const groupListenersByGroup = new WeakMap<Group, GroupListeners>();
@@ -59,7 +59,7 @@ export function createGroup(parent?: Group): Group {
 
 	const listeners: GroupListeners = new Map();
 	const group: Group = {
-		createMutableState<T extends object>(properties: T, options?: StateSettings): T {
+		createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): T {
 			return createMutableState(properties, { ...options, group });
 		},
 	};

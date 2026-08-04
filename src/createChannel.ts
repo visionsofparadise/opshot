@@ -1,7 +1,7 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
 import { applyOperations as standaloneApplyOperations } from "./ops/applyOperations";
-import { stampChannelMeta, toChannelContext, type Context } from "./subscribe";
+import { stampChannelMeta, toChannelContext, type EmissionContext } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
 import type { Operation, Mutation } from "./ops/operation";
 
@@ -31,7 +31,7 @@ export interface Channel<M extends object> {
 	 */
 	subscribe(
 		group: Group,
-		listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void,
+		listener: (state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void,
 	): () => void;
 
 	/**
@@ -41,7 +41,7 @@ export interface Channel<M extends object> {
 	 * @param listener - Called on each change.
 	 * @returns Unsubscribe function.
 	 */
-	subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: Context<M>) => void): () => void;
+	subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void): () => void;
 
 	/**
 	 * Applies operations with this channel's meta.
@@ -70,23 +70,23 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 
 	function subscribe(
 		group: Group,
-		listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void,
+		listener: (state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void,
 	): () => void;
 
 	function subscribe(
 		state: object,
-		listener: (ops: ReadonlyArray<Operation>, context: Context<M>) => void,
+		listener: (ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void,
 	): () => void;
 
 	function subscribe(
 		target: object | Group,
 		listener:
-			| ((ops: ReadonlyArray<Operation>, context: Context<M>) => void)
-			| ((state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void),
+			| ((ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void)
+			| ((state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void),
 	): () => void {
 		if (isGroup(target)) {
 			return addGroupListener(getGroupListeners(target), listener, channelId, (state, ops, meta) => {
-				(listener as (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void)(
+				(listener as (state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void)(
 					state,
 					ops,
 					toChannelContext(channelId, defaults, meta),
@@ -95,7 +95,7 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		}
 
 		return addStateListener(target, listener, channelId, (ops, meta) => {
-			(listener as (ops: ReadonlyArray<Operation>, context: Context<M>) => void)(
+			(listener as (ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void)(
 				ops,
 				toChannelContext(channelId, defaults, meta),
 			);

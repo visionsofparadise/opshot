@@ -1,7 +1,7 @@
 import { proxy } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
-import { stampSettings, type StateSettings } from "./settings";
+import { stampOptions, type MutableNodeOptions } from "./settings";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 
 /**
@@ -10,7 +10,7 @@ import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
  * @example
  * createMutableState({ count: 0 }, { group, emitOn, strict: false })
  */
-export interface MutableStateOptions extends StateSettings {
+export interface MutableStateOptions extends MutableNodeOptions {
 	/**
 	 * Group that receives this state's changes.
 	 */
@@ -34,7 +34,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(properties));
 
-	stampSettings(base, options);
+	stampOptions(base, options);
 
 	const proxied = proxy(base);
 

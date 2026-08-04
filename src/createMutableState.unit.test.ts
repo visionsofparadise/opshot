@@ -3,7 +3,7 @@ import { createMutableState } from "./createMutableState";
 import { isSameIdentity } from "./identity";
 import { isState } from "./isState";
 import { ignore } from "./ignore";
-import { diffSnapshots } from "./ops/diff";
+import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
@@ -81,13 +81,13 @@ describe("createMutableState", () => {
 	it("skips the diff while nothing listens, and resumes when a listener arrives", () => {
 		const state = createMutableState({ count: 0 });
 
-		vi.mocked(diffSnapshots).mockClear();
+		vi.mocked(diffObjects).mockClear();
 
 		transact(state, () => {
 			state.count = 1;
 		});
 
-		expect(diffSnapshots).not.toHaveBeenCalled();
+		expect(diffObjects).not.toHaveBeenCalled();
 		expect(state.count).toBe(1);
 
 		const heard = new Array<Array<Operation>>();
@@ -97,7 +97,7 @@ describe("createMutableState", () => {
 			state.count = 2;
 		});
 
-		expect(diffSnapshots).toHaveBeenCalledTimes(1);
+		expect(diffObjects).toHaveBeenCalledTimes(1);
 		expect(heard).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
@@ -108,7 +108,7 @@ describe("createMutableState", () => {
 			state.count = 3;
 		});
 
-		expect(diffSnapshots).toHaveBeenCalledTimes(1);
+		expect(diffObjects).toHaveBeenCalledTimes(1);
 		expect(heard).toHaveLength(1);
 		expect(state.count).toBe(3);
 	});
@@ -350,12 +350,12 @@ describe("createMutableState", () => {
 		});
 
 		unsubscribe();
-		vi.mocked(diffSnapshots).mockClear();
+		vi.mocked(diffObjects).mockClear();
 
 		state.count = 1;
 		await Promise.resolve();
 
-		expect(diffSnapshots).not.toHaveBeenCalled();
+		expect(diffObjects).not.toHaveBeenCalled();
 		expect(heard).toHaveLength(0);
 
 		subscribe(state, (ops) => {
