@@ -43,7 +43,7 @@ export interface DeleteMutation {
 }
 
 /**
- * An assign or delete operation.
+ * One half of an invertible pair: either an assign or a delete at a path.
  *
  * @example
  * { verb: "assign", path: ["profile"], value: { name: "Ada" } }
@@ -58,12 +58,12 @@ export type Mutation = AssignMutation | DeleteMutation;
  */
 export interface Operation {
 	/**
-	 * Forward operation.
+	 * Half that applies the change.
 	 */
 	readonly do: Mutation;
 
 	/**
-	 * Reverse operation.
+	 * Half that reverses the change.
 	 */
 	readonly undo: Mutation;
 }

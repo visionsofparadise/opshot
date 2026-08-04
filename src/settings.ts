@@ -15,7 +15,8 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 export type EmissionScheduler = (flush: () => void) => void;
 
 /**
- * State creation options.
+ * Options stamped onto a mutable node: emission scheduling and strictness.
+ * Shared by root creation and `group.createMutableState`.
  *
  * @example
  * createMutableState({ x: 0 }, { emitOn: (flush) => requestAnimationFrame(flush), strict: false })

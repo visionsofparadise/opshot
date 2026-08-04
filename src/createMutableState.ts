@@ -5,7 +5,7 @@ import { stampOptions, type MutableNodeOptions } from "./settings";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 
 /**
- * Options for `createMutableState`.
+ * Options for `createMutableState`, including optional group membership.
  *
  * @example
  * createMutableState({ count: 0 }, { group, emitOn, strict: false })

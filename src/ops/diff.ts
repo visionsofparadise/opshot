@@ -306,7 +306,7 @@ const getRootKind = (value: object): RootKind | undefined => {
  *
  * @param before - Earlier value.
  * @param after - Later value.
- * @returns Ops from before to after.
+ * @returns Operations that take before to after.
  */
 export function diffObjects(before: object, after: object): Array<Operation> {
 	const beforeKind = getRootKind(before);
