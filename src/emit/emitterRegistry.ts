@@ -76,6 +76,6 @@ export function getOrCreateEmitter(state: object, groupChain?: ReadonlyArray<Gro
 	return record;
 }
 
-export function deleteEmitter(target: object): void {
-	emitters.delete(target);
+export function deleteEmitter(writeProxy: object): void {
+	emitters.delete(writeProxy);
 }

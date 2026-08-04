@@ -165,16 +165,16 @@ export const settlePendingBare = (record: EmitterRecord): void => {
 	reportBareDiff(record);
 };
 
-export function emitBareFlush(target: object): void {
-	const record = getEmitter(target);
+export function emitBareFlush(state: object): void {
+	const record = getEmitter(state);
 
 	if (record === undefined) return;
 
 	reportBareDiff(record);
 }
 
-export function mintGroupedEmitter(target: object, groupChain: ReadonlyArray<GroupListeners>): EmitterRecord {
-	const record = getOrCreateEmitter(target, groupChain);
+export function mintGroupedEmitter(state: object, groupChain: ReadonlyArray<GroupListeners>): EmitterRecord {
+	const record = getOrCreateEmitter(state, groupChain);
 
 	armWatchdog(record);
 
