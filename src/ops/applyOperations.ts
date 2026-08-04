@@ -1,4 +1,4 @@
-import { resolveEmitterTarget } from "../emit/resolveEmitterTarget";
+import { resolveWriteProxy } from "../emit/resolveWriteProxy";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
 import { getValueOriginal, isMutation, type AssignMutation, type Mutation } from "./operation";
@@ -276,7 +276,7 @@ export function applyOperations(state: object, operations: ReadonlyArray<Mutatio
 	transact(
 		state,
 		() => {
-			applyMutations(resolveEmitterTarget(state), operations);
+			applyMutations(resolveWriteProxy(state), operations);
 		},
 		meta,
 	);

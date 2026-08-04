@@ -22,7 +22,7 @@ const certifyAdmission = (value: object, path?: ReadonlyArray<string>): Admissio
 	throw rejectionError(value, kind, path);
 };
 
-const resolveAssigned = (value: unknown): unknown => {
+const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 	let current: unknown = value;
 
 	while (typeof current === "object" && current !== null) {
@@ -115,7 +115,7 @@ export function installBoundary(): void {
 
 					if (prop === "__proto__") throw reservedDataPathError(["__proto__"]);
 
-					const resolved: unknown = resolveAssigned(assigned);
+					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 
 					const location = typeof prop === "string" ? [prop] : [];
 					const strict = getSettings(target)?.strict !== false;

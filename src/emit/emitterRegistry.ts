@@ -1,6 +1,6 @@
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 import { getSettings, type EmitOn } from "../settings";
-import { resolveEmitterTarget } from "./resolveEmitterTarget";
+import { resolveWriteProxy } from "./resolveWriteProxy";
 import type { Operation } from "../ops/operation";
 
 /**
@@ -32,7 +32,7 @@ export interface EmitterRecord {
 	lastReported: object;
 	disarm?: () => void;
 	isMutating: boolean;
-	readonly target: object;
+	readonly writeProxy: object;
 	emitOn?: EmitOn;
 	pending: boolean;
 	hasUnreported: boolean;
@@ -44,27 +44,27 @@ const emitters = new WeakMap<object, EmitterRecord>();
 const { proxyStateMap } = unstable_getInternalStates();
 
 export function getEmitter(state: object): EmitterRecord | undefined {
-	return emitters.get(resolveEmitterTarget(state));
+	return emitters.get(resolveWriteProxy(state));
 }
 
 export const hasListeners = (record: EmitterRecord): boolean =>
 	record.listeners.size > 0 || (record.groupChain?.some((map) => map.size > 0) ?? false);
 
-export function getOrCreateEmitter(target: object, groupChain?: ReadonlyArray<GroupListeners>): EmitterRecord {
-	const resolved = resolveEmitterTarget(target);
+export function getOrCreateEmitter(state: object, groupChain?: ReadonlyArray<GroupListeners>): EmitterRecord {
+	const resolved = resolveWriteProxy(state);
 	const existing = emitters.get(resolved);
 
 	if (existing !== undefined) return existing;
 
-	const rawTarget = proxyStateMap.get(resolved)?.[0] ?? resolved;
-	const emitOn = getSettings(rawTarget)?.emitOn;
+	const target = proxyStateMap.get(resolved)?.[0] ?? resolved;
+	const emitOn = getSettings(target)?.emitOn;
 
 	const record: EmitterRecord = {
 		listeners: new Map(),
 		groupChain,
 		lastReported: snapshot(resolved),
 		isMutating: false,
-		target: resolved,
+		writeProxy: resolved,
 		emitOn,
 		pending: false,
 		hasUnreported: false,

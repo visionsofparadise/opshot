@@ -6,7 +6,7 @@ type Delivery =
 	| { readonly kind: "own"; readonly deliver: StateListener };
 
 interface PendingDelivery {
-	readonly target: object;
+	readonly writeProxy: object;
 	readonly deliveries: ReadonlyArray<Delivery>;
 	readonly ops: ReadonlyArray<Operation>;
 	readonly meta: unknown;
@@ -36,7 +36,7 @@ const runDelivery = (pending: PendingDelivery, failures: Array<unknown>): void =
 	for (const delivery of pending.deliveries) {
 		try {
 			if (delivery.kind === "group") {
-				delivery.deliver(pending.target, pending.ops, pending.meta);
+				delivery.deliver(pending.writeProxy, pending.ops, pending.meta);
 			} else {
 				delivery.deliver(pending.ops, pending.meta);
 			}
@@ -89,7 +89,12 @@ export const bracketDelivery = (report: (failures: Array<unknown>) => void): voi
 };
 
 export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Operation>, meta: unknown): void => {
-	const pending: PendingDelivery = { target: record.target, deliveries: collectDeliveries(record), ops, meta };
+	const pending: PendingDelivery = {
+		writeProxy: record.writeProxy,
+		deliveries: collectDeliveries(record),
+		ops,
+		meta,
+	};
 
 	if (isDelivering) {
 		queuedDeliveries.push(pending);

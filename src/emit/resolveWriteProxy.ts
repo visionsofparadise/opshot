@@ -6,7 +6,7 @@ const { proxyStateMap } = unstable_getInternalStates();
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
 
-export function resolveEmitterTarget(state: object): object {
+export function resolveWriteProxy(state: object): object {
 	let current: unknown = state;
 
 	while (isObjectLike(current)) {

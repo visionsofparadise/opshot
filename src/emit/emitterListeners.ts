@@ -9,13 +9,13 @@ import {
 	type GroupListeners,
 	type StateListener,
 } from "./emitterRegistry";
-import { resolveEmitterTarget } from "./resolveEmitterTarget";
+import { resolveWriteProxy } from "./resolveWriteProxy";
 
 interface StateBinding {
 	readonly record: EmitterRecord;
 	readonly listener: Function;
 	readonly channelId: object | undefined;
-	readonly target: object;
+	readonly writeProxy: object;
 }
 
 interface GroupBinding {
@@ -34,15 +34,15 @@ export function addStateListener(
 	channelId: object | undefined,
 	deliver: StateListener,
 ): () => void {
-	const target = resolveEmitterTarget(state);
-	const record = getOrCreateEmitter(target);
+	const writeProxy = resolveWriteProxy(state);
+	const record = getOrCreateEmitter(writeProxy);
 
 	if (record.disarm === undefined && record.groupChain === undefined) {
 		armWatchdog(record);
 	}
 
 	if (!hasListeners(record)) {
-		record.lastReported = snapshot(record.target);
+		record.lastReported = snapshot(record.writeProxy);
 	}
 
 	let byChannel = record.listeners.get(listener);
@@ -74,13 +74,13 @@ export function addStateListener(
 
 		if (held.record.groupChain === undefined && held.record.listeners.size === 0) {
 			disarmWatchdog(held.record);
-			deleteEmitter(held.target);
+			deleteEmitter(held.writeProxy);
 		}
 
 		bindings.delete(unsubscribe);
 	};
 
-	bindings.set(unsubscribe, { record, listener, channelId, target });
+	bindings.set(unsubscribe, { record, listener, channelId, writeProxy });
 
 	return unsubscribe;
 }

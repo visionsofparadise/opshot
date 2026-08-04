@@ -5,8 +5,8 @@ import { getSettings, inheritSettings, stampSettings, type EmitOn } from "./sett
 
 const { proxyStateMap } = unstable_getInternalStates();
 
-const rawTarget = (proxy: object): object => {
-	const entry = proxyStateMap.get(proxy);
+const target = (writeProxy: object): object => {
+	const entry = proxyStateMap.get(writeProxy);
 
 	if (entry === undefined) throw new Error("expected a proxied target");
 
@@ -38,7 +38,7 @@ describe("settings table", () => {
 		const group = createGroup();
 		const state = createMutableState({ count: 0 }, { group });
 
-		expect(getSettings(rawTarget(state))).toBeUndefined();
+		expect(getSettings(target(state))).toBeUndefined();
 	});
 
 	it("stores only the defined fields", () => {
@@ -91,7 +91,7 @@ describe("settings table", () => {
 
 		inheritSettings(parent, moved);
 
-		expect(getSettings(rawTarget(moved))).toBeUndefined();
+		expect(getSettings(target(moved))).toBeUndefined();
 		expect(getSettings(moved)).toBeUndefined();
 	});
 });
@@ -112,8 +112,8 @@ describe("settings inheritance through the boundary", () => {
 			{ emitOn, strict: false },
 		);
 
-		const rootSettings = getSettings(rawTarget(state));
-		const grandchildSettings = getSettings(rawTarget(state.a.b.c));
+		const rootSettings = getSettings(target(state));
+		const grandchildSettings = getSettings(target(state.a.b.c));
 
 		expect(rootSettings).toEqual({ emitOn, strict: false });
 		expect(grandchildSettings).toBe(rootSettings);
@@ -132,8 +132,8 @@ describe("settings inheritance through the boundary", () => {
 
 		state.holder = { nested: { value: 2 } };
 
-		const rootSettings = getSettings(rawTarget(state));
-		const nestedSettings = getSettings(rawTarget(state.holder.nested));
+		const rootSettings = getSettings(target(state));
+		const nestedSettings = getSettings(target(state.holder.nested));
 
 		expect(nestedSettings).toBe(rootSettings);
 	});
@@ -145,9 +145,9 @@ describe("settings inheritance through the boundary", () => {
 			},
 		});
 
-		expect(getSettings(rawTarget(state))).toBeUndefined();
-		expect(getSettings(rawTarget(state.a))).toBeUndefined();
-		expect(getSettings(rawTarget(state.a.b))).toBeUndefined();
+		expect(getSettings(target(state))).toBeUndefined();
+		expect(getSettings(target(state.a))).toBeUndefined();
+		expect(getSettings(target(state.a.b))).toBeUndefined();
 	});
 
 	it("leaves a moved subtree its origin settings", () => {
@@ -163,7 +163,7 @@ describe("settings inheritance through the boundary", () => {
 
 		destination.box = moved;
 
-		expect(getSettings(rawTarget(destination.box))).toBe(getSettings(rawTarget(source)));
-		expect(getSettings(rawTarget(destination.box))?.emitOn).toBe(emitA);
+		expect(getSettings(target(destination.box))).toBe(getSettings(target(source)));
+		expect(getSettings(target(destination.box))?.emitOn).toBe(emitA);
 	});
 });

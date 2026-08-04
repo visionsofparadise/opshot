@@ -46,14 +46,14 @@ const scheduleFlush = (record: EmitterRecord): void => {
 
 		if (emitOn === undefined) {
 			record.pending = false;
-			emitBareFlush(record.target);
+			emitBareFlush(record.writeProxy);
 
 			return;
 		}
 
 		emitOn(() => {
 			record.pending = false;
-			emitBareFlush(record.target);
+			emitBareFlush(record.writeProxy);
 		});
 	});
 };
@@ -90,9 +90,9 @@ export const closeFrame = (frame: TransactFrame): void => {
 export const armWatchdog = (record: EmitterRecord): void => {
 	if (record.disarm !== undefined) return;
 
-	record.lastReported = snapshot(record.target);
+	record.lastReported = snapshot(record.writeProxy);
 	record.disarm = valtioSubscribe(
-		record.target,
+		record.writeProxy,
 		() => {
 			const wasDirty = record.hasUnreported;
 
@@ -118,7 +118,7 @@ export const disarmWatchdog = (record: EmitterRecord): void => {
 };
 
 const reportRecord = (record: EmitterRecord, meta: unknown): void => {
-	const current = snapshot(record.target);
+	const current = snapshot(record.writeProxy);
 
 	record.hasUnreported = false;
 

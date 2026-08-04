@@ -71,7 +71,7 @@ describe("emitterBare", () => {
 
 		vi.mocked(diffSnapshots).mockClear();
 
-		emitBareFlush(record.target);
+		emitBareFlush(record.writeProxy);
 
 		expect(diffSnapshots).not.toHaveBeenCalled();
 	});

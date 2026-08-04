@@ -1,22 +1,22 @@
 import { createProxy } from "proxy-compare";
 import { createMutableState } from "../createMutableState";
-import { resolveEmitterTarget } from "./resolveEmitterTarget";
+import { resolveWriteProxy } from "./resolveWriteProxy";
 
-describe("resolveEmitterTarget", () => {
+describe("resolveWriteProxy", () => {
 	it("returns the live proxy for a bare state", () => {
 		const state = createMutableState({ count: 0 });
 
-		expect(resolveEmitterTarget(state)).toBe(state);
+		expect(resolveWriteProxy(state)).toBe(state);
 	});
 
 	it("peels a tracking wrapper to the live proxy", () => {
 		const state = createMutableState({ count: 0 });
 		const wrapper = createProxy(state, new WeakMap(), new WeakMap(), new WeakMap());
 
-		expect(resolveEmitterTarget(wrapper)).toBe(state);
+		expect(resolveWriteProxy(wrapper)).toBe(state);
 	});
 
 	it("throws when the value is not a state", () => {
-		expect(() => resolveEmitterTarget({ count: 0 })).toThrow("opshot: expected a state object");
+		expect(() => resolveWriteProxy({ count: 0 })).toThrow("opshot: expected a state object");
 	});
 });

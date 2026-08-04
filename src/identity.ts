@@ -45,12 +45,16 @@ export function resolveIdentity(value: unknown): unknown {
 			continue;
 		}
 
-		const proxyState = proxyStateMap.get(current);
+		const entry = proxyStateMap.get(current);
 
-		if (proxyState !== undefined && proxyState[0] !== current) {
-			current = proxyState[0];
+		if (entry !== undefined) {
+			const target = entry[0];
 
-			continue;
+			if (target !== current) {
+				current = target;
+
+				continue;
+			}
 		}
 
 		break;
