@@ -1,7 +1,7 @@
 import { createGroup } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { diffSnapshots } from "../ops/diff";
-import { type Op } from "../ops/operation";
+import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { emitBareFlush } from "./emitterBare";
@@ -27,8 +27,8 @@ describe("emitterListeners", () => {
 
 	it("emits a transaction with meta", () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<{ ops: ReadonlyArray<Op>; meta: unknown }>();
-		const listener = (ops: ReadonlyArray<Op>, meta: unknown): void => {
+		const heard = new Array<{ ops: ReadonlyArray<Operation>; meta: unknown }>();
+		const listener = (ops: ReadonlyArray<Operation>, meta: unknown): void => {
 			heard.push({ ops, meta });
 		};
 
@@ -45,14 +45,14 @@ describe("emitterListeners", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toEqual({ actor: "a" });
 		expect(heard[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
+			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 	});
 
 	it("emits a bare flush with undefined meta", async () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<{ ops: ReadonlyArray<Op>; meta: unknown }>();
-		const listener = (ops: ReadonlyArray<Op>, meta: unknown): void => {
+		const heard = new Array<{ ops: ReadonlyArray<Operation>; meta: unknown }>();
+		const listener = (ops: ReadonlyArray<Operation>, meta: unknown): void => {
 			heard.push({ ops, meta });
 		};
 
@@ -67,14 +67,14 @@ describe("emitterListeners", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toBeUndefined();
 		expect(heard[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["count"], value: 5 }, undo: { op: "assign", path: ["count"], value: 0 } },
+			{ do: { verb: "assign", path: ["count"], value: 5 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 	});
 
 	it("orders bare → transact → bare across one tick", async () => {
 		const state = createMutableState({ count: 0, flag: false, trail: 0 });
 		const order = new Array<string>();
-		const listener = (ops: ReadonlyArray<Op>, meta: unknown): void => {
+		const listener = (ops: ReadonlyArray<Operation>, meta: unknown): void => {
 			const path = ops[0]?.do.path[0];
 
 			order.push(`${String(path)}:${meta === undefined ? "bare" : "tx"}`);
@@ -204,7 +204,7 @@ describe("emitterListeners", () => {
 		const parent = createGroup();
 		const child = createGroup(parent);
 		const state = child.createMutableState({ count: 0 }, { emitOn });
-		const stateHeard = new Array<ReadonlyArray<Op>>();
+		const stateHeard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(parent, () => undefined);
 
@@ -219,7 +219,7 @@ describe("emitterListeners", () => {
 		for (const flush of pending.splice(0)) flush();
 
 		expect(stateHeard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 
@@ -240,8 +240,8 @@ describe("emitterListeners", () => {
 
 	it("delivers a bare write pending at teardown before unsubscribe returns", () => {
 		const state = createMutableState({ count: 0 });
-		const firstHeard = new Array<ReadonlyArray<Op>>();
-		const firstListener = (ops: ReadonlyArray<Op>): void => {
+		const firstHeard = new Array<ReadonlyArray<Operation>>();
+		const firstListener = (ops: ReadonlyArray<Operation>): void => {
 			firstHeard.push(ops);
 		};
 		const unsubscribe = addStateListener(state, firstListener, undefined, firstListener);
@@ -250,11 +250,11 @@ describe("emitterListeners", () => {
 		unsubscribe();
 
 		expect(firstHeard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 
-		const secondHeard = new Array<ReadonlyArray<Op>>();
-		const secondListener = (ops: ReadonlyArray<Op>): void => {
+		const secondHeard = new Array<ReadonlyArray<Operation>>();
+		const secondListener = (ops: ReadonlyArray<Operation>): void => {
 			secondHeard.push(ops);
 		};
 
@@ -264,7 +264,7 @@ describe("emitterListeners", () => {
 		emitBareFlush(state);
 
 		expect(secondHeard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 
@@ -296,9 +296,9 @@ describe("emitterListeners", () => {
 	it("does not settle on group unsubscription because a group retains none of its states", async () => {
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 });
-		const groupHeard = new Array<ReadonlyArray<Op>>();
-		const ownHeard = new Array<ReadonlyArray<Op>>();
-		const own = (ops: ReadonlyArray<Op>): void => {
+		const groupHeard = new Array<ReadonlyArray<Operation>>();
+		const ownHeard = new Array<ReadonlyArray<Operation>>();
+		const own = (ops: ReadonlyArray<Operation>): void => {
 			ownHeard.push(ops);
 		};
 
@@ -318,13 +318,13 @@ describe("emitterListeners", () => {
 
 		expect(groupHeard).toEqual([]);
 		expect(ownHeard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 
 	it("releases what a spent unsubscribe captured, and stays a no-op when called again", () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 		const stop = subscribe(state, (ops) => heard.push([...ops]));
 
 		transact(state, () => {
@@ -341,7 +341,7 @@ describe("emitterListeners", () => {
 
 		expect(heard).toHaveLength(1);
 
-		const resumed = new Array<Array<Op>>();
+		const resumed = new Array<Array<Operation>>();
 		const again = subscribe(state, (ops) => resumed.push([...ops]));
 
 		transact(state, () => {

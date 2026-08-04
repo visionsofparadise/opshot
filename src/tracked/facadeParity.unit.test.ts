@@ -1,6 +1,6 @@
 import { createMutableState } from "../createMutableState";
-import { applyOps } from "../ops/applyOps";
-import { type Op } from "../ops/operation";
+import { applyOperations } from "../ops/applyOperations";
+import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { TrackedDate } from "./trackedDate";
@@ -125,7 +125,7 @@ describe("facade parity with the built-in", () => {
 
 	it("emits nothing when a re-set stores an Object.is-equal value", () => {
 		const state = createMutableState({ map: new TrackedMap<string, number>([["a", 1]]) });
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
@@ -162,7 +162,7 @@ describe("facade parity with the built-in", () => {
 
 	it("restores the exact prior layout when undo replays through a compaction", () => {
 		const state = createMutableState({ map: new TrackedMap<string, number>() });
-		const heard = new Array<Op>();
+		const heard = new Array<Operation>();
 
 		for (const key of ["a", "b", "c", "d"]) {
 			transact(state, () => {
@@ -191,7 +191,7 @@ describe("facade parity with the built-in", () => {
 
 		expect(layoutOf(state.map)).toEqual(["c", "d"]);
 
-		applyOps(state, heard.map((op) => op.undo).reverse());
+		applyOperations(state, heard.map((op) => op.undo).reverse());
 
 		expect([...state.map.entries()]).toEqual(before);
 		expect(layoutOf(state.map)).toEqual([null, "b", "c", "d"]);

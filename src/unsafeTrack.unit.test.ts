@@ -2,13 +2,13 @@ import { subscribe } from "./subscribe";
 import { transact } from "./transact";
 import { createMutableState } from "./createMutableState";
 import { ignore } from "./ignore";
-import { applyOps } from "./ops/applyOps";
-import { type Op } from "./ops/operation";
+import { applyOperations } from "./ops/applyOperations";
+import { type Operation } from "./ops/operation";
 import { isUnsafeTracked, unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 import { isTrackable } from "./valtio/classify";
 
-const recordOwned = <T extends object>(state: T): Array<Array<Op>> => {
-	const heard = new Array<Array<Op>>();
+const recordOwned = <T extends object>(state: T): Array<Array<Operation>> => {
+	const heard = new Array<Array<Operation>>();
 
 	subscribe(state, (ops) => {
 		heard.push([...ops]);
@@ -86,8 +86,8 @@ describe("unsafeTrack stories", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toEqual([
 			{
-				do: { op: "assign", path: ["arrow", "count"], value: 5 },
-				undo: { op: "assign", path: ["arrow", "count"], value: 0 },
+				do: { verb: "assign", path: ["arrow", "count"], value: 5 },
+				undo: { verb: "assign", path: ["arrow", "count"], value: 0 },
 			},
 		]);
 		expect(state.arrow.count).toBe(5);
@@ -124,7 +124,7 @@ describe("unsafeTrack stories", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ op: "assign", path: ["vault", "label"], value: "b" });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["vault", "label"], value: "b" });
 		expect(state.vault.label).toBe("b");
 		expect(() => state.vault.reveal()).toThrow();
 		expect(vault.reveal()).toBe(7);
@@ -141,10 +141,10 @@ describe("unsafeTrack stories", () => {
 
 		const replaceOp = heard[0]![0]!;
 
-		expect(replaceOp.do.op).toBe("assign");
+		expect(replaceOp.do.verb).toBe("assign");
 		expect(replaceOp.do.path).toEqual(["vault"]);
 
-		applyOps(state, [replaceOp.undo]);
+		applyOperations(state, [replaceOp.undo]);
 
 		const restored = state.vault;
 

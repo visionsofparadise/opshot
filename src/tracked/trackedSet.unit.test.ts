@@ -3,22 +3,22 @@ import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
-import { applyOps } from "../ops/applyOps";
-import { type Op, type Operation } from "../ops/operation";
+import { applyOperations } from "../ops/applyOperations";
+import { type Operation, type Mutation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { addressOf } from "./address";
 import { TrackedSet } from "./trackedSet";
 
-const record = <T extends object>(state: T): Array<Array<Op>> => {
-	const heard = new Array<Array<Op>>();
+const record = <T extends object>(state: T): Array<Array<Operation>> => {
+	const heard = new Array<Array<Operation>>();
 
 	subscribe(state, (ops) => heard.push([...ops]));
 
 	return heard;
 };
 
-const doPaths = (ops: Array<Op> | undefined): Array<Operation["path"]> => (ops ?? []).map((pair) => pair.do.path);
+const doPaths = (ops: Array<Operation> | undefined): Array<Mutation["path"]> => (ops ?? []).map((pair) => pair.do.path);
 
 describe("TrackedSet", () => {
 	it("implements ordered Set membership and deduplication", () => {
@@ -90,13 +90,13 @@ describe("TrackedSet", () => {
 				["set", "count"],
 			]),
 		);
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.undo.op).toBe("delete");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.undo.verb).toBe("delete");
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({
-			op: "assign",
+			verb: "assign",
 			path: ["set", "index", addr],
 			value: 20,
 		});
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.undo.op).toBe("delete");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.undo.verb).toBe("delete");
 
 		expect(doPaths(heard[1])).toEqual(
 			expect.arrayContaining([
@@ -106,11 +106,11 @@ describe("TrackedSet", () => {
 			]),
 		);
 		expect(heard[1]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({
-			op: "assign",
+			verb: "assign",
 			path: ["set", "slots", 20],
 			value: null,
 		});
-		expect(heard[1]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("delete");
+		expect(heard[1]?.find((pair) => pair.do.path[1] === "index")?.do.verb).toBe("delete");
 	});
 
 	it("emits member interiors through slots", () => {
@@ -127,7 +127,7 @@ describe("TrackedSet", () => {
 
 		const operation = heard[0]?.[0]?.do;
 
-		expect(operation?.op).toBe("assign");
+		expect(operation?.verb).toBe("assign");
 		expect(operation?.path).toEqual(["set", "slots", 0, 0, "profile", "count"]);
 	});
 
@@ -144,13 +144,13 @@ describe("TrackedSet", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["set"] });
-		applyOps(
+		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["set"] });
+		applyOperations(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
 		expect([...state.set]).toEqual(["a", "b"]);
-		applyOps(
+		applyOperations(
 			state,
 			ops.map((pair) => pair.do),
 		);
@@ -165,7 +165,7 @@ describe("TrackedSet", () => {
 
 		transact(state, () => state.set.delete(member));
 		const ops = heard[0] ?? [];
-		applyOps(
+		applyOperations(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);

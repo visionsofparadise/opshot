@@ -4,7 +4,7 @@ import { isSameIdentity } from "./identity";
 import { isState } from "./isState";
 import { ignore } from "./ignore";
 import { diffSnapshots } from "./ops/diff";
-import { type Op } from "./ops/operation";
+import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
 
@@ -23,8 +23,8 @@ const createCounter = (): Counter =>
 		},
 	});
 
-const recordEmissions = (state: object): Array<{ ops: Array<Op>; meta: unknown }> => {
-	const emissions = new Array<{ ops: Array<Op>; meta: unknown }>();
+const recordEmissions = (state: object): Array<{ ops: Array<Operation>; meta: unknown }> => {
+	const emissions = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 	subscribe(state, (ops, meta) => {
 		emissions.push({ ops: [...ops], meta });
@@ -66,7 +66,7 @@ describe("createMutableState", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
+			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
@@ -90,7 +90,7 @@ describe("createMutableState", () => {
 		expect(diffSnapshots).not.toHaveBeenCalled();
 		expect(state.count).toBe(1);
 
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 		const unsubscribe = subscribe(state, (ops) => heard.push([...ops]));
 
 		transact(state, () => {
@@ -99,7 +99,7 @@ describe("createMutableState", () => {
 
 		expect(diffSnapshots).toHaveBeenCalledTimes(1);
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 
 		unsubscribe();
@@ -175,7 +175,7 @@ describe("createMutableState", () => {
 
 	it("stops calling a listener after its remover runs", () => {
 		const state = createCounter();
-		const emissions = new Array<Array<Op>>();
+		const emissions = new Array<Array<Operation>>();
 		const remove = subscribe(state, (ops) => {
 			emissions.push([...ops]);
 		});
@@ -219,7 +219,7 @@ describe("createMutableState", () => {
 		expect(state.entries).toEqual(["one"]);
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["index"], value: 1 }, undo: { op: "assign", path: ["index"], value: 0 } },
+			{ do: { verb: "assign", path: ["index"], value: 1 }, undo: { verb: "assign", path: ["index"], value: 0 } },
 		]);
 	});
 
@@ -261,14 +261,14 @@ describe("createMutableState", () => {
 		});
 
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
+			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(state.doubled).toBe(2);
 	});
 
 	it("reports a bare write as ops on the microtask flush", async () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(state, (ops, meta) => {
 			heard.push({ ops: [...ops], meta });
@@ -283,7 +283,7 @@ describe("createMutableState", () => {
 		expect(heard).toEqual([
 			{
 				ops: [
-					{ do: { op: "assign", path: ["count"], value: 5 }, undo: { op: "assign", path: ["count"], value: 0 } },
+					{ do: { verb: "assign", path: ["count"], value: 5 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 				],
 				meta: undefined,
 			},
@@ -341,7 +341,7 @@ describe("createMutableState", () => {
 
 	it("disarms with the last unsubscribe and re-arms fresh on the next subscribe", async () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 		const unsubscribe = subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
@@ -363,7 +363,7 @@ describe("createMutableState", () => {
 		await Promise.resolve();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 });
@@ -371,7 +371,7 @@ describe("createMutableState", () => {
 describe("grouped createMutableState", () => {
 	it("delivers emissions to a group subscriber with the live state", () => {
 		const group = createGroup();
-		const emissions = new Array<{ state: object; ops: Array<Op>; meta: unknown }>();
+		const emissions = new Array<{ state: object; ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(group, (state, ops, meta) => {
 			emissions.push({ state, ops: [...ops], meta });

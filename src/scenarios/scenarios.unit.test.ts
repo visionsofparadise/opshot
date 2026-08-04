@@ -3,12 +3,12 @@ import { transact } from "../transact";
 import { createGroup, type Group } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
-import { applyOps } from "../ops/applyOps";
-import { type Op } from "../ops/operation";
+import { applyOperations } from "../ops/applyOperations";
+import { type Operation } from "../ops/operation";
 
 interface HistoryEntry {
 	state: object;
-	ops: Array<Op>;
+	ops: Array<Operation>;
 }
 
 interface Recorder {
@@ -29,7 +29,7 @@ const createRecorder = (group: Group): Recorder => {
 
 			if (!entry) return;
 
-			applyOps(
+			applyOperations(
 				entry.state,
 				[...entry.ops].reverse().map((op) => op.undo),
 				{ replay: true },
@@ -42,7 +42,7 @@ const createRecorder = (group: Group): Recorder => {
 
 			if (!entry) return;
 
-			applyOps(
+			applyOperations(
 				entry.state,
 				entry.ops.map((op) => op.do),
 				{ replay: true },
@@ -135,7 +135,7 @@ describe("scenarios", () => {
 	it("forwards every op of a transaction in order with its transactionKey intact", () => {
 		const group = createGroup();
 		const grade = createGrade(group);
-		const received = new Array<{ meta: Record<string, unknown>; ops: Array<Op> }>();
+		const received = new Array<{ meta: Record<string, unknown>; ops: Array<Operation> }>();
 
 		subscribe(group, (_state, ops, meta) => {
 			received.push({ meta: meta as Record<string, unknown>, ops: [...ops] });
@@ -156,20 +156,20 @@ describe("scenarios", () => {
 		expect(received.map((emission) => emission.ops)).toEqual([
 			[
 				{
-					do: { op: "assign", path: ["exposure"], value: 1 },
-					undo: { op: "assign", path: ["exposure"], value: 0 },
+					do: { verb: "assign", path: ["exposure"], value: 1 },
+					undo: { verb: "assign", path: ["exposure"], value: 0 },
 				},
 			],
 			[
 				{
-					do: { op: "assign", path: ["exposure"], value: 2 },
-					undo: { op: "assign", path: ["exposure"], value: 1 },
+					do: { verb: "assign", path: ["exposure"], value: 2 },
+					undo: { verb: "assign", path: ["exposure"], value: 1 },
 				},
 			],
 			[
 				{
-					do: { op: "assign", path: ["exposure"], value: 3 },
-					undo: { op: "assign", path: ["exposure"], value: 2 },
+					do: { verb: "assign", path: ["exposure"], value: 3 },
+					undo: { verb: "assign", path: ["exposure"], value: 2 },
 				},
 			],
 		]);
@@ -287,8 +287,8 @@ describe("scenarios", () => {
 		const shared = { x: 1 };
 		const a = createMutableState({ box: shared });
 		const b = createMutableState({ box: shared });
-		const aHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
-		const bHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const aHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const bHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(a, (ops, meta) => {
 			aHeard.push({ ops: [...ops], meta });
@@ -308,8 +308,8 @@ describe("scenarios", () => {
 			{
 				ops: [
 					{
-						do: { op: "assign", path: ["box", "x"], value: 2 },
-						undo: { op: "assign", path: ["box", "x"], value: 1 },
+						do: { verb: "assign", path: ["box", "x"], value: 2 },
+						undo: { verb: "assign", path: ["box", "x"], value: 1 },
 					},
 				],
 				meta: undefined,
@@ -325,8 +325,8 @@ describe("scenarios", () => {
 		const shared = { x: 1 };
 		const a = createMutableState({ box: shared });
 		const b = createMutableState({ box: shared });
-		const aHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
-		const bHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const aHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const bHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(a, (ops, meta) => {
 			aHeard.push({ ops: [...ops], meta });
@@ -347,8 +347,8 @@ describe("scenarios", () => {
 			{
 				ops: [
 					{
-						do: { op: "assign", path: ["box", "x"], value: 2 },
-						undo: { op: "assign", path: ["box", "x"], value: 1 },
+						do: { verb: "assign", path: ["box", "x"], value: 2 },
+						undo: { verb: "assign", path: ["box", "x"], value: 1 },
 					},
 				],
 				meta: { transactionKey: "drag" },
@@ -373,8 +373,8 @@ describe("scenarios", () => {
 
 		const a = createMutableState<{ items: Array<Item> }>({ items: [{ id: "x", gain: 1 }] });
 		const b = createMutableState<{ items: Array<Item> }>({ items: [] });
-		const aHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
-		const bHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const aHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const bHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(a, (ops, meta) => {
 			aHeard.push({ ops: [...ops], meta });
@@ -395,7 +395,7 @@ describe("scenarios", () => {
 		expect(aHeard).toHaveLength(1);
 		expect(aHeard[0]?.meta).toBeUndefined();
 		expect(aHeard[0]?.ops).toHaveLength(1);
-		expect(aHeard[0]?.ops[0]?.do).toMatchObject({ op: "assign", path: ["items"] });
+		expect(aHeard[0]?.ops[0]?.do).toMatchObject({ verb: "assign", path: ["items"] });
 		expect(aHeard[0]?.ops[0] && "value" in aHeard[0].ops[0].do ? aHeard[0].ops[0].do.value : undefined).toEqual([]);
 		const sourceOps = aHeard[0]?.ops;
 
@@ -403,7 +403,7 @@ describe("scenarios", () => {
 
 		const sourceUndo = [...sourceOps].reverse().map((pair) => pair.undo);
 
-		expect(sourceUndo[0]).toMatchObject({ op: "assign", path: ["items"] });
+		expect(sourceUndo[0]).toMatchObject({ verb: "assign", path: ["items"] });
 		expect(sourceUndo[0] && "value" in sourceUndo[0] ? sourceUndo[0].value : undefined).toEqual([
 			{ id: "x", gain: 1 },
 		]);
@@ -414,7 +414,7 @@ describe("scenarios", () => {
 		if (!destinationOps) throw new Error("the destination operations were not heard");
 
 		expect(destinationOps).toHaveLength(1);
-		expect(destinationOps[0]?.do).toMatchObject({ op: "assign", path: ["items"] });
+		expect(destinationOps[0]?.do).toMatchObject({ verb: "assign", path: ["items"] });
 		expect(destinationOps[0] && "value" in destinationOps[0].do ? destinationOps[0].do.value : undefined).toEqual([
 			{ id: "x", gain: 1 },
 		]);
@@ -437,8 +437,8 @@ describe("scenarios", () => {
 		expect(bHeard[1]?.meta).toBeUndefined();
 		expect(bHeard[1]?.ops).toEqual([
 			{
-				do: { op: "assign", path: ["items", 0, "gain"], value: 2 },
-				undo: { op: "assign", path: ["items", 0, "gain"], value: 1 },
+				do: { verb: "assign", path: ["items", 0, "gain"], value: 2 },
+				undo: { verb: "assign", path: ["items", 0, "gain"], value: 1 },
 			},
 		]);
 		expect(a.items).toEqual([]);

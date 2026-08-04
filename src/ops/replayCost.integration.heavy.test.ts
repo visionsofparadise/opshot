@@ -1,10 +1,10 @@
 import { createMutableState } from "../createMutableState";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
-import { applyOps } from "./applyOps";
-import { type Op } from "./operation";
+import { applyOperations } from "./applyOperations";
+import { type Operation } from "./operation";
 
-describe("applyOps: replay cost", () => {
+describe("applyOperations: replay cost", () => {
 	it("replays a deep spine without the per-node redundancy a star never paid", () => {
 		const buildSpine = (depth: number): { child?: unknown } => {
 			const root: { child?: unknown } = {};
@@ -30,7 +30,7 @@ describe("applyOps: replay cost", () => {
 
 		const undoCost = (shape: object): number => {
 			const state = createMutableState<{ tree: object }>({ tree: shape });
-			const recorded = new Array<Op>();
+			const recorded = new Array<Operation>();
 
 			subscribe(state, (ops) => recorded.push(...ops));
 
@@ -41,7 +41,7 @@ describe("applyOps: replay cost", () => {
 			const undo = recorded.map((op) => op.undo).reverse();
 			const started = performance.now();
 
-			applyOps(state, undo);
+			applyOperations(state, undo);
 
 			return performance.now() - started;
 		};

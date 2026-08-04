@@ -3,13 +3,13 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { resolveIdentity } from "../identity";
-import { applyOps } from "../ops/applyOps";
+import { applyOperations } from "../ops/applyOperations";
 import { diffSnapshots } from "../ops/diff";
-import { type Op } from "../ops/operation";
+import { type Operation } from "../ops/operation";
 import { addressOf } from "./address";
 
-const undo = <T extends object>(state: T, ops: Array<Op>): void => {
-	applyOps(state, ops.map((op) => op.undo).reverse());
+const undo = <T extends object>(state: T, ops: Array<Operation>): void => {
+	applyOperations(state, ops.map((op) => op.undo).reverse());
 };
 
 describe("addressOf", () => {

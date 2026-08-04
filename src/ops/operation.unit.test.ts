@@ -5,19 +5,19 @@ import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { isCloneable } from "./cloneValue";
 import {
-	createAssignOperation,
-	createDeleteOperation,
+	createAssignMutation,
+	createDeleteMutation,
 	getValueOriginal,
-	isOperation,
-	type Operation,
+	isMutation,
+	type Mutation,
 } from "./operation";
 
-const readValue = (half: Operation): unknown => ("value" in half ? half.value : undefined);
+const readValue = (half: Mutation): unknown => ("value" in half ? half.value : undefined);
 
 describe("operation", () => {
 	it("mints a fresh equal clone on every read of a cloneable value", () => {
 		const original = { nested: { x: 1 }, list: [1, 2] };
-		const half = createAssignOperation(["node"], original);
+		const half = createAssignMutation(["node"], original);
 
 		expect(readValue(half)).not.toBe(readValue(half));
 		expect(readValue(half)).toEqual(original);
@@ -26,7 +26,7 @@ describe("operation", () => {
 
 	it("keeps non-cloneable values directly readable", () => {
 		const run = (): string => "a";
-		const half = createAssignOperation(["run"], run);
+		const half = createAssignMutation(["run"], run);
 
 		expect(half.value).toBe(run);
 		expect(Object.getOwnPropertyDescriptor(half, "value")?.enumerable).toBe(true);
@@ -34,7 +34,7 @@ describe("operation", () => {
 
 	it("stores a frozen copied path on every half", () => {
 		const source = ["document", 1];
-		const halves = [createAssignOperation(source, 1), createDeleteOperation(source)];
+		const halves = [createAssignMutation(source, 1), createDeleteMutation(source)];
 
 		source[0] = "changed";
 
@@ -46,7 +46,7 @@ describe("operation", () => {
 
 	it("keeps originals registered while public clone reads are independent", () => {
 		const state = createMutableState({ value: { count: 1 } });
-		const half = createAssignOperation(["value"], state.value);
+		const half = createAssignMutation(["value"], state.value);
 		const publicValue = half.value;
 
 		expect(getValueOriginal(half)).toBe(state.value);
@@ -57,20 +57,20 @@ describe("operation", () => {
 	});
 
 	it("brands originals and rejects spread, JSON, and structuredClone copies", () => {
-		const half = createAssignOperation(["node"], { nested: true });
+		const half = createAssignMutation(["node"], { nested: true });
 
-		expect(isOperation(half)).toBe(true);
-		expect(isOperation({ ...half })).toBe(false);
-		expect(isOperation(JSON.parse(JSON.stringify(half)))).toBe(false);
-		expect(isOperation(structuredClone(half))).toBe(false);
+		expect(isMutation(half)).toBe(true);
+		expect(isMutation({ ...half })).toBe(false);
+		expect(isMutation(JSON.parse(JSON.stringify(half)))).toBe(false);
+		expect(isMutation(structuredClone(half))).toBe(false);
 	});
 
 	it("keeps halves branded through an envelope spread", () => {
-		const envelope = { do: createAssignOperation(["node"], { nested: true }), undo: createDeleteOperation(["node"]) };
+		const envelope = { do: createAssignMutation(["node"], { nested: true }), undo: createDeleteMutation(["node"]) };
 		const spread = { ...envelope };
 
-		expect(isOperation(spread.do)).toBe(true);
-		expect(isOperation(spread.undo)).toBe(true);
+		expect(isMutation(spread.do)).toBe(true);
+		expect(isMutation(spread.undo)).toBe(true);
 	});
 
 	it("clones plain-data facade op values through the generic path", () => {
@@ -82,9 +82,9 @@ describe("operation", () => {
 		expect(isCloneable(set)).toBe(true);
 		expect(isCloneable(date)).toBe(true);
 
-		const mapHalf = createAssignOperation(["map"], map);
-		const setHalf = createAssignOperation(["set"], set);
-		const dateHalf = createAssignOperation(["date"], date);
+		const mapHalf = createAssignMutation(["map"], map);
+		const setHalf = createAssignMutation(["set"], set);
+		const dateHalf = createAssignMutation(["date"], date);
 
 		expect(mapHalf.value).not.toBe(map);
 		expect(setHalf.value).not.toBe(set);

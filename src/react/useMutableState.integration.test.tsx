@@ -10,7 +10,7 @@ import { transact } from "../transact";
 import { isWrapper } from "./boundary";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
-import type { Op } from "../ops/operation";
+import type { Operation } from "../ops/operation";
 
 const valtioSubscribeCounts = vi.hoisted(() => ({ subscribes: 0, unsubscribes: 0 }));
 
@@ -325,7 +325,7 @@ describe("useMutableState", () => {
 	});
 
 	it("delivers a write to the subscription the same write tears down", async () => {
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		const View: FC = () => {
 			const state = useMutableState({ count: 0 });
@@ -357,7 +357,7 @@ describe("useMutableState", () => {
 		});
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 
 		await act(async () => {
@@ -365,8 +365,8 @@ describe("useMutableState", () => {
 		});
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
-			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 		expect(screen.getByRole("button").textContent).toBe("2");
 	});

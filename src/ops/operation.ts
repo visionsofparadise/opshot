@@ -5,13 +5,13 @@ import { createOperationPath, type OperationPath } from "./path";
  * Assigns a value at a path.
  *
  * @example
- * { op: "assign", path: ["count"], value: 1 }
+ * { verb: "assign", path: ["count"], value: 1 }
  */
-export interface AssignOperation {
+export interface AssignMutation {
 	/**
 	 * `"assign"`.
 	 */
-	readonly op: "assign";
+	readonly verb: "assign";
 
 	/**
 	 * Path to assign.
@@ -28,13 +28,13 @@ export interface AssignOperation {
  * Deletes the value at a path.
  *
  * @example
- * { op: "delete", path: ["temp"] }
+ * { verb: "delete", path: ["temp"] }
  */
-export interface DeleteOperation {
+export interface DeleteMutation {
 	/**
 	 * `"delete"`.
 	 */
-	readonly op: "delete";
+	readonly verb: "delete";
 
 	/**
 	 * Path to delete.
@@ -46,33 +46,33 @@ export interface DeleteOperation {
  * An assign or delete operation.
  *
  * @example
- * { op: "assign", path: ["profile"], value: { name: "Ada" } }
+ * { verb: "assign", path: ["profile"], value: { name: "Ada" } }
  */
-export type Operation = AssignOperation | DeleteOperation;
+export type Mutation = AssignMutation | DeleteMutation;
 
 /**
  * A change with do and undo halves.
  *
  * @example
- * { do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }
+ * { do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }
  */
-export interface Op {
+export interface Operation {
 	/**
 	 * Forward operation.
 	 */
-	readonly do: Operation;
+	readonly do: Mutation;
 
 	/**
 	 * Reverse operation.
 	 */
-	readonly undo: Operation;
+	readonly undo: Mutation;
 }
 
 const operationBrand = Symbol.for("opshot.operation");
 const valueOriginals = new WeakMap<object, unknown>();
 
 abstract class OperationHalf {
-	abstract readonly op: Operation["op"];
+	abstract readonly verb: Mutation["verb"];
 	readonly path: OperationPath;
 
 	constructor(path: OperationPath) {
@@ -96,19 +96,19 @@ abstract class ValueHalf extends OperationHalf {
 }
 
 class AssignHalf extends ValueHalf {
-	readonly op = "assign";
+	readonly verb = "assign";
 }
 
 class DeleteHalf extends OperationHalf {
-	readonly op = "delete";
+	readonly verb = "delete";
 }
 
-export const isOperation = (value: unknown): value is Operation =>
+export const isMutation = (value: unknown): value is Mutation =>
 	typeof value === "object" && value !== null && operationBrand in value;
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
-export const createAssignOperation = (path: OperationPath, value: unknown): AssignOperation =>
+export const createAssignMutation = (path: OperationPath, value: unknown): AssignMutation =>
 	new AssignHalf(path, value);
 
-export const createDeleteOperation = (path: OperationPath): DeleteOperation => new DeleteHalf(path);
+export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);

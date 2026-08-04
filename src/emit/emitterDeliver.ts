@@ -1,5 +1,5 @@
 import type { EmitterRecord, GroupListener, StateListener } from "./emitterRegistry";
-import type { Op } from "../ops/operation";
+import type { Operation } from "../ops/operation";
 
 type Delivery =
 	| { readonly kind: "group"; readonly deliver: GroupListener }
@@ -8,7 +8,7 @@ type Delivery =
 interface PendingDelivery {
 	readonly target: object;
 	readonly deliveries: ReadonlyArray<Delivery>;
-	readonly ops: ReadonlyArray<Op>;
+	readonly ops: ReadonlyArray<Operation>;
 	readonly meta: unknown;
 }
 
@@ -88,7 +88,7 @@ export const bracketDelivery = (report: (failures: Array<unknown>) => void): voi
 	raiseFailures(failures);
 };
 
-export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Op>, meta: unknown): void => {
+export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Operation>, meta: unknown): void => {
 	const pending: PendingDelivery = { target: record.target, deliveries: collectDeliveries(record), ops, meta };
 
 	if (isDelivering) {

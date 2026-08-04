@@ -5,9 +5,9 @@ import {
 	TrackedDate,
 	TrackedMap,
 	TrackedSet,
-	type AssignOperation,
-	type DeleteOperation,
-	type Operation,
+	type AssignMutation,
+	type DeleteMutation,
+	type Mutation,
 	type OperationPath,
 } from "../index";
 import { useMutableState } from "../react/useMutableState";
@@ -31,14 +31,14 @@ const defaultedChannel = createChannel<{ replay: boolean; transactionKey?: strin
 
 describe("typing", () => {
 	it("exports the frozen-path two-verb operation surface from the package root", () => {
-		expectTypeOf<Operation>().toEqualTypeOf<AssignOperation | DeleteOperation>();
+		expectTypeOf<Mutation>().toEqualTypeOf<AssignMutation | DeleteMutation>();
 		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<string | number>>();
 	});
 
 	it("types address components entirely inside flat paths", () => {
-		const operation: Operation = { op: "assign", path: ["items", "o3", "id"], value: 2 };
+		const operation: Mutation = { verb: "assign", path: ["items", "o3", "id"], value: 2 };
 
-		if (operation.op !== "assign") throw new Error("expected an assign operation");
+		if (operation.verb !== "assign") throw new Error("expected an assign operation");
 
 		expectTypeOf(operation.path).toEqualTypeOf<OperationPath>();
 		expect(operation.path).toEqual(["items", "o3", "id"]);
@@ -81,7 +81,7 @@ describe("typing", () => {
 		const state = createMutableState(makeDoc());
 
 		subscribe(state, (ops, meta) => {
-			expectTypeOf(ops).toEqualTypeOf<ReadonlyArray<{ readonly do: Operation; readonly undo: Operation }>>();
+			expectTypeOf(ops).toEqualTypeOf<ReadonlyArray<{ readonly do: Mutation; readonly undo: Mutation }>>();
 			expectTypeOf(meta).toEqualTypeOf<unknown>();
 		});
 	});
@@ -90,7 +90,7 @@ describe("typing", () => {
 		const state = createMutableState(makeDoc());
 
 		docChannel.subscribe(state, (ops, context) => {
-			expectTypeOf(ops).items.toMatchTypeOf<{ readonly do: Operation; readonly undo: Operation }>();
+			expectTypeOf(ops).items.toMatchTypeOf<{ readonly do: Mutation; readonly undo: Mutation }>();
 
 			if (context.isTransaction) {
 				expectTypeOf(context.meta).toEqualTypeOf<DocMeta>();

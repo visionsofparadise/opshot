@@ -3,21 +3,21 @@ import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
-import { applyOps } from "../ops/applyOps";
-import { type Op, type Operation } from "../ops/operation";
+import { applyOperations } from "../ops/applyOperations";
+import { type Operation, type Mutation } from "../ops/operation";
 import { addressOf } from "./address";
 import { TrackedDate } from "./trackedDate";
 import { TrackedMap } from "./trackedMap";
 
-const record = <T extends object>(state: T): Array<Array<Op>> => {
-	const heard = new Array<Array<Op>>();
+const record = <T extends object>(state: T): Array<Array<Operation>> => {
+	const heard = new Array<Array<Operation>>();
 
 	subscribe(state, (ops) => heard.push([...ops]));
 
 	return heard;
 };
 
-const doPaths = (ops: Array<Op> | undefined): Array<Operation["path"]> => (ops ?? []).map((pair) => pair.do.path);
+const doPaths = (ops: Array<Operation> | undefined): Array<Mutation["path"]> => (ops ?? []).map((pair) => pair.do.path);
 
 describe("TrackedMap", () => {
 	it("implements the Map surface with ordered insertion and overwrite semantics", () => {
@@ -146,20 +146,20 @@ describe("TrackedMap", () => {
 			]),
 		);
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.do).toMatchObject({
-			op: "assign",
+			verb: "assign",
 			path: ["map", "index", addr],
 			value: 20,
 		});
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.undo.op).toBe("delete");
-		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.undo.op).toBe("delete");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "index")?.undo.verb).toBe("delete");
+		expect(heard[0]?.find((pair) => pair.do.path[1] === "slots" && pair.do.path[2] === 20)?.undo.verb).toBe("delete");
 		expect(heard[0]?.find((pair) => pair.do.path[1] === "count")?.do).toMatchObject({
-			op: "assign",
+			verb: "assign",
 			path: ["map", "count"],
 		});
 
 		expect(doPaths(heard[1])).toEqual([["map", "slots", 20]]);
-		expect(heard[1]?.[0]?.do.op).toBe("assign");
-		expect(heard[1]?.[0]?.undo.op).toBe("assign");
+		expect(heard[1]?.[0]?.do.verb).toBe("assign");
+		expect(heard[1]?.[0]?.undo.verb).toBe("assign");
 
 		expect(doPaths(heard[2])).toEqual(
 			expect.arrayContaining([
@@ -168,9 +168,9 @@ describe("TrackedMap", () => {
 				["map", "count"],
 			]),
 		);
-		expect(heard[2]?.find((pair) => pair.do.path[1] === "index")?.do.op).toBe("delete");
+		expect(heard[2]?.find((pair) => pair.do.path[1] === "index")?.do.verb).toBe("delete");
 		expect(heard[2]?.find((pair) => pair.do.path[1] === "slots")?.do).toMatchObject({
-			op: "assign",
+			verb: "assign",
 			path: ["map", "slots", 20],
 			value: null,
 		});
@@ -224,8 +224,8 @@ describe("TrackedMap", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(1);
-		expect(ops[0]?.do).toMatchObject({ op: "assign", path: ["map"] });
-		applyOps(
+		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["map"] });
+		applyOperations(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
@@ -233,7 +233,7 @@ describe("TrackedMap", () => {
 			["a", 1],
 			["b", 2],
 		]);
-		applyOps(
+		applyOperations(
 			state,
 			ops.map((pair) => pair.do),
 		);
@@ -257,7 +257,7 @@ describe("TrackedMap", () => {
 
 		transact(state, () => state.map.clear());
 		const ops = heard[0] ?? [];
-		applyOps(
+		applyOperations(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
@@ -282,13 +282,13 @@ describe("TrackedMap", () => {
 		});
 
 		const ops = heard[0] ?? [];
-		applyOps(
+		applyOperations(
 			state,
 			[...ops].reverse().map((pair) => pair.undo),
 		);
 		expect(state.map.get("a")?.items).toEqual(["x"]);
 		expect(state.map.get("a")?.when.getTime()).toBe(0);
-		applyOps(
+		applyOperations(
 			state,
 			ops.map((pair) => pair.do),
 		);

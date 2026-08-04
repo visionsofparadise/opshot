@@ -4,15 +4,15 @@ import { snapshot } from "valtio/vanilla";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
-import { applyOps } from "../ops/applyOps";
-import { type Op, type Operation } from "../ops/operation";
+import { applyOperations } from "../ops/applyOperations";
+import { type Operation, type Mutation } from "../ops/operation";
 import { TrackedDate } from "./trackedDate";
 
-const readValue = (half: Operation | undefined): unknown =>
+const readValue = (half: Mutation | undefined): unknown =>
 	half !== undefined && "value" in half ? half.value : undefined;
 
-const recordAll = (state: object): Array<{ ops: Array<Op>; meta: unknown }> => {
-	const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
+const recordAll = (state: object): Array<{ ops: Array<Operation>; meta: unknown }> => {
+	const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 	subscribe(state, (ops, meta) => {
 		heard.push({ ops: [...ops], meta });
@@ -235,10 +235,10 @@ describe("TrackedDate atomic emission", () => {
 
 		expect(heard[0]?.ops).toHaveLength(1);
 		expect(heard[0]?.meta).toBeUndefined();
-		expect(pair.do.op).toBe("assign");
+		expect(pair.do.verb).toBe("assign");
 		expect(pair.do.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.do)).toBe(Date.UTC(2024, 0, 1));
-		expect(pair.undo.op).toBe("assign");
+		expect(pair.undo.verb).toBe("assign");
 		expect(pair.undo.path).toEqual(["when", "epochMs"]);
 		expect(readValue(pair.undo)).toBe(Date.UTC(2020, 0, 1));
 	});
@@ -255,10 +255,10 @@ describe("TrackedDate atomic emission", () => {
 
 		if (!pair) throw new Error("the epoch pair was not heard");
 
-		applyOps(state, [pair.undo]);
+		applyOperations(state, [pair.undo]);
 		expect(state.when.getTime()).toBe(0);
 
-		applyOps(state, [pair.do]);
+		applyOperations(state, [pair.do]);
 		expect(state.when.getTime()).toBe(1);
 	});
 });

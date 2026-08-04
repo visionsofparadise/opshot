@@ -1,7 +1,7 @@
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 import { getSettings, type EmitOn } from "../settings";
 import { resolveEmitterTarget } from "./resolveEmitterTarget";
-import type { Op } from "../ops/operation";
+import type { Operation } from "../ops/operation";
 
 /**
  * Listener for one state's changes.
@@ -10,7 +10,7 @@ import type { Op } from "../ops/operation";
  * @param meta - Writer meta, if any.
  * @returns Nothing.
  */
-export type StateListener = (ops: ReadonlyArray<Op>, meta: unknown) => void;
+export type StateListener = (ops: ReadonlyArray<Operation>, meta: unknown) => void;
 
 /**
  * Listener for a group's changes.
@@ -20,7 +20,7 @@ export type StateListener = (ops: ReadonlyArray<Op>, meta: unknown) => void;
  * @param meta - Writer meta, if any.
  * @returns Nothing.
  */
-export type GroupListener = (state: object, ops: ReadonlyArray<Op>, meta: unknown) => void;
+export type GroupListener = (state: object, ops: ReadonlyArray<Operation>, meta: unknown) => void;
 
 type StateListeners = Map<Function, Map<object | undefined, StateListener>>;
 

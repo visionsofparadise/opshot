@@ -3,7 +3,7 @@ import { createChannel } from "./createChannel";
 import { createMutableState } from "./createMutableState";
 import { isSameIdentity } from "./identity";
 import { diffSnapshots } from "./ops/diff";
-import { type Op } from "./ops/operation";
+import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
 
@@ -16,7 +16,7 @@ interface Counter {
 describe("createGroup", () => {
 	it("hears every state it created, with the state reference and meta", () => {
 		const group = createGroup();
-		const emissions = new Array<{ state: object; ops: Array<Op>; meta: unknown }>();
+		const emissions = new Array<{ state: object; ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(group, (state, ops, meta) => {
 			emissions.push({ state, ops: [...ops], meta });
@@ -42,7 +42,7 @@ describe("createGroup", () => {
 		expect(isSameIdentity(first, emissions[0]!.state)).toBe(true);
 		expect(isSameIdentity(second, emissions[0]!.state)).toBe(false);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
+			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
 		expect(emissions[1]?.state).toBe(second);
@@ -69,14 +69,14 @@ describe("createGroup", () => {
 
 	it("does not hear a standalone state", () => {
 		const group = createGroup();
-		const emissions = new Array<Array<Op>>();
+		const emissions = new Array<Array<Operation>>();
 
 		subscribe(group, (_state, ops) => {
 			emissions.push([...ops]);
 		});
 
 		const standalone = createMutableState<Counter>({ count: 0 });
-		const ownEmissions = new Array<Array<Op>>();
+		const ownEmissions = new Array<Array<Operation>>();
 
 		subscribe(standalone, (ops) => {
 			ownEmissions.push([...ops]);
@@ -93,8 +93,8 @@ describe("createGroup", () => {
 	it("isolates two groups", () => {
 		const first = createGroup();
 		const second = createGroup();
-		const firstEmissions = new Array<Array<Op>>();
-		const secondEmissions = new Array<Array<Op>>();
+		const firstEmissions = new Array<Array<Operation>>();
+		const secondEmissions = new Array<Array<Operation>>();
 
 		subscribe(first, (_state, ops) => firstEmissions.push([...ops]));
 		subscribe(second, (_state, ops) => secondEmissions.push([...ops]));
@@ -111,7 +111,7 @@ describe("createGroup", () => {
 
 	it("stops calling a listener after its remover runs", () => {
 		const group = createGroup();
-		const emissions = new Array<Array<Op>>();
+		const emissions = new Array<Array<Operation>>();
 		const remove = subscribe(group, (_state, ops) => {
 			emissions.push([...ops]);
 		});
@@ -138,7 +138,7 @@ describe("createGroup", () => {
 
 		expect(diffSnapshots).not.toHaveBeenCalled();
 
-		const emissions = new Array<Array<Op>>();
+		const emissions = new Array<Array<Operation>>();
 		const remove = subscribe(group, (_state, ops) => {
 			emissions.push([...ops]);
 		});
@@ -201,7 +201,7 @@ describe("createGroup", () => {
 		const parent = createGroup();
 		const child = createGroup(parent);
 		const sibling = createGroup(parent);
-		const siblingEmissions = new Array<Array<Op>>();
+		const siblingEmissions = new Array<Array<Operation>>();
 
 		subscribe(sibling, (_state, ops) => {
 			siblingEmissions.push([...ops]);

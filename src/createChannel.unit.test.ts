@@ -100,10 +100,10 @@ describe("createChannel", () => {
 		expect(heard).toEqual([{ actor: "matt" }, { plain: true }]);
 	});
 
-	it("channel applyOps transacts on the channel", () => {
+	it("channel applyOperations transacts on the channel", () => {
 		const channel = createChannel<{ replay: boolean }>({ replay: false });
 		const state = createMutableState({ count: 0 });
-		const ops: Array<import("./ops/operation").Op> = [];
+		const ops: Array<import("./ops/operation").Operation> = [];
 
 		const unsub = channel.subscribe(state, (delivered) => {
 			ops.push(...delivered);
@@ -121,7 +121,7 @@ describe("createChannel", () => {
 			if (context.isTransaction) replayHeard.push(context.meta);
 		});
 
-		channel.applyOps(
+		channel.applyOperations(
 			replay,
 			ops.map((op) => op.do),
 			{},

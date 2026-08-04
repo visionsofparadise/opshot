@@ -2,9 +2,9 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
-import { applyOps } from "../ops/applyOps";
+import { applyOperations } from "../ops/applyOperations";
 import { getCyclicPath } from "../ops/cloneValue";
-import { type Op } from "../ops/operation";
+import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { behaviorNames, catalog, type BehaviorName } from "./valueCatalog";
@@ -147,7 +147,7 @@ const scenarios = {
 			}
 
 			const state = createMutableState({ value: create() });
-			const heard = new Array<Op>();
+			const heard = new Array<Operation>();
 
 			subscribe(state, (ops) => {
 				heard.push(...ops);
@@ -166,7 +166,7 @@ const scenarios = {
 	roundTripsFaithfully: (create) => {
 		try {
 			const state = createMutableState({ value: create() });
-			const heard = new Array<Array<Op>>();
+			const heard = new Array<Array<Operation>>();
 
 			subscribe(state, (ops) => {
 				heard.push([...ops]);
@@ -181,14 +181,14 @@ const scenarios = {
 			const recorded = heard.flat().map((op) => ({ do: op.do, undo: op.undo }));
 			const redoBaseline = snapshot(state).value;
 
-			applyOps(
+			applyOperations(
 				state,
 				[...recorded].reverse().map((op) => op.undo),
 			);
 
 			if (!strictEqual(snapshot(state).value, undoBaseline)) return false;
 
-			applyOps(
+			applyOperations(
 				state,
 				recorded.map((op) => op.do),
 			);
@@ -229,7 +229,7 @@ const scenarios = {
 
 			for (const methodName of methodNames) {
 				const state = createMutableState({ value: create() });
-				const heard = new Array<Op>();
+				const heard = new Array<Operation>();
 
 				subscribe(state, (ops) => {
 					heard.push(...ops);

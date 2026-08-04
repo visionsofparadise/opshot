@@ -1,12 +1,12 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
-import { applyOps as standaloneApplyOps } from "./ops/applyOps";
+import { applyOperations as standaloneApplyOperations } from "./ops/applyOperations";
 import { stampChannelMeta, toChannelContext, type Context } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
-import type { Op, Operation } from "./ops/operation";
+import type { Operation, Mutation } from "./ops/operation";
 
 /**
- * Channel-bound `transact`, `subscribe`, and `applyOps`.
+ * Channel-bound `transact`, `subscribe`, and `applyOperations`.
  *
  * @typeParam M - Meta type for this channel.
  */
@@ -29,7 +29,7 @@ export interface Channel<M extends object> {
 	 * @param listener - Called on each change.
 	 * @returns Unsubscribe function.
 	 */
-	subscribe(group: Group, listener: (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+	subscribe(group: Group, listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void): () => void;
 
 	/**
 	 * Listens for changes to a state.
@@ -38,7 +38,7 @@ export interface Channel<M extends object> {
 	 * @param listener - Called on each change.
 	 * @returns Unsubscribe function.
 	 */
-	subscribe(state: object, listener: (ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+	subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: Context<M>) => void): () => void;
 
 	/**
 	 * Applies operations with this channel's meta.
@@ -48,7 +48,7 @@ export interface Channel<M extends object> {
 	 * @param meta - Meta for this write.
 	 * @returns Nothing.
 	 */
-	applyOps(state: object, operations: ReadonlyArray<Operation>, meta?: Partial<M>): void;
+	applyOperations(state: object, operations: ReadonlyArray<Mutation>, meta?: Partial<M>): void;
 }
 
 /**
@@ -67,20 +67,20 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 
 	function subscribe(
 		group: Group,
-		listener: (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void,
+		listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void,
 	): () => void;
 
-	function subscribe(state: object, listener: (ops: ReadonlyArray<Op>, context: Context<M>) => void): () => void;
+	function subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: Context<M>) => void): () => void;
 
 	function subscribe(
 		target: object | Group,
 		listener:
-			| ((ops: ReadonlyArray<Op>, context: Context<M>) => void)
-			| ((state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void),
+			| ((ops: ReadonlyArray<Operation>, context: Context<M>) => void)
+			| ((state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void),
 	): () => void {
 		if (isGroup(target)) {
 			return addGroupListener(getGroupListeners(target), listener, channelId, (state, ops, meta) => {
-				(listener as (state: object, ops: ReadonlyArray<Op>, context: Context<M>) => void)(
+				(listener as (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void)(
 					state,
 					ops,
 					toChannelContext(channelId, defaults, meta),
@@ -89,16 +89,16 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		}
 
 		return addStateListener(target, listener, channelId, (ops, meta) => {
-			(listener as (ops: ReadonlyArray<Op>, context: Context<M>) => void)(
+			(listener as (ops: ReadonlyArray<Operation>, context: Context<M>) => void)(
 				ops,
 				toChannelContext(channelId, defaults, meta),
 			);
 		});
 	}
 
-	function applyOps(state: object, operations: ReadonlyArray<Operation>, meta?: Partial<M>): void {
-		standaloneApplyOps(state, operations, stampChannelMeta(channelId, meta));
+	function applyOperations(state: object, operations: ReadonlyArray<Mutation>, meta?: Partial<M>): void {
+		standaloneApplyOperations(state, operations, stampChannelMeta(channelId, meta));
 	}
 
-	return { transact, subscribe, applyOps };
+	return { transact, subscribe, applyOperations };
 }

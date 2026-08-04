@@ -1,6 +1,6 @@
 import { isSameIdentity } from "../identity";
 import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
-import { createAssignOperation, createDeleteOperation, type Op } from "./operation";
+import { createAssignMutation, createDeleteMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
 
@@ -16,19 +16,19 @@ class IncompatibleSnapshotRootsError extends Error {
 	}
 }
 
-const additionPair = (path: OperationPath, after: unknown): Op => ({
-	do: createAssignOperation(path, after),
-	undo: createDeleteOperation(path),
+const additionPair = (path: OperationPath, after: unknown): Operation => ({
+	do: createAssignMutation(path, after),
+	undo: createDeleteMutation(path),
 });
 
-const removalPair = (path: OperationPath, before: unknown): Op => ({
-	do: createDeleteOperation(path),
-	undo: createAssignOperation(path, before),
+const removalPair = (path: OperationPath, before: unknown): Operation => ({
+	do: createDeleteMutation(path),
+	undo: createAssignMutation(path, before),
 });
 
-const changePair = (path: OperationPath, before: unknown, after: unknown): Op => ({
-	do: createAssignOperation(path, after),
-	undo: createAssignOperation(path, before),
+const changePair = (path: OperationPath, before: unknown, after: unknown): Operation => ({
+	do: createAssignMutation(path, after),
+	undo: createAssignMutation(path, before),
 });
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
@@ -65,7 +65,7 @@ const assertAcyclic = (value: unknown, path: OperationPath): void => {
 	visit(value);
 };
 
-const pushAddition = (ops: Array<Op>, path: OperationPath, after: unknown): number => {
+const pushAddition = (ops: Array<Operation>, path: OperationPath, after: unknown): number => {
 	assertAcyclic(after, path);
 
 	ops.push(additionPair(path, after));
@@ -73,13 +73,13 @@ const pushAddition = (ops: Array<Op>, path: OperationPath, after: unknown): numb
 	return OPERATION_WEIGHT + weighCarried(after);
 };
 
-const pushRemoval = (ops: Array<Op>, path: OperationPath, before: unknown): number => {
+const pushRemoval = (ops: Array<Operation>, path: OperationPath, before: unknown): number => {
 	ops.push(removalPair(path, before));
 
 	return OPERATION_WEIGHT + weighCarried(before);
 };
 
-const pushChange = (ops: Array<Op>, path: OperationPath, before: unknown, after: unknown): number => {
+const pushChange = (ops: Array<Operation>, path: OperationPath, before: unknown, after: unknown): number => {
 	assertAcyclic(after, path);
 
 	ops.push(changePair(path, before, after));
@@ -91,7 +91,7 @@ const tryCollapse = (
 	before: unknown,
 	after: unknown,
 	path: OperationPath,
-	ops: Array<Op>,
+	ops: Array<Operation>,
 	opsStart: number,
 	atomicWeight: number,
 ): number => {
@@ -170,7 +170,7 @@ const diffObjectProperties = (
 	before: Record<string, unknown> | Array<unknown>,
 	after: Record<string, unknown> | Array<unknown>,
 	path: OperationPath,
-	ops: Array<Op>,
+	ops: Array<Operation>,
 	ancestors: Ancestors,
 	ignoreArrayIndexes: boolean,
 ): number => {
@@ -200,7 +200,7 @@ const diffArray = (
 	before: Array<unknown>,
 	after: Array<unknown>,
 	path: OperationPath,
-	ops: Array<Op>,
+	ops: Array<Operation>,
 	ancestors: Ancestors,
 ): number => {
 	const overlap = Math.min(before.length, after.length);
@@ -242,7 +242,7 @@ const walkContainer = (
 	before: object,
 	after: object,
 	path: OperationPath,
-	ops: Array<Op>,
+	ops: Array<Operation>,
 	ancestors: Ancestors,
 	walk: () => number,
 ): number => {
@@ -270,7 +270,7 @@ const diffValue = (
 	before: unknown,
 	after: unknown,
 	path: OperationPath,
-	ops: Array<Op>,
+	ops: Array<Operation>,
 	ancestors: Ancestors,
 ): number => {
 	if (Object.is(before, after)) return 0;
@@ -307,13 +307,13 @@ const getRootKind = (value: object): RootKind | undefined => {
  * @param after - Later value.
  * @returns Ops from before to after.
  */
-export function diffSnapshots(before: object, after: object): Array<Op> {
+export function diffSnapshots(before: object, after: object): Array<Operation> {
 	const beforeKind = getRootKind(before);
 	const afterKind = getRootKind(after);
 
 	if (beforeKind === undefined || beforeKind !== afterKind) throw new IncompatibleSnapshotRootsError();
 
-	const ops = new Array<Op>();
+	const ops = new Array<Operation>();
 
 	diffValue(before, after, createOperationPath([]), ops, new Map());
 

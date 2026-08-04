@@ -4,9 +4,9 @@ export { createMutableState, type MutableStateOptions } from "./createMutableSta
 export { type EmitOn, type StateSettings } from "./settings";
 export { identify, isSameIdentity } from "./identity";
 export { isState } from "./isState";
-export { applyOps } from "./ops/applyOps";
+export { applyOperations } from "./ops/applyOperations";
 export { diffSnapshots } from "./ops/diff";
-export { type AssignOperation, type DeleteOperation, type Op, type Operation } from "./ops/operation";
+export { type AssignMutation, type DeleteMutation, type Operation, type Mutation } from "./ops/operation";
 export { type OperationPath } from "./ops/path";
 export { ignore, type Ignored } from "./ignore";
 export { unsafeTrack, type UnsafeTracked } from "./unsafeTrack";

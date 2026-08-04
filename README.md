@@ -181,8 +181,8 @@ const Counter = () => {
 		() =>
 			subscribe(counter, (ops, meta) => {
 				// ops: [{
-				//   do:   { op: "assign", path: ["count"], value: 1 },
-				//   undo: { op: "assign", path: ["count"], value: 0 },
+				//   do:   { verb: "assign", path: ["count"], value: 1 },
+				//   undo: { verb: "assign", path: ["count"], value: 0 },
 				// }]
 				// meta: whatever the writer passed, or undefined for bare writes
 			}),
@@ -205,32 +205,32 @@ Do not mutate the subscribed state inside the listener — that re-enters the li
 
 ## Ops
 
-An op is an invertible pair of `Operation` halves. Every half uses one of two verbs:
+An op is an invertible pair of `Mutation` halves. Every half uses one of two verbs:
 
 ```ts
 type OperationPath = ReadonlyArray<string | number>;
 
-type Operation =
-	| { readonly op: "assign"; readonly path: OperationPath; readonly value: unknown }
-	| { readonly op: "delete"; readonly path: OperationPath };
+type Mutation =
+	| { readonly verb: "assign"; readonly path: OperationPath; readonly value: unknown }
+	| { readonly verb: "delete"; readonly path: OperationPath };
 
-interface Op {
-	readonly do: Operation;
-	readonly undo: Operation;
+interface Operation {
+	readonly do: Mutation;
+	readonly undo: Mutation;
 }
 ```
 
-`applyOps` puts them back on a state, so a history is a list of ops and an undo is their `undo` halves in reverse.
+`applyOperations` puts them back on a state, so a history is a list of ops and an undo is their `undo` halves in reverse.
 
 ```tsx
 import { useEffect, useRef } from "react";
-import { applyOps, subscribe, useMutableState, type Op } from "opshot";
+import { applyOperations, subscribe, useMutableState, type Operation } from "opshot";
 
 const replay = {};
 
 const Counter = () => {
 	const counter = useMutableState({ count: 0 });
-	const history = useRef<Array<ReadonlyArray<Op>>>([]);
+	const history = useRef<Array<ReadonlyArray<Operation>>>([]);
 
 	useEffect(
 		() =>
@@ -248,7 +248,7 @@ const Counter = () => {
 
 		if (!ops) return;
 
-		applyOps(
+		applyOperations(
 			counter,
 			[...ops].reverse().map((op) => op.undo),
 			replay,
@@ -310,7 +310,7 @@ const Editor = () => {
 
 ## Channels
 
-A channel binds `transact`, `subscribe`, and `applyOps` to a typed meta convention, so a listener can tell its own writes from everyone else's.
+A channel binds `transact`, `subscribe`, and `applyOperations` to a typed meta convention, so a listener can tell its own writes from everyone else's.
 
 ```tsx
 import { useEffect } from "react";

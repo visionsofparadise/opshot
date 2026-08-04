@@ -5,13 +5,13 @@ import { snapshot } from "valtio/vanilla";
 
 import { installBoundary } from "./boundary";
 import { createMutableState } from "../createMutableState";
-import { applyOps } from "../ops/applyOps";
-import { type Op } from "../ops/operation";
+import { applyOperations } from "../ops/applyOperations";
+import { type Operation } from "../ops/operation";
 import { ignore } from "../ignore";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 
-const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Op> }> => {
-	const emissions = new Array<{ state: T; ops: Array<Op> }>();
+const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
+	const emissions = new Array<{ state: T; ops: Array<Operation> }>();
 
 	subscribe(state, (ops) => {
 		emissions.push({ state, ops: [...ops] });
@@ -36,14 +36,14 @@ describe("boundary: tracked lane", () => {
 		expect(emissions.map((emission) => emission.ops)).toEqual([
 			[
 				{
-					do: { op: "assign", path: ["document", "title"], value: "b" },
-					undo: { op: "assign", path: ["document", "title"], value: "a" },
+					do: { verb: "assign", path: ["document", "title"], value: "b" },
+					undo: { verb: "assign", path: ["document", "title"], value: "a" },
 				},
 			],
 			[
 				{
-					do: { op: "assign", path: ["document", "tags", 1], value: "z" },
-					undo: { op: "assign", path: ["document", "tags", 1], value: "y" },
+					do: { verb: "assign", path: ["document", "tags", 1], value: "z" },
+					undo: { verb: "assign", path: ["document", "tags", 1], value: "y" },
 				},
 			],
 		]);
@@ -67,8 +67,8 @@ describe("boundary: tracked lane", () => {
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
 			{
-				do: { op: "assign", path: ["collection", "count"], value: 1 },
-				undo: { op: "assign", path: ["collection", "count"], value: 0 },
+				do: { verb: "assign", path: ["collection", "count"], value: 1 },
+				undo: { verb: "assign", path: ["collection", "count"], value: 0 },
 			},
 		]);
 		expect(state.collection.count).toBe(1);
@@ -125,7 +125,7 @@ describe("boundary: snapshot donation", () => {
 				destination.box = donated;
 			});
 		}).toThrow(
-			'opshot: cannot assign a snapshot generation at "box": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOps.',
+			'opshot: cannot assign a snapshot generation at "box": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.',
 		);
 		expect(destination.box).toBe(null);
 	});
@@ -140,7 +140,7 @@ describe("boundary: snapshot donation", () => {
 			transact(destination, () => {
 				destination.box = wrapped;
 			});
-		}).toThrow("Clone the value, or replay through applyOps");
+		}).toThrow("Clone the value, or replay through applyOperations");
 		expect(destination.box).toBe(null);
 	});
 
@@ -305,8 +305,8 @@ describe("boundary: throws at entry", () => {
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
 			{
-				do: { op: "assign", path: ["emitter", "count"], value: 1 },
-				undo: { op: "assign", path: ["emitter", "count"], value: 0 },
+				do: { verb: "assign", path: ["emitter", "count"], value: 1 },
+				undo: { verb: "assign", path: ["emitter", "count"], value: 0 },
 			},
 		]);
 		expect(state.emitter).toBeInstanceOf(Emitter);
@@ -481,7 +481,7 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["tick"], value: 1 }, undo: { op: "assign", path: ["tick"], value: 0 } },
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
 		]);
 		expect(state.box).toBe(frozen);
 
@@ -540,7 +540,7 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } },
+			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 
 		const emitted = emissions[0]?.state;
@@ -563,7 +563,7 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["run"], value: second }, undo: { op: "assign", path: ["run"], value: first } },
+			{ do: { verb: "assign", path: ["run"], value: second }, undo: { verb: "assign", path: ["run"], value: first } },
 		]);
 		expect(state.run).toBe(second);
 	});
@@ -693,7 +693,7 @@ describe("boundary: meta-mutation trap gates", () => {
 
 		const recorded = emissions[0]?.ops[0]?.undo;
 
-		if (recorded?.op !== "assign") throw new Error("missing recorded assign");
+		if (recorded?.verb !== "assign") throw new Error("missing recorded assign");
 
 		const undoValue = recorded.value;
 
@@ -771,8 +771,8 @@ describe("boundary: strict false", () => {
 
 		const expected = [
 			{
-				do: { op: "assign", path: ["arrow", "count"], value: 5 },
-				undo: { op: "assign", path: ["arrow", "count"], value: 0 },
+				do: { verb: "assign", path: ["arrow", "count"], value: 5 },
+				undo: { verb: "assign", path: ["arrow", "count"], value: 0 },
 			},
 		];
 
@@ -781,10 +781,10 @@ describe("boundary: strict false", () => {
 
 		const op = nonStrictHeard[0]!.ops[0]!;
 
-		applyOps(nonStrict, [op.undo]);
+		applyOperations(nonStrict, [op.undo]);
 		expect(nonStrict.arrow.count).toBe(0);
 
-		applyOps(nonStrict, [op.do]);
+		applyOperations(nonStrict, [op.do]);
 		expect(nonStrict.arrow.count).toBe(5);
 	});
 
@@ -799,8 +799,8 @@ describe("boundary: strict false", () => {
 		expect(emissions.map((emission) => emission.ops)).toEqual([
 			[
 				{
-					do: { op: "assign", path: ["arrow", "count"], value: 3 },
-					undo: { op: "assign", path: ["arrow", "count"], value: 0 },
+					do: { verb: "assign", path: ["arrow", "count"], value: 3 },
+					undo: { verb: "assign", path: ["arrow", "count"], value: 0 },
 				},
 			],
 		]);

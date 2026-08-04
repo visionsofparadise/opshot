@@ -1,7 +1,7 @@
 import { resolveEmitterTarget } from "../emit/resolveEmitterTarget";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
-import { getValueOriginal, isOperation, type AssignOperation, type Operation } from "./operation";
+import { getValueOriginal, isMutation, type AssignMutation, type Mutation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 
 interface ValuePayload {
@@ -21,12 +21,12 @@ const sameValueZero = (first: unknown, second: unknown): boolean =>
 const sameIdentity = (first: unknown, second: unknown): boolean =>
 	sameValueZero(resolveIdentity(first), resolveIdentity(second));
 
-const assertApplicable: (operation: unknown) => asserts operation is Operation = (operation) => {
+const assertApplicable: (operation: unknown) => asserts operation is Mutation = (operation) => {
 	if (typeof operation === "object" && operation !== null && "do" in operation) {
-		throw new Error("opshot: applyOps applies operation halves; pass op.do or op.undo.");
+		throw new Error("opshot: applyOperations applies operation halves; pass op.do or op.undo.");
 	}
 
-	if (!isOperation(operation)) {
+	if (!isMutation(operation)) {
 		throw new Error(
 			"opshot: this op is a copy (spread, JSON, or structuredClone) and has lost its value. Apply the op objects the listener delivered; never copy them.",
 		);
@@ -108,7 +108,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 	}
 };
 
-const getValuePayload = (operation: AssignOperation): ValuePayload => {
+const getValuePayload = (operation: AssignMutation): ValuePayload => {
 	const original = getValueOriginal(operation);
 
 	if (original !== undefined) {
@@ -206,12 +206,12 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 	return { parent, segment: path[path.length - 1] };
 };
 
-const applyPlain = (parent: object, segment: unknown, operation: Operation): void => {
+const applyPlain = (parent: object, segment: unknown, operation: Mutation): void => {
 	const path = operation.path;
 
 	if (Array.isArray(parent) && segment === "length") {
 		if (
-			operation.op !== "assign" ||
+			operation.verb !== "assign" ||
 			typeof operation.value !== "number" ||
 			!Number.isInteger(operation.value) ||
 			operation.value < 0 ||
@@ -231,7 +231,7 @@ const applyPlain = (parent: object, segment: unknown, operation: Operation): voi
 
 	if (descriptor !== undefined && !present) throw unresolvedError(path);
 
-	if (operation.op === "delete") {
+	if (operation.verb === "delete") {
 		deleteOrThrow(parent, key);
 
 		return;
@@ -254,7 +254,7 @@ const applyPlain = (parent: object, segment: unknown, operation: Operation): voi
 	);
 };
 
-function applyOperations(root: object, operations: ReadonlyArray<Operation>): void {
+function applyMutations(root: object, operations: ReadonlyArray<Mutation>): void {
 	for (const operation of operations) {
 		const terminal = resolveTerminal(root, operation.path);
 
@@ -270,13 +270,13 @@ function applyOperations(root: object, operations: ReadonlyArray<Operation>): vo
  * @param meta - Passed to listeners.
  * @returns Nothing.
  */
-export function applyOps(state: object, operations: ReadonlyArray<Operation>, meta?: unknown): void {
+export function applyOperations(state: object, operations: ReadonlyArray<Mutation>, meta?: unknown): void {
 	for (const operation of operations) assertApplicable(operation);
 
 	transact(
 		state,
 		() => {
-			applyOperations(resolveEmitterTarget(state), operations);
+			applyMutations(resolveEmitterTarget(state), operations);
 		},
 		meta,
 	);

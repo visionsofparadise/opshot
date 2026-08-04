@@ -48,7 +48,7 @@ const nativeClassError = (className: string, path: ReadonlyArray<string> | undef
 
 export const snapshotDonationError = (key: string | symbol): Error =>
 	new Error(
-		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOps.`,
+		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
 	);
 
 export const reservedDataPathError = (path: ReadonlyArray<string>): Error =>

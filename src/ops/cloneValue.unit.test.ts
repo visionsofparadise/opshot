@@ -2,12 +2,12 @@ import { transact } from "../transact";
 import { subscribe } from "../subscribe";
 import { createMutableState } from "../createMutableState";
 import { cloneValue } from "./cloneValue";
-import { type Operation } from "./operation";
+import { type Mutation } from "./operation";
 import { createOperationPath } from "./path";
 
 const readWholeValueUndo = (value: object): object => {
 	const state = createMutableState<{ value: object | null }>({ value });
-	let undo: Operation | undefined;
+	let undo: Mutation | undefined;
 
 	subscribe(state, (ops) => {
 		undo = ops[0]?.undo;
@@ -17,7 +17,7 @@ const readWholeValueUndo = (value: object): object => {
 		state.value = null;
 	});
 
-	if (undo?.op !== "assign") throw new Error("expected a whole-value assign undo");
+	if (undo?.verb !== "assign") throw new Error("expected a whole-value assign undo");
 
 	const cloned = undo.value;
 

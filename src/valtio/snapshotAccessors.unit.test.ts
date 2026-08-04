@@ -2,10 +2,10 @@ import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
-import { type Op } from "../ops/operation";
+import { type Operation } from "../ops/operation";
 
-const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Op> }> => {
-	const emissions = new Array<{ state: T; ops: Array<Op> }>();
+const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
+	const emissions = new Array<{ state: T; ops: Array<Operation> }>();
 
 	subscribe(state, (ops) => {
 		emissions.push({ state, ops: [...ops] });

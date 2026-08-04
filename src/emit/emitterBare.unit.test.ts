@@ -2,7 +2,7 @@ import { createGroup } from "../createGroup";
 import { getGroupChain } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { diffSnapshots } from "../ops/diff";
-import { type Op } from "../ops/operation";
+import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { emitBareFlush, mintGroupedEmitter } from "./emitterBare";
@@ -50,7 +50,7 @@ describe("emitterBare", () => {
 		expect(diffSnapshots).not.toHaveBeenCalled();
 		expect(state.count).toBe(1);
 
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(group, (_state, ops) => {
 			heard.push(ops);
@@ -61,7 +61,7 @@ describe("emitterBare", () => {
 		await Promise.resolve();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 
@@ -99,7 +99,7 @@ describe("emitOn window", () => {
 		const scheduler = manualScheduler();
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		state.count = 1;
 
@@ -119,8 +119,8 @@ describe("emitOn window", () => {
 		const scheduler = manualScheduler();
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const groupHeard = new Array<ReadonlyArray<Op>>();
-		const stateHeard = new Array<ReadonlyArray<Op>>();
+		const groupHeard = new Array<ReadonlyArray<Operation>>();
+		const stateHeard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(group, (_emitted, ops) => {
 			groupHeard.push([...ops]);
@@ -137,7 +137,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(stateHeard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 		expect(groupHeard).toEqual(stateHeard);
 	});
@@ -146,7 +146,7 @@ describe("emitOn window", () => {
 		const scheduler = manualScheduler();
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		state.count = 1;
 
@@ -159,14 +159,14 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 
 	it("N writes in one window schedule one callback and deliver one net-diff emission", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state, (ops) => {
 			heard.push([...ops]);
@@ -184,7 +184,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 3 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 3 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 		expect(scheduler.pending).toHaveLength(0);
 	});
@@ -192,7 +192,7 @@ describe("emitOn window", () => {
 	it("transact at entry settles pending bare writes; the scheduled callback then delivers nothing", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<{ ops: ReadonlyArray<Op>; meta: unknown }>();
+		const heard = new Array<{ ops: ReadonlyArray<Operation>; meta: unknown }>();
 
 		subscribe(state, (ops, meta) => {
 			heard.push({ ops: [...ops], meta });
@@ -216,8 +216,8 @@ describe("emitOn window", () => {
 			{
 				ops: [
 					{
-						do: { op: "assign", path: ["count"], value: 1 },
-						undo: { op: "assign", path: ["count"], value: 0 },
+						do: { verb: "assign", path: ["count"], value: 1 },
+						undo: { verb: "assign", path: ["count"], value: 0 },
 					},
 				],
 				meta: undefined,
@@ -225,8 +225,8 @@ describe("emitOn window", () => {
 			{
 				ops: [
 					{
-						do: { op: "assign", path: ["count"], value: 2 },
-						undo: { op: "assign", path: ["count"], value: 1 },
+						do: { verb: "assign", path: ["count"], value: 2 },
+						undo: { verb: "assign", path: ["count"], value: 1 },
 					},
 				],
 				meta: { tag: "txn" },
@@ -242,7 +242,7 @@ describe("emitOn window", () => {
 	it("a write after a fence and before the callback is delivered by that callback", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<{ ops: ReadonlyArray<Op>; meta: unknown }>();
+		const heard = new Array<{ ops: ReadonlyArray<Operation>; meta: unknown }>();
 
 		subscribe(state, (ops, meta) => {
 			heard.push({ ops: [...ops], meta });
@@ -273,8 +273,8 @@ describe("emitOn window", () => {
 			{
 				ops: [
 					{
-						do: { op: "assign", path: ["count"], value: 3 },
-						undo: { op: "assign", path: ["count"], value: 2 },
+						do: { verb: "assign", path: ["count"], value: 3 },
+						undo: { verb: "assign", path: ["count"], value: 2 },
 					},
 				],
 				meta: undefined,
@@ -286,7 +286,7 @@ describe("emitOn window", () => {
 	it("a write after the callback opens a new window", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state, (ops) => {
 			heard.push([...ops]);
@@ -309,14 +309,14 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 2 }, undo: { op: "assign", path: ["count"], value: 1 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 
 	it("the last unsubscribe delivers the pending write before returning", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 		const stop = subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
@@ -331,14 +331,14 @@ describe("emitOn window", () => {
 		stop();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["count"], value: 1 }, undo: { op: "assign", path: ["count"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
 
 	it("a subtree subscribed under a windowed root runs on the root's emitOn", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ a: { x: 0 } }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Op>>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state.a, (ops) => {
 			heard.push([...ops]);
@@ -354,7 +354,7 @@ describe("emitOn window", () => {
 		scheduler.flushAll();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["x"], value: 1 }, undo: { op: "assign", path: ["x"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["x"], value: 1 }, undo: { verb: "assign", path: ["x"], value: 0 } }],
 		]);
 	});
 

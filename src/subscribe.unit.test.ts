@@ -1,15 +1,15 @@
 import { createChannel } from "./createChannel";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
-import { applyOps } from "./ops/applyOps";
-import { type Op } from "./ops/operation";
+import { applyOperations } from "./ops/applyOperations";
+import { type Operation } from "./ops/operation";
 import { subscribe, type Context } from "./subscribe";
 import { transact } from "./transact";
 
 describe("subscribe", () => {
 	it("subscribes and unsubscribes a state listener", () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 		const stop = subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
@@ -91,8 +91,8 @@ describe("subscribe", () => {
 
 	it("subscribing the same function twice to a state is one subscription", () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<ReadonlyArray<Op>>();
-		const listener = (ops: ReadonlyArray<Op>): void => {
+		const heard = new Array<ReadonlyArray<Operation>>();
+		const listener = (ops: ReadonlyArray<Operation>): void => {
 			heard.push(ops);
 		};
 
@@ -143,7 +143,7 @@ describe("subscribe", () => {
 		const a = createChannel<{ tag: string }>({ tag: "a" });
 		const b = createChannel<{ tag: string }>({ tag: "b" });
 		const heard = new Array<string>();
-		const listener = (_ops: ReadonlyArray<Op>, context: Context<{ tag: string }>): void => {
+		const listener = (_ops: ReadonlyArray<Operation>, context: Context<{ tag: string }>): void => {
 			heard.push(context.isTransaction ? context.meta.tag : "foreign");
 		};
 
@@ -200,8 +200,8 @@ describe("subscribe", () => {
 
 	it("node subscription delivers node-relative paths and is silent for sibling writes", async () => {
 		const state = createMutableState({ a: { x: 0 }, b: { y: 0 } });
-		const nodeHeard = new Array<ReadonlyArray<Op>>();
-		const rootHeard = new Array<ReadonlyArray<Op>>();
+		const nodeHeard = new Array<ReadonlyArray<Operation>>();
+		const rootHeard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state.a, (ops) => {
 			nodeHeard.push([...ops]);
@@ -214,13 +214,13 @@ describe("subscribe", () => {
 		await Promise.resolve();
 
 		expect(nodeHeard).toEqual([
-			[{ do: { op: "assign", path: ["x"], value: 1 }, undo: { op: "assign", path: ["x"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["x"], value: 1 }, undo: { verb: "assign", path: ["x"], value: 0 } }],
 		]);
 		expect(rootHeard).toEqual([
 			[
 				{
-					do: { op: "assign", path: ["a", "x"], value: 1 },
-					undo: { op: "assign", path: ["a", "x"], value: 0 },
+					do: { verb: "assign", path: ["a", "x"], value: 1 },
+					undo: { verb: "assign", path: ["a", "x"], value: 0 },
 				},
 			],
 		]);
@@ -235,8 +235,8 @@ describe("subscribe", () => {
 		expect(rootHeard).toEqual([
 			[
 				{
-					do: { op: "assign", path: ["b", "y"], value: 2 },
-					undo: { op: "assign", path: ["b", "y"], value: 0 },
+					do: { verb: "assign", path: ["b", "y"], value: 2 },
+					undo: { verb: "assign", path: ["b", "y"], value: 0 },
 				},
 			],
 		]);
@@ -244,7 +244,7 @@ describe("subscribe", () => {
 
 	it("unsubscribing a node listener leaves the root listener intact", async () => {
 		const state = createMutableState({ a: { x: 0 }, b: { y: 0 } });
-		const rootHeard = new Array<ReadonlyArray<Op>>();
+		const rootHeard = new Array<ReadonlyArray<Operation>>();
 		const stopNode = subscribe(state.a, () => undefined);
 
 		subscribe(state, (ops) => {
@@ -259,8 +259,8 @@ describe("subscribe", () => {
 		expect(rootHeard).toEqual([
 			[
 				{
-					do: { op: "assign", path: ["a", "x"], value: 1 },
-					undo: { op: "assign", path: ["a", "x"], value: 0 },
+					do: { verb: "assign", path: ["a", "x"], value: 1 },
+					undo: { verb: "assign", path: ["a", "x"], value: 0 },
 				},
 			],
 		]);
@@ -288,9 +288,9 @@ describe("subscribe", () => {
 		expect(channelHeard).toEqual([{ isTransaction: true, meta: { replay: true } }]);
 	});
 
-	it("carries an applyOps replay flag to a subscriber below the applied node", () => {
+	it("carries an applyOperations replay flag to a subscriber below the applied node", () => {
 		const state = createMutableState({ a: { n: 0 } });
-		const recorded = new Array<Op>();
+		const recorded = new Array<Operation>();
 		const stopRecording = subscribe(state, (ops) => recorded.push(...ops));
 
 		transact(state, () => {
@@ -302,7 +302,7 @@ describe("subscribe", () => {
 
 		subscribe(state.a, (_ops, meta) => heard.push(meta));
 
-		applyOps(
+		applyOperations(
 			state,
 			recorded.map((op) => op.undo),
 			{ replay: true },
@@ -312,9 +312,9 @@ describe("subscribe", () => {
 		expect(state.a.n).toBe(0);
 	});
 
-	it("keeps an applyOps replay flag off the enclosing transaction it runs inside", () => {
+	it("keeps an applyOperations replay flag off the enclosing transaction it runs inside", () => {
 		const state = createMutableState({ a: { n: 0 }, top: 0 });
-		const recorded = new Array<Op>();
+		const recorded = new Array<Operation>();
 		const stopRecording = subscribe(state.a, (ops) => recorded.push(...ops));
 
 		transact(state, () => {
@@ -331,7 +331,7 @@ describe("subscribe", () => {
 		transact(
 			state,
 			() => {
-				applyOps(
+				applyOperations(
 					state.a,
 					recorded.map((op) => op.undo),
 					{ replay: true },
@@ -345,9 +345,9 @@ describe("subscribe", () => {
 		expect(nodeHeard).toEqual([{ replay: true }]);
 	});
 
-	it("refuses applyOps on the node an enclosing transact already holds", () => {
+	it("refuses applyOperations on the node an enclosing transact already holds", () => {
 		const state = createMutableState({ n: 0 });
-		const recorded = new Array<Op>();
+		const recorded = new Array<Operation>();
 
 		subscribe(state, (ops) => recorded.push(...ops));
 
@@ -357,7 +357,7 @@ describe("subscribe", () => {
 
 		expect(() =>
 			transact(state, () => {
-				applyOps(
+				applyOperations(
 					state,
 					recorded.map((op) => op.undo),
 					{ replay: true },
@@ -368,7 +368,7 @@ describe("subscribe", () => {
 
 	it("bounds bare writes to one net diff per window under the default latch", async () => {
 		const state = createMutableState({ n: 0 });
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
@@ -381,7 +381,7 @@ describe("subscribe", () => {
 		await Promise.resolve();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["n"], value: 3 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
 	});
 
@@ -396,7 +396,7 @@ describe("subscribe", () => {
 				},
 			},
 		);
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
@@ -411,14 +411,14 @@ describe("subscribe", () => {
 
 		expect(invocations).toBe(1);
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["n"], value: 3 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
 	});
 
 	it("invokes a deferring emitOn once per window and delivers only when it flushes", async () => {
 		const scheduled = new Array<() => void>();
 		const state = createMutableState({ n: 0 }, { emitOn: (flush) => scheduled.push(flush) });
-		const heard = new Array<Array<Op>>();
+		const heard = new Array<Array<Operation>>();
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
@@ -436,7 +436,7 @@ describe("subscribe", () => {
 		for (const flush of scheduled) flush();
 
 		expect(heard).toEqual([
-			[{ do: { op: "assign", path: ["n"], value: 3 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
 	});
 

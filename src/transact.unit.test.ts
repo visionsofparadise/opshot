@@ -1,12 +1,12 @@
 import { createMutableState } from "./createMutableState";
-import { type Op } from "./ops/operation";
+import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
 
 describe("transact", () => {
 	it("runs the mutate callback and emits ops with meta when subscribed", () => {
 		const state = createMutableState({ count: 0 });
-		const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(state, (ops, meta) => {
 			heard.push({ ops: [...ops], meta });
@@ -24,7 +24,7 @@ describe("transact", () => {
 		expect(heard).toEqual([
 			{
 				ops: [
-					{ do: { op: "assign", path: ["count"], value: 3 }, undo: { op: "assign", path: ["count"], value: 0 } },
+					{ do: { verb: "assign", path: ["count"], value: 3 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 				],
 				meta: { reason: "test" },
 			},
@@ -84,7 +84,7 @@ describe("transact", () => {
 
 	it("never carries an inner transaction's meta on an outer transaction's writes", () => {
 		const state = createMutableState({ top: 0, a: { n: 0 } });
-		const rootHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const rootHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 		const innerHeard = new Array<unknown>();
 
 		subscribe(state, (ops, meta) => rootHeard.push({ ops: [...ops], meta }));
@@ -111,15 +111,15 @@ describe("transact", () => {
 		expect(rootHeard).toHaveLength(1);
 		expect(rootHeard[0]?.meta).toEqual({ tag: "outer" });
 		expect(rootHeard[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["top"], value: 2 }, undo: { op: "assign", path: ["top"], value: 0 } },
-			{ do: { op: "assign", path: ["a", "n"], value: 1 }, undo: { op: "assign", path: ["a", "n"], value: 0 } },
+			{ do: { verb: "assign", path: ["top"], value: 2 }, undo: { verb: "assign", path: ["top"], value: 0 } },
+			{ do: { verb: "assign", path: ["a", "n"], value: 1 }, undo: { verb: "assign", path: ["a", "n"], value: 0 } },
 		]);
 		expect(innerHeard).toEqual([{ tag: "inner" }]);
 	});
 
 	it("never carries an inner transaction's meta when the outer has not yet written", () => {
 		const state = createMutableState({ top: 0, a: { n: 0 } });
-		const rootHeard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const rootHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 		const innerHeard = new Array<unknown>();
 
 		subscribe(state, (ops, meta) => rootHeard.push({ ops: [...ops], meta }));
@@ -144,8 +144,8 @@ describe("transact", () => {
 		expect(rootHeard).toHaveLength(1);
 		expect(rootHeard[0]?.meta).toEqual({ tag: "outer" });
 		expect(rootHeard[0]?.ops).toEqual([
-			{ do: { op: "assign", path: ["top"], value: 2 }, undo: { op: "assign", path: ["top"], value: 0 } },
-			{ do: { op: "assign", path: ["a", "n"], value: 1 }, undo: { op: "assign", path: ["a", "n"], value: 0 } },
+			{ do: { verb: "assign", path: ["top"], value: 2 }, undo: { verb: "assign", path: ["top"], value: 0 } },
+			{ do: { verb: "assign", path: ["a", "n"], value: 1 }, undo: { verb: "assign", path: ["a", "n"], value: 0 } },
 		]);
 		expect(innerHeard).toEqual([{ tag: "inner" }]);
 	});
@@ -283,7 +283,7 @@ describe("transact", () => {
 	it("never flushes a claimed record bare when a listener transacts it", () => {
 		const transacted = createMutableState({ x: 0 });
 		const claimed = createMutableState({ n: 0 });
-		const heard = new Array<{ ops: Array<Op>; meta: unknown }>();
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(claimed, (ops, meta) => heard.push({ ops: [...ops], meta }));
 		subscribe(transacted, () => {
@@ -307,11 +307,11 @@ describe("transact", () => {
 
 		expect(heard).toEqual([
 			{
-				ops: [{ do: { op: "assign", path: ["n"], value: 5 }, undo: { op: "assign", path: ["n"], value: 0 } }],
+				ops: [{ do: { verb: "assign", path: ["n"], value: 5 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 				meta: { tag: "outer" },
 			},
 			{
-				ops: [{ do: { op: "assign", path: ["n"], value: 15 }, undo: { op: "assign", path: ["n"], value: 5 } }],
+				ops: [{ do: { verb: "assign", path: ["n"], value: 15 }, undo: { verb: "assign", path: ["n"], value: 5 } }],
 				meta: { tag: "tap" },
 			},
 		]);
@@ -320,7 +320,7 @@ describe("transact", () => {
 	it("never files a replicator's write as a user edit when a listener transacts the claimed record", () => {
 		const transacted = createMutableState({ x: 0 });
 		const claimed = createMutableState({ n: 0 });
-		const recorded = new Array<Op>();
+		const recorded = new Array<Operation>();
 
 		subscribe(claimed, (ops, meta) => {
 			if ((meta as { replay?: boolean } | undefined)?.replay === true) return;
@@ -343,7 +343,7 @@ describe("transact", () => {
 		);
 
 		expect(recorded).toEqual([
-			{ do: { op: "assign", path: ["n"], value: 15 }, undo: { op: "assign", path: ["n"], value: 5 } },
+			{ do: { verb: "assign", path: ["n"], value: 15 }, undo: { verb: "assign", path: ["n"], value: 5 } },
 		]);
 	});
 
