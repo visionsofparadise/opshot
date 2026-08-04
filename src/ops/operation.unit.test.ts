@@ -4,13 +4,7 @@ import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { isCloneable } from "./cloneValue";
-import {
-	createAssignMutation,
-	createDeleteMutation,
-	getValueOriginal,
-	isMutation,
-	type Mutation,
-} from "./operation";
+import { createAssignMutation, createDeleteMutation, getValueOriginal, isMutation, type Mutation } from "./operation";
 
 const readValue = (half: Mutation): unknown => ("value" in half ? half.value : undefined);
 

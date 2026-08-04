@@ -15,7 +15,7 @@ import {
 
 import { createMutableState } from "../createMutableState";
 import { TrackedMap } from "../tracked/trackedMap";
-import { isWrapper } from "./boundary";
+import { isReadProxy } from "./readTracker";
 import { isRendering } from "./renderPhase";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
@@ -103,7 +103,7 @@ describe("scope", () => {
 			return null;
 		};
 
-		const Boundary = scope<{ state: { count: number } }>(({ state }) => {
+		const Scoped = scope<{ state: { count: number } }>(({ state }) => {
 			boundaryRenders += 1;
 
 			return (
@@ -117,7 +117,7 @@ describe("scope", () => {
 		const Parent: FC = () => {
 			const state = useMutableState({ count: 0 });
 
-			return <Boundary state={state} />;
+			return <Scoped state={state} />;
 		};
 
 		render(<Parent />);
@@ -136,7 +136,7 @@ describe("scope", () => {
 			return <span data-testid="detail">{item.detail}</span>;
 		};
 
-		const Boundary = scope<{ state: { view: string; detail: number; other: number } }>(({ state }) => {
+		const Scoped = scope<{ state: { view: string; detail: number; other: number } }>(({ state }) => {
 			boundaryRenders += 1;
 
 			return (
@@ -154,7 +154,7 @@ describe("scope", () => {
 				stateRef = state;
 			});
 
-			return <Boundary state={state} />;
+			return <Scoped state={state} />;
 		};
 
 		render(<Parent />);
@@ -181,7 +181,7 @@ describe("scope", () => {
 		expect(leafRenders).toBe(2);
 	});
 
-	it("versioned identity through React.memo retains sibling wrappers", () => {
+	it("versioned identity through React.memo retains sibling readProxies", () => {
 		let parentRenders = 0;
 		let childRenders = 0;
 		let stateRef: { other: number; obj: { x: number } } | undefined;
@@ -339,7 +339,7 @@ describe("scope", () => {
 
 		render(<Deep holder={holder} />);
 		expect(screen.getByTestId("label").textContent).toBe("deep");
-		expect(isWrapper(seen as object)).toBe(true);
+		expect(isReadProxy(seen as object)).toBe(true);
 
 		const before = renders;
 
@@ -926,7 +926,7 @@ describe("scope", () => {
 		expect(renders).toBe(before + 1);
 	});
 
-	it("gives a handle the object protocol of the value it wraps", () => {
+	it("gives a readProxy the object protocol of the value it wraps", () => {
 		interface Shape {
 			name: string;
 			items: Array<number>;
@@ -934,10 +934,10 @@ describe("scope", () => {
 			map: TrackedMap<string, number>;
 		}
 
-		let handle: Shape | undefined;
+		let readProxy: Shape | undefined;
 
 		const Child = scope<{ state: Shape }>(({ state }) => {
-			handle = state;
+			readProxy = state;
 
 			return <span data-testid="name">{state.name}</span>;
 		});
@@ -955,42 +955,42 @@ describe("scope", () => {
 
 		render(<Parent />);
 
-		if (handle === undefined) throw new Error("missing handle");
+		if (readProxy === undefined) throw new Error("missing readProxy");
 
-		expect(isWrapper(handle)).toBe(true);
-		expect(Array.isArray(handle.items)).toBe(true);
-		expect(handle.items instanceof Array).toBe(true);
-		expect(handle.nested instanceof Object).toBe(true);
-		expect(handle.map instanceof TrackedMap).toBe(true);
-		expect(Object.keys(handle.items)).toEqual(["0", "1", "2"]);
-		expect(Object.entries(handle.nested)).toEqual([["n", 1]]);
-		expect([...handle.items]).toEqual([1, 2, 3]);
-		expect({ ...handle.nested }).toEqual({ n: 1 });
-		expect(JSON.stringify(handle.items)).toBe("[1,2,3]");
-		expect(JSON.stringify(handle.nested)).toBe('{"n":1}');
-		expect(JSON.parse(JSON.stringify(handle))).toMatchObject({ name: "doc", items: [1, 2, 3], nested: { n: 1 } });
+		expect(isReadProxy(readProxy)).toBe(true);
+		expect(Array.isArray(readProxy.items)).toBe(true);
+		expect(readProxy.items instanceof Array).toBe(true);
+		expect(readProxy.nested instanceof Object).toBe(true);
+		expect(readProxy.map instanceof TrackedMap).toBe(true);
+		expect(Object.keys(readProxy.items)).toEqual(["0", "1", "2"]);
+		expect(Object.entries(readProxy.nested)).toEqual([["n", 1]]);
+		expect([...readProxy.items]).toEqual([1, 2, 3]);
+		expect({ ...readProxy.nested }).toEqual({ n: 1 });
+		expect(JSON.stringify(readProxy.items)).toBe("[1,2,3]");
+		expect(JSON.stringify(readProxy.nested)).toBe('{"n":1}');
+		expect(JSON.parse(JSON.stringify(readProxy))).toMatchObject({ name: "doc", items: [1, 2, 3], nested: { n: 1 } });
 
 		const iterated = new Array<number>();
 
-		for (const item of handle.items) iterated.push(item);
+		for (const item of readProxy.items) iterated.push(item);
 
 		expect(iterated).toEqual([1, 2, 3]);
-		expect(handle.items.length).toBe(3);
-		expect(handle.map.get("k")).toBe(1);
-		expect(() => structuredClone(handle)).toThrow();
+		expect(readProxy.items.length).toBe(3);
+		expect(readProxy.map.get("k")).toBe(1);
+		expect(() => structuredClone(readProxy)).toThrow();
 		expect(() => structuredClone(createMutableState({ n: 1 }))).toThrow();
 	});
 
-	it("rejects preventExtensions, freeze, and seal through a handle while writes through it keep working", () => {
+	it("rejects preventExtensions, freeze, and seal through a readProxy while writes through it keep working", () => {
 		interface Shape {
 			count: number;
 			items: Array<number>;
 		}
 
-		let handle: Shape | undefined;
+		let readProxy: Shape | undefined;
 
 		const Child = scope<{ state: Shape }>(({ state }) => {
-			handle = state;
+			readProxy = state;
 
 			return <span data-testid="count">{state.count}</span>;
 		});
@@ -1003,9 +1003,9 @@ describe("scope", () => {
 
 		render(<Parent />);
 
-		const wrapped = handle;
+		const wrapped = readProxy;
 
-		if (wrapped === undefined) throw new Error("missing handle");
+		if (wrapped === undefined) throw new Error("missing readProxy");
 
 		expect(() => Object.preventExtensions(wrapped)).toThrow(
 			"opshot: preventExtensions is not supported on tracked state",

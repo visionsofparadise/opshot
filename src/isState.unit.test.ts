@@ -1,4 +1,4 @@
-import { createBoundary } from "./react/boundary";
+import { createReadTracker } from "./react/readTracker";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { isState } from "./isState";
@@ -19,12 +19,12 @@ describe("isState", () => {
 		expect(isState({ op: { unsafeMutable: {} } })).toBe(false);
 	});
 
-	it("recognizes a versioned wrapper over a live state", () => {
+	it("recognizes a versioned readProxy over a live state", () => {
 		const state = createMutableState({ count: 0 });
-		const wrapper = createBoundary().wrap(state);
+		const readProxy = createReadTracker().wrap(state);
 
-		expect(isState(wrapper)).toBe(true);
-		expect(wrapper).not.toBe(state);
+		expect(isState(readProxy)).toBe(true);
+		expect(readProxy).not.toBe(state);
 	});
 
 	it("keeps isState true on the live object a group subscriber receives", () => {

@@ -1,5 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { unwrapWrapper } from "./react/resolveWrapper";
+import { peelReadProxy } from "./react/peelReadProxy";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -10,7 +10,7 @@ const { proxyStateMap } = unstable_getInternalStates();
  * @returns True if it is a state.
  */
 export function isState(value: unknown): value is object {
-	const resolved = unwrapWrapper(value);
+	const resolved = peelReadProxy(value);
 
 	if (typeof resolved !== "object" || resolved === null) return false;
 

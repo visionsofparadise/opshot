@@ -3,8 +3,8 @@ import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { isSameIdentity } from "../identity";
 import { isState } from "../isState";
 import { addressOf } from "../tracked/address";
-import { createBoundary, type Boundary } from "./boundary";
 import { substituteStates } from "./propWalk";
+import { createReadTracker, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
 
 const sourcesKey = (sources: ReadonlyArray<object>): string =>
@@ -51,34 +51,34 @@ const arePropsEqual = (previous: object, next: object): boolean => {
  */
 export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 	const Scoped: FC<P> = (props) => {
-		const boundaryRef = useRef<Boundary | undefined>(undefined);
+		const readTrackerRef = useRef<ReadTracker | undefined>(undefined);
 
-		boundaryRef.current ??= createBoundary();
+		readTrackerRef.current ??= createReadTracker();
 
-		const boundary = boundaryRef.current;
+		const readTracker = readTrackerRef.current;
 		const [, bump] = useReducer((value: number) => value + 1, 0);
 
-		boundary.resetReads();
+		readTracker.resetReads();
 
-		const { props: renderedProps, sources } = substituteStates(props, (source) => boundary.wrap(source));
+		const { props: renderedProps, sources } = substituteStates(props, (source) => readTracker.wrap(source));
 		const versionsAtRender = sources.map((source) => getVersion(source));
 
 		useCommitEffect(() => {
-			boundary.captureReads();
+			readTracker.captureReads();
 		});
 
 		useEffect(() => {
-			boundary.retain();
+			readTracker.retain();
 
-			return () => boundary.dispose();
-		}, [boundary]);
+			return () => readTracker.dispose();
+		}, [readTracker]);
 
 		useEffect(() => {
 			const unsubscribes = sources.map((source) =>
 				valtioSubscribe(
 					source,
 					() => {
-						if (boundary.readsChanged(source)) bump();
+						if (readTracker.readsChanged(source)) bump();
 					},
 					true,
 				),
@@ -87,7 +87,7 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 			return () => {
 				for (const unsubscribe of unsubscribes) unsubscribe();
 			};
-		}, [sourcesKey(sources), boundary]);
+		}, [sourcesKey(sources), readTracker]);
 
 		useEffect(() => {
 			let shouldBump = false;
@@ -99,7 +99,7 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 				if (source === undefined || captured === undefined) continue;
 
 				if (getVersion(source) !== captured) {
-					if (boundary.readsChanged(source)) shouldBump = true;
+					if (readTracker.readsChanged(source)) shouldBump = true;
 				}
 			}
 

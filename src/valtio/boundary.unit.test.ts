@@ -563,7 +563,10 @@ describe("boundary: admitted by rule", () => {
 
 		expect(emissions).toHaveLength(1);
 		expect(emissions[0]?.ops).toEqual([
-			{ do: { verb: "assign", path: ["run"], value: second }, undo: { verb: "assign", path: ["run"], value: first } },
+			{
+				do: { verb: "assign", path: ["run"], value: second },
+				undo: { verb: "assign", path: ["run"], value: first },
+			},
 		]);
 		expect(state.run).toBe(second);
 	});

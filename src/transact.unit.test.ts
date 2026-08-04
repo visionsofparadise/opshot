@@ -24,7 +24,10 @@ describe("transact", () => {
 		expect(heard).toEqual([
 			{
 				ops: [
-					{ do: { verb: "assign", path: ["count"], value: 3 }, undo: { verb: "assign", path: ["count"], value: 0 } },
+					{
+						do: { verb: "assign", path: ["count"], value: 3 },
+						undo: { verb: "assign", path: ["count"], value: 0 },
+					},
 				],
 				meta: { reason: "test" },
 			},

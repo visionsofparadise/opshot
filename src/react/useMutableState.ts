@@ -1,12 +1,12 @@
 import { useEffect, useReducer, useState } from "react";
 import { getVersion, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { createMutableState, type MutableStateOptions } from "../createMutableState";
-import { createBoundary, type Boundary } from "./boundary";
+import { createReadTracker, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
 
 interface MutableStateHolder<T extends object> {
-	readonly proxy: T;
-	readonly boundary: Boundary;
+	readonly writeProxy: T;
+	readonly readTracker: ReadTracker;
 }
 
 /**
@@ -18,40 +18,40 @@ interface MutableStateHolder<T extends object> {
  * @returns The state.
  */
 export function useMutableState<T extends object>(properties: (() => T) | T, options?: MutableStateOptions): T {
-	const [{ proxy, boundary }] = useState((): MutableStateHolder<T> => ({
-		proxy: createMutableState(typeof properties === "function" ? properties() : properties, options),
-		boundary: createBoundary(),
+	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<T> => ({
+		writeProxy: createMutableState(typeof properties === "function" ? properties() : properties, options),
+		readTracker: createReadTracker(),
 	}));
 	const [, bump] = useReducer((value: number) => value + 1, 0);
-	const versionAtRender = getVersion(proxy);
+	const versionAtRender = getVersion(writeProxy);
 
-	boundary.resetReads();
+	readTracker.resetReads();
 
-	const wrapper = boundary.wrap(proxy);
+	const readProxy = readTracker.wrap(writeProxy);
 
 	useCommitEffect(() => {
-		boundary.captureReads();
+		readTracker.captureReads();
 	});
 
 	useEffect(() => {
-		boundary.retain();
+		readTracker.retain();
 
-		return () => boundary.dispose();
-	}, [boundary]);
+		return () => readTracker.dispose();
+	}, [readTracker]);
 
 	useEffect(() => {
 		const onSignal = (): void => {
-			if (boundary.readsChanged(proxy)) bump();
+			if (readTracker.readsChanged(writeProxy)) bump();
 		};
 
-		return valtioSubscribe(proxy, onSignal, true);
-	}, [proxy, boundary]);
+		return valtioSubscribe(writeProxy, onSignal, true);
+	}, [writeProxy, readTracker]);
 
 	useEffect(() => {
-		if (getVersion(proxy) === versionAtRender) return;
+		if (getVersion(writeProxy) === versionAtRender) return;
 
-		if (boundary.readsChanged(proxy)) bump();
+		if (readTracker.readsChanged(writeProxy)) bump();
 	});
 
-	return wrapper;
+	return readProxy;
 }

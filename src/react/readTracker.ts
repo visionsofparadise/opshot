@@ -1,6 +1,6 @@
 import { getVersion, unstable_getInternalStates } from "valtio/vanilla";
+import { getRegisteredReadProxyTarget, registerReadProxyTarget } from "./readProxyRegistry";
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
-import { getRegisteredWrapperTarget, registerWrapperTarget } from "./wrapperRegistry";
 
 const { refSet, proxyStateMap } = unstable_getInternalStates();
 
@@ -12,8 +12,8 @@ const ALL_OWN_KEYS_PROPERTY = "w";
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
 const isLiveProxy = (value: object): boolean => proxyStateMap.has(value);
-const getProxyTarget = (liveProxy: object): object => proxyStateMap.get(liveProxy)?.[0] ?? liveProxy;
-const getProxyVersion = (liveProxy: object): number => getVersion(liveProxy) ?? 0;
+const getProxyTarget = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
+const getProxyVersion = (writeProxy: object): number => getVersion(writeProxy) ?? 0;
 
 interface UsageRecord {
 	[KEYS_PROPERTY]?: Set<string | symbol>;
@@ -29,13 +29,13 @@ interface SourcePartition {
 	readonly previousHasOwn: Map<object, Map<string | symbol, boolean>>;
 	readonly previousOwnKeys: Map<object, ReadonlyArray<string | symbol>>;
 	readonly versionAtRecord: Map<object, number>;
-	readonly proxyCache: WeakMap<object, { wrapper: object; version: number }>;
+	readonly proxyCache: WeakMap<object, { readProxy: object; version: number }>;
 }
 
-export interface Boundary {
-	wrap<T extends object>(sourceProxy: T): T;
+export interface ReadTracker {
+	wrap<T extends object>(writeProxy: T): T;
 
-	readsChanged(sourceProxy: object): boolean;
+	readsChanged(writeProxy: object): boolean;
 
 	resetReads(): void;
 
@@ -106,37 +106,37 @@ const getPrototypeMethod = (target: object, prop: string | symbol): Function | u
 	return undefined;
 };
 
-const wrapperBoundMethods = new WeakMap<object, WeakMap<Function, Function>>();
+const readProxyBoundMethods = new WeakMap<object, WeakMap<Function, Function>>();
 
-const bindMethodToWrapper = (wrapper: object, method: Function): Function => {
-	let methods = wrapperBoundMethods.get(wrapper);
+const bindMethodToReadProxy = (readProxy: object, method: Function): Function => {
+	let methods = readProxyBoundMethods.get(readProxy);
 
 	if (methods === undefined) {
 		methods = new WeakMap();
-		wrapperBoundMethods.set(wrapper, methods);
+		readProxyBoundMethods.set(readProxy, methods);
 	}
 
 	const existing = methods.get(method);
 
 	if (existing !== undefined) return existing;
 
-	const bound = Function.prototype.bind.call(method, wrapper) as Function;
+	const bound = Function.prototype.bind.call(method, readProxy) as Function;
 
 	methods.set(method, bound);
 
 	return bound;
 };
 
-export const isWrapper = (value: unknown): boolean =>
-	isObjectLike(value) && getRegisteredWrapperTarget(value) !== undefined;
+export const isReadProxy = (value: unknown): boolean =>
+	isObjectLike(value) && getRegisteredReadProxyTarget(value) !== undefined;
 
-export function createBoundary(): Boundary {
+export function createReadTracker(): ReadTracker {
 	const partitions = new Map<object, SourcePartition>();
 	let afterRender = false;
 	let releasing = false;
 
-	const getPartition = (sourceProxy: object): SourcePartition => {
-		let partition = partitions.get(sourceProxy);
+	const getPartition = (writeProxy: object): SourcePartition => {
+		let partition = partitions.get(writeProxy);
 
 		if (partition === undefined) {
 			partition = {
@@ -148,7 +148,7 @@ export function createBoundary(): Boundary {
 				versionAtRecord: new Map(),
 				proxyCache: new WeakMap(),
 			};
-			partitions.set(sourceProxy, partition);
+			partitions.set(writeProxy, partition);
 		}
 
 		return partition;
@@ -156,42 +156,42 @@ export function createBoundary(): Boundary {
 
 	const shouldRecord = (): boolean => !afterRender || isRendering();
 
-	const trackUsage = (partition: SourcePartition, liveProxy: object): UsageRecord =>
-		shouldRecord() ? getUsage(partition.affected, liveProxy) : {};
+	const trackUsage = (partition: SourcePartition, writeProxy: object): UsageRecord =>
+		shouldRecord() ? getUsage(partition.affected, writeProxy) : {};
 
-	const storeValue = (partition: SourcePartition, liveProxy: object, key: string | symbol, value: unknown): void => {
+	const storeValue = (partition: SourcePartition, writeProxy: object, key: string | symbol, value: unknown): void => {
 		if (!shouldRecord()) return;
 
-		storeFirst(partition.previousValues, liveProxy, key, value);
+		storeFirst(partition.previousValues, writeProxy, key, value);
 
 		if (isObjectLike(value) && isLiveProxy(value) && !partition.versionAtRecord.has(value)) {
 			partition.versionAtRecord.set(value, getProxyVersion(value));
 		}
 	};
 
-	const storeHas = (partition: SourcePartition, liveProxy: object, key: string | symbol): void => {
+	const storeHas = (partition: SourcePartition, writeProxy: object, key: string | symbol): void => {
 		if (!shouldRecord()) return;
 
-		storeFirst(partition.previousHas, liveProxy, key, Reflect.has(liveProxy, key));
+		storeFirst(partition.previousHas, writeProxy, key, Reflect.has(writeProxy, key));
 	};
 
-	const storeHasOwn = (partition: SourcePartition, liveProxy: object, key: string | symbol): void => {
+	const storeHasOwn = (partition: SourcePartition, writeProxy: object, key: string | symbol): void => {
 		if (!shouldRecord()) return;
 
 		storeFirst(
 			partition.previousHasOwn,
-			liveProxy,
+			writeProxy,
 			key,
-			Reflect.getOwnPropertyDescriptor(liveProxy, key) !== undefined,
+			Reflect.getOwnPropertyDescriptor(writeProxy, key) !== undefined,
 		);
 	};
 
-	const storeOwnKeys = (partition: SourcePartition, liveProxy: object): void => {
+	const storeOwnKeys = (partition: SourcePartition, writeProxy: object): void => {
 		if (!shouldRecord()) return;
 
-		if (partition.previousOwnKeys.has(liveProxy)) return;
+		if (partition.previousOwnKeys.has(writeProxy)) return;
 
-		partition.previousOwnKeys.set(liveProxy, Reflect.ownKeys(liveProxy));
+		partition.previousOwnKeys.set(writeProxy, Reflect.ownKeys(writeProxy));
 	};
 
 	const isComparableProxy = (value: unknown): value is object => isObjectLike(value) && isLiveProxy(value);
@@ -287,31 +287,31 @@ export function createBoundary(): Boundary {
 		return false;
 	};
 
-	const wrapLive = (liveProxy: object, partition: SourcePartition): object => {
-		const currentVersion = getProxyVersion(liveProxy);
-		const cached = partition.proxyCache.get(liveProxy);
+	const toReadProxy = (writeProxy: object, partition: SourcePartition): object => {
+		const currentVersion = getProxyVersion(writeProxy);
+		const cached = partition.proxyCache.get(writeProxy);
 
-		if (cached?.version === currentVersion) return cached.wrapper;
+		if (cached?.version === currentVersion) return cached.readProxy;
 
-		const storageTarget = getProxyTarget(liveProxy);
+		const target = getProxyTarget(writeProxy);
 
-		const wrapperBox: { current?: object } = {};
+		const readProxyBox: { current?: object } = {};
 
 		const handler: ProxyHandler<object> = {
 			get(_target, prop) {
-				const value: unknown = Reflect.get(liveProxy, prop, liveProxy);
-				const wrapper = wrapperBox.current;
+				const value: unknown = Reflect.get(writeProxy, prop, writeProxy);
+				const readProxy = readProxyBox.current;
 
-				const used = trackUsage(partition, liveProxy);
+				const used = trackUsage(partition, writeProxy);
 
 				recordKey(used, KEYS_PROPERTY, prop);
-				storeValue(partition, liveProxy, prop, value);
+				storeValue(partition, writeProxy, prop, value);
 
 				if (typeof value === "function") {
-					const method = getPrototypeMethod(storageTarget, prop);
+					const method = getPrototypeMethod(target, prop);
 
-					if (method !== undefined && value === method && wrapper !== undefined) {
-						return bindMethodToWrapper(wrapper, method);
+					if (method !== undefined && value === method && readProxy !== undefined) {
+						return bindMethodToReadProxy(readProxy, method);
 					}
 				}
 
@@ -323,68 +323,68 @@ export function createBoundary(): Boundary {
 
 				if (!isLiveProxy(value)) return value;
 
-				return wrapLive(value, partition);
+				return toReadProxy(value, partition);
 			},
 			has(_target, prop) {
-				const used = trackUsage(partition, liveProxy);
+				const used = trackUsage(partition, writeProxy);
 
 				recordKey(used, HAS_KEY_PROPERTY, prop);
-				storeHas(partition, liveProxy, prop);
+				storeHas(partition, writeProxy, prop);
 
-				return Reflect.has(liveProxy, prop);
+				return Reflect.has(writeProxy, prop);
 			},
 			getOwnPropertyDescriptor(_target, prop) {
-				const used = trackUsage(partition, liveProxy);
+				const used = trackUsage(partition, writeProxy);
 
 				recordKey(used, HAS_OWN_KEY_PROPERTY, prop);
-				storeHasOwn(partition, liveProxy, prop);
+				storeHasOwn(partition, writeProxy, prop);
 
-				return Reflect.getOwnPropertyDescriptor(liveProxy, prop);
+				return Reflect.getOwnPropertyDescriptor(writeProxy, prop);
 			},
 			ownKeys() {
-				const used = trackUsage(partition, liveProxy);
+				const used = trackUsage(partition, writeProxy);
 
 				used[ALL_OWN_KEYS_PROPERTY] = true;
-				storeOwnKeys(partition, liveProxy);
+				storeOwnKeys(partition, writeProxy);
 
-				return Reflect.ownKeys(liveProxy);
+				return Reflect.ownKeys(writeProxy);
 			},
 			set(_target, prop, value) {
-				return Reflect.set(liveProxy, prop, value, liveProxy);
+				return Reflect.set(writeProxy, prop, value, writeProxy);
 			},
 			deleteProperty(_target, prop) {
-				return Reflect.deleteProperty(liveProxy, prop);
+				return Reflect.deleteProperty(writeProxy, prop);
 			},
 		};
 
-		const wrapper = new Proxy(liveProxy, handler);
+		const readProxy = new Proxy(writeProxy, handler);
 
-		wrapperBox.current = wrapper;
-		registerWrapperTarget(wrapper, liveProxy);
-		partition.proxyCache.set(liveProxy, { wrapper, version: currentVersion });
+		readProxyBox.current = readProxy;
+		registerReadProxyTarget(readProxy, writeProxy);
+		partition.proxyCache.set(writeProxy, { readProxy, version: currentVersion });
 
-		return wrapper;
+		return readProxy;
 	};
 
 	return {
-		wrap<T extends object>(sourceProxy: T): T {
-			if (!isLiveProxy(sourceProxy)) {
-				throw new Error("opshot: Boundary.wrap requires a live Valtio proxy");
+		wrap<T extends object>(writeProxy: T): T {
+			if (!isLiveProxy(writeProxy)) {
+				throw new Error("opshot: ReadTracker.wrap requires a write proxy");
 			}
 
-			const partition = getPartition(sourceProxy);
+			const partition = getPartition(writeProxy);
 
-			return wrapLive(sourceProxy, partition) as T;
+			return toReadProxy(writeProxy, partition) as T;
 		},
 
-		readsChanged(sourceProxy: object): boolean {
-			const partition = partitions.get(sourceProxy);
+		readsChanged(writeProxy: object): boolean {
+			const partition = partitions.get(writeProxy);
 
 			if (partition === undefined) return false;
 
 			if (partition.affected.size === 0) return false;
 
-			return nodeChanged(partition, sourceProxy, sourceProxy, new Map());
+			return nodeChanged(partition, writeProxy, writeProxy, new Map());
 		},
 
 		captureReads(): void {

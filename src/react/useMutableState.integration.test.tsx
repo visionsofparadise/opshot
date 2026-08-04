@@ -7,7 +7,7 @@ import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
-import { isWrapper } from "./boundary";
+import { isReadProxy } from "./readTracker";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 import type { Operation } from "../ops/operation";
@@ -230,7 +230,7 @@ describe("useMutableState", () => {
 		expect(renders).toBe(2);
 	});
 
-	it("keeps a non-reading owner silent for a top-level write through its handle", () => {
+	it("keeps a non-reading owner silent for a top-level write through its readProxy", () => {
 		let renders = 0;
 		let stateRef: { count: number; box: { value: number } } | undefined;
 
@@ -417,7 +417,7 @@ describe("useMutableState", () => {
 		expect(renders.child).toBe(4);
 	});
 
-	it("idiomatic debounce keyed on the handle produces one save after a burst, matching useState", async () => {
+	it("idiomatic debounce keyed on the readProxy produces one save after a burst, matching useState", async () => {
 		const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 		const stateSaves: Array<string> = [];
@@ -494,7 +494,7 @@ describe("useMutableState", () => {
 		expect(controlSaves).toEqual(["hello"]);
 	});
 
-	it("resolves a handle assigned into another state to its live proxy", () => {
+	it("resolves a readProxy assigned into another state to its writeProxy", () => {
 		interface Held {
 			nested: { n: number };
 		}
@@ -504,10 +504,10 @@ describe("useMutableState", () => {
 
 		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
 
-		let handle: Held | undefined;
+		let readProxy: Held | undefined;
 
 		const Child = scope<{ state: Held }>(({ state }) => {
-			handle = state;
+			readProxy = state;
 
 			return <span>{state.nested.n}</span>;
 		});
@@ -520,9 +520,9 @@ describe("useMutableState", () => {
 
 		render(<Parent />);
 
-		if (handle === undefined) throw new Error("missing handle");
+		if (readProxy === undefined) throw new Error("missing readProxy");
 
-		const assigned = handle;
+		const assigned = readProxy;
 
 		act(() => {
 			transact(holder, () => {
@@ -531,7 +531,7 @@ describe("useMutableState", () => {
 		});
 
 		expect(heard).toEqual([["current"]]);
-		expect(isWrapper(holder.current)).toBe(false);
+		expect(isReadProxy(holder.current)).toBe(false);
 		expect(isSameIdentity(holder.current as object, assigned)).toBe(true);
 
 		act(() => {
@@ -544,7 +544,7 @@ describe("useMutableState", () => {
 		expect(holder.current?.nested.n).toBe(5);
 	});
 
-	it("assigns a handle carrying an array into another state", () => {
+	it("assigns a readProxy carrying an array into another state", () => {
 		interface Held {
 			items: Array<number>;
 		}
@@ -554,10 +554,10 @@ describe("useMutableState", () => {
 
 		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
 
-		let handle: Held | undefined;
+		let readProxy: Held | undefined;
 
 		const Child = scope<{ state: Held }>(({ state }) => {
-			handle = state;
+			readProxy = state;
 
 			return <span>{state.items.length}</span>;
 		});
@@ -570,9 +570,9 @@ describe("useMutableState", () => {
 
 		render(<Parent />);
 
-		if (handle === undefined) throw new Error("missing handle");
+		if (readProxy === undefined) throw new Error("missing readProxy");
 
-		const assigned = handle;
+		const assigned = readProxy;
 
 		act(() => {
 			transact(holder, () => {

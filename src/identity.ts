@@ -1,6 +1,6 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { getRegisteredWrapperTarget } from "./react/wrapperRegistry";
+import { getRegisteredReadProxyTarget } from "./react/readProxyRegistry";
 
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
@@ -22,9 +22,9 @@ export function peelIdentityLayer(current: object): object | undefined {
 
 	if (untracked !== null && untracked !== current) return untracked;
 
-	const wrapperTarget = getRegisteredWrapperTarget(current);
+	const readProxyTarget = getRegisteredReadProxyTarget(current);
 
-	if (wrapperTarget !== undefined && wrapperTarget !== current) return wrapperTarget;
+	if (readProxyTarget !== undefined && readProxyTarget !== current) return readProxyTarget;
 
 	const registeredTarget = targetRegistry.get(current);
 

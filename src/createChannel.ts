@@ -29,7 +29,10 @@ export interface Channel<M extends object> {
 	 * @param listener - Called on each change.
 	 * @returns Unsubscribe function.
 	 */
-	subscribe(group: Group, listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void): () => void;
+	subscribe(
+		group: Group,
+		listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void,
+	): () => void;
 
 	/**
 	 * Listens for changes to a state.
@@ -70,7 +73,10 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		listener: (state: object, ops: ReadonlyArray<Operation>, context: Context<M>) => void,
 	): () => void;
 
-	function subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: Context<M>) => void): () => void;
+	function subscribe(
+		state: object,
+		listener: (ops: ReadonlyArray<Operation>, context: Context<M>) => void,
+	): () => void;
 
 	function subscribe(
 		target: object | Group,

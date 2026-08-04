@@ -1,7 +1,7 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { unwrapWrapper } from "../react/resolveWrapper";
+import { peelReadProxy } from "../react/peelReadProxy";
 import { getSettings, inheritSettings } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
@@ -27,7 +27,7 @@ const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 
 	while (typeof current === "object" && current !== null) {
 		const untracked: unknown = getUntracked(current);
-		const next: unknown = unwrapWrapper(untracked ?? current);
+		const next: unknown = peelReadProxy(untracked ?? current);
 
 		if (next === current) break;
 

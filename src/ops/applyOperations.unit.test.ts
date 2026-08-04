@@ -759,9 +759,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 
 		// The pollution ladder itself: `constructor` then `prototype`, the shape a reserved-path
 		// rule used to reject before emission. Resolution alone must now refuse it.
-		expect(() => applyOperations(state, [createAssignMutation(["constructor", "prototype", "polluted"], "PWNED")])).toThrow(
-			"does not resolve",
-		);
+		expect(() =>
+			applyOperations(state, [createAssignMutation(["constructor", "prototype", "polluted"], "PWNED")]),
+		).toThrow("does not resolve");
 		expect(() => applyOperations(state, [createDeleteMutation(["constructor", "prototype", "polluted"])])).toThrow(
 			"does not resolve",
 		);

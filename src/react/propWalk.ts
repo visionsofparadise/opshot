@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { isState } from "../isState";
 import { classifyValue } from "../valtio/classify";
-import { unwrapWrapper } from "./resolveWrapper";
+import { peelReadProxy } from "./peelReadProxy";
 
 const { refSet } = unstable_getInternalStates();
 
@@ -176,7 +176,7 @@ function substituteContainer(container: object, substitution: Substitution, wrap
 		const value: unknown = descriptor.value;
 
 		if (isState(value)) {
-			const source = unwrapWrapper(value);
+			const source = peelReadProxy(value);
 
 			if (typeof source !== "object" || source === null) continue;
 

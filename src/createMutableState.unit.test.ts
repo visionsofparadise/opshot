@@ -283,7 +283,10 @@ describe("createMutableState", () => {
 		expect(heard).toEqual([
 			{
 				ops: [
-					{ do: { verb: "assign", path: ["count"], value: 5 }, undo: { verb: "assign", path: ["count"], value: 0 } },
+					{
+						do: { verb: "assign", path: ["count"], value: 5 },
+						undo: { verb: "assign", path: ["count"], value: 0 },
+					},
 				],
 				meta: undefined,
 			},
