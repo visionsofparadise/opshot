@@ -307,8 +307,6 @@ Ops in an emission are ordered. Apply `do` halves in delivered order and `undo` 
 
 Ops are live runtime objects. Public value accessors return defensive copies, while `applyOps` reaches the registered originals needed for identity restoration. Spreading the outer `{ do, undo }` pair is harmless because it preserves the original halves. Spreading an individual half, or copying a pair or half through JSON, produces brandless halves that `applyOps` rejects with the cause and fix. `structuredClone` can throw `DataCloneError` first when an operation carries a non-cloneable payload; otherwise its copied halves are likewise brandless and rejected. Apply the operation halves the listener delivered.
 
-Opshot promises no serializer, whole-contents selector, public path classifier, or foreign applier. An encoded stream would need to intern identity-bearing path segments so repeated references resolve to one identity, as well as encode `undefined`, `NaN`, holes, facade construction, operation brands, and value accessors. No wire format or encoder ships.
-
 Cycles in tracked data throw a named error instead of emitting a record that couldn't invert: the diff throws `opshot: cyclic value at /node/self; use ignore() for back-linked structures, or ids` at the observed mutate touching a cyclic region, and an op value that captured a freshly created cycle throws the same error when read. Back-links want identity, which is `ignore()`'s job; ids are the other route.
 
 A subscriber must not write to the state it subscribes to; writing to a different state is fine.
