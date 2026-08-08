@@ -2,7 +2,7 @@ import { proxy } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
 import { stampOptions, type MutableNodeOptions } from "./settings";
-import { unsafeTrack } from "./unsafeTrack";
+import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 import { frozenRootError, rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
@@ -43,7 +43,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(properties));
 
-	if (decision.lane === "reject") unsafeTrack(base);
+	if (decision.lane === "reject" || isUnsafeTracked(properties)) unsafeTrack(base);
 
 	stampOptions(base, options);
 

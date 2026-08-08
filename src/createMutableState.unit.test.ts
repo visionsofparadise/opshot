@@ -7,6 +7,7 @@ import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
+import { unsafeTrack } from "./unsafeTrack";
 
 vi.mock(import("./ops/diff"), { spy: true });
 
@@ -433,6 +434,27 @@ describe("createMutableState: root certification", () => {
 
 		expect(isState(state)).toBe(true);
 		expect(state).toBeInstanceOf(Map);
+	});
+
+	it("emits from a subscribed write on a root the caller marked with unsafeTrack", () => {
+		class Arrow {
+			count = 0;
+			bump = (): void => {
+				this.count += 1;
+			};
+		}
+
+		const state = createMutableState(unsafeTrack(new Arrow()));
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(state.count).toBe(1);
+		expect(emissions.map((emission) => emission.ops)).toEqual([
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
+		]);
 	});
 
 	it("emits from a subscribed write on a rejectable root under strict false", () => {
