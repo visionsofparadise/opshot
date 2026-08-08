@@ -74,13 +74,23 @@ export const assertSafeDataPaths = (value: unknown, path: Array<string>, visits:
 const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
 	if (Array.isArray(target)) {
 		if (property === "length") {
-			const newLength = Number(value);
+			const coercible = value === null || (typeof value !== "object" && typeof value !== "function");
+			const newLength = coercible ? Number(value) : Number.NaN;
 
 			if (Number.isInteger(newLength) && newLength >= 0 && newLength < target.length) {
-				for (let index = newLength; index < target.length; index += 1) {
-					const elementDescriptor = Reflect.getOwnPropertyDescriptor(target, String(index));
+				for (const key of Reflect.ownKeys(target)) {
+					if (typeof key !== "string") continue;
 
-					if (elementDescriptor !== undefined && elementDescriptor.configurable !== true) return true;
+					const index = Number(key);
+
+					if (
+						Number.isInteger(index) &&
+						index >= newLength &&
+						index < 2 ** 32 - 1 &&
+						String(index) === key &&
+						Reflect.getOwnPropertyDescriptor(target, key)?.configurable !== true
+					)
+						return true;
 				}
 			}
 		} else if (typeof property === "string") {
