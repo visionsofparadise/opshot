@@ -87,7 +87,7 @@ export const setPrototypeOfError = (): Error =>
 
 export const preventExtensionsError = (): Error =>
 	new Error(
-		"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (a non-extensible target silently drops tracked writes)",
+		"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (meta-mutation has no faithful operation representation)",
 	);
 
 const inheritsFromPrototype = (value: object, prototype: object): boolean => {

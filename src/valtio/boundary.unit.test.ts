@@ -743,7 +743,7 @@ describe("boundary: meta-mutation trap gates", () => {
 		const emissions = recordEmissions(state);
 
 		expect(() => Object.preventExtensions(state)).toThrow(
-			"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (a non-extensible target silently drops tracked writes)",
+			"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (meta-mutation has no faithful operation representation)",
 		);
 		expect(() => Object.freeze(state)).toThrow("opshot: preventExtensions is not supported on tracked state");
 		expect(() => Object.seal(state)).toThrow("opshot: preventExtensions is not supported on tracked state");
@@ -923,6 +923,79 @@ describe("boundary: refused writes", () => {
 		}).toThrow(TypeError);
 
 		expect(state.box.a).toBe(1);
+	});
+
+	it("refuses a write to an inherited getter-only accessor, leaving no own key and no op", () => {
+		class Gauge {
+			count = 2;
+
+			get doubled(): number {
+				return this.count * 2;
+			}
+		}
+
+		const state = createMutableState(new Gauge());
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			transact(state, () => {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(state as any).doubled = 9;
+			});
+		}).toThrow(TypeError);
+
+		expect(Object.hasOwn(state, "doubled")).toBe(false);
+		expect(state.doubled).toBe(4);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("delegates a write to an inherited accessor with a setter and emits the setter's data write", () => {
+		class Gauge {
+			count = 2;
+
+			get doubled(): number {
+				return this.count * 2;
+			}
+
+			set doubled(value: number) {
+				this.count = value / 2;
+			}
+		}
+
+		const state = createMutableState(new Gauge());
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.doubled = 6;
+		});
+
+		expect(state.count).toBe(3);
+		expect(emissions.map((emission) => emission.ops)).toEqual([
+			[
+				{
+					do: { verb: "assign", path: ["count"], value: 3 },
+					undo: { verb: "assign", path: ["count"], value: 2 },
+				},
+			],
+		]);
+	});
+
+	it("refuses a same-value write to a non-writable property like the raw engine", () => {
+		const box: { a?: number } = {};
+
+		Object.defineProperty(box, "a", { value: 1, writable: false, enumerable: true, configurable: true });
+
+		const state = createMutableState({ box });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			transact(state, () => {
+				state.box.a = 1;
+			});
+		}).toThrow(TypeError);
+
+		expect(state.box.a).toBe(1);
+		expect(emissions).toHaveLength(0);
 	});
 });
 
