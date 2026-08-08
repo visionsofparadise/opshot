@@ -34,8 +34,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	const decision = admissionDecision(properties);
 
 	if (decision.lane === "reject") {
-		if (options?.strict === false) unsafeTrack(properties);
-		else throw rejectionError(properties, decision.kind);
+		if (options?.strict !== false) throw rejectionError(properties, decision.kind);
 	} else if (decision.lane !== "track") throw frozenRootError(properties);
 
 	if (options?.strict !== false) assertSafeDataPaths(properties, [], new Set());
@@ -43,6 +42,8 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	const base = Object.create(Reflect.getPrototypeOf(properties)) as T;
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(properties));
+
+	if (decision.lane === "reject") unsafeTrack(base);
 
 	stampOptions(base, options);
 

@@ -7,7 +7,6 @@ import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
-import { isUnsafeTracked } from "./unsafeTrack";
 
 vi.mock(import("./ops/diff"), { spy: true });
 
@@ -429,13 +428,32 @@ describe("createMutableState: root certification", () => {
 		]);
 	});
 
-	it("attaches a rejectable root under strict false with the unsafeTrack mark", () => {
-		const root = new Map<string, number>();
-		const state = createMutableState(root, { strict: false });
+	it("attaches a rejectable Map root under strict false", () => {
+		const state = createMutableState(new Map<string, number>(), { strict: false });
 
-		expect(isUnsafeTracked(root)).toBe(true);
 		expect(isState(state)).toBe(true);
 		expect(state).toBeInstanceOf(Map);
+	});
+
+	it("emits from a subscribed write on a rejectable root under strict false", () => {
+		class Arrow {
+			count = 0;
+			bump = (): void => {
+				this.count += 1;
+			};
+		}
+
+		const state = createMutableState(new Arrow(), { strict: false });
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(state.count).toBe(1);
+		expect(emissions.map((emission) => emission.ops)).toEqual([
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
+		]);
 	});
 
 	it("still rejects a frozen root under strict false", () => {
