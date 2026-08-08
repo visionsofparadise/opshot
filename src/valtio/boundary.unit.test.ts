@@ -764,6 +764,42 @@ describe("boundary: refused writes", () => {
 		expect(emissions).toHaveLength(0);
 	});
 
+	it("raises on a sealed array's length truncation, leaving the array unchanged", () => {
+		const state = createMutableState({ list: Object.seal([1, 2]) });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			transact(state, () => {
+				state.list.length = 0;
+			});
+		}).toThrow(TypeError);
+
+		expect(state.list).toEqual([1, 2]);
+		expect(state.list).toHaveLength(2);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("raises on an index extension over a non-writable length, which still attaches", () => {
+		const fixed = [1, 2];
+
+		Object.defineProperty(fixed, "length", { writable: false });
+
+		const state = createMutableState({ list: fixed });
+		const emissions = recordEmissions(state);
+
+		expect(state.list).toEqual([1, 2]);
+
+		expect(() => {
+			transact(state, () => {
+				state.list[2] = 3;
+			});
+		}).toThrow(TypeError);
+
+		expect(Object.hasOwn(state.list, 2)).toBe(false);
+		expect(state.list).toHaveLength(2);
+		expect(emissions).toHaveLength(0);
+	});
+
 	it("lands a sealed child's existing-key write and emits its assign op", () => {
 		const state = createMutableState({ box: Object.seal({ a: 1 }) });
 		const emissions = recordEmissions(state);

@@ -81,7 +81,33 @@ export const assertSafeDataPaths = (
 	walkDataPaths(value, path, visits, strict);
 };
 
-const refusesWrite = (target: object, property: string | symbol): boolean => {
+const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
+	if (Array.isArray(target)) {
+		if (property === "length") {
+			const newLength = Number(value);
+
+			if (Number.isInteger(newLength) && newLength >= 0 && newLength < target.length) {
+				for (let index = newLength; index < target.length; index += 1) {
+					const elementDescriptor = Reflect.getOwnPropertyDescriptor(target, String(index));
+
+					if (elementDescriptor !== undefined && elementDescriptor.configurable !== true) return true;
+				}
+			}
+		} else if (typeof property === "string") {
+			const index = Number(property);
+
+			if (
+				Number.isInteger(index) &&
+				index >= 0 &&
+				index < 2 ** 32 - 1 &&
+				String(index) === property &&
+				index >= target.length &&
+				Reflect.getOwnPropertyDescriptor(target, "length")?.writable === false
+			)
+				return true;
+		}
+	}
+
 	let holder: object | null = target;
 
 	while (holder !== null) {
@@ -163,7 +189,7 @@ export function installBoundary(): void {
 						if (!proxyStateMap.has(resolved)) certifyAdmission(resolved, isInitializing() ? undefined : location);
 					}
 
-					if (refusesWrite(target, prop)) return false;
+					if (refusesWrite(target, prop, resolved)) return false;
 
 					setDepth += 1;
 
