@@ -371,6 +371,72 @@ describe("createMutableState", () => {
 	});
 });
 
+describe("createMutableState: root certification", () => {
+	it("rejects a raw Map root with the located rejection and remedies", () => {
+		expect(() => createMutableState(new Map<string, number>())).toThrow(
+			"opshot: Map cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
+		);
+	});
+
+	it("rejects an arrow-field class root with the clean-class message and remedies", () => {
+		class Arrow {
+			count = 0;
+			bump = (): void => {
+				this.count += 1;
+			};
+		}
+
+		expect(() => createMutableState(new Arrow())).toThrow(
+			"opshot: Arrow cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
+		);
+	});
+
+	it("rejects a frozen plain root through the leaf arm", () => {
+		expect(() => createMutableState(Object.freeze({ count: 0 }))).toThrow(
+			"opshot: Object cannot be tracked (a frozen root would half-attach, keeping the freeze where it is inert and dropping it where it counts). Options:\n- pass the root unfrozen (tracked state cannot be frozen)\n- hold the frozen value as an auto-ignored leaf field inside a plain root",
+		);
+	});
+
+	it("admits a plain object carrying ordinary methods", () => {
+		const state = createMutableState({
+			count: 0,
+			increment() {
+				this.count += 1;
+			},
+		});
+
+		state.increment();
+		expect(state.count).toBe(1);
+	});
+
+	it("tracks a clean-class root", () => {
+		class Counter {
+			count = 0;
+		}
+
+		const state = createMutableState(new Counter());
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(state.count).toBe(1);
+		expect(emissions).toHaveLength(1);
+		expect(emissions[0]?.ops).toEqual([
+			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
+		]);
+	});
+
+	it("attaches a rejectable root under strict false with the unsafeTrack mark", () => {
+		const root = new Map<string, number>();
+		const state = createMutableState(root, { strict: false });
+
+		expect(isState(state)).toBe(true);
+		expect(state).toBeInstanceOf(Map);
+	});
+});
+
 describe("grouped createMutableState", () => {
 	it("delivers emissions to a group subscriber with the live state", () => {
 		const group = createGroup();

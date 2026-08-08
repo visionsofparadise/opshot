@@ -2,7 +2,10 @@ import { proxy } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
 import { stampOptions, type MutableNodeOptions } from "./settings";
+import { unsafeTrack } from "./unsafeTrack";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
+import { frozenRootError, rejectionError } from "./valtio/boundaryErrors";
+import { admissionDecision } from "./valtio/classify";
 
 /**
  * Options for `createMutableState`, including optional group membership.
@@ -27,6 +30,13 @@ export interface MutableStateOptions extends MutableNodeOptions {
  */
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {
 	installBoundary();
+
+	const decision = admissionDecision(properties);
+
+	if (decision.lane === "reject") {
+		if (options?.strict === false) unsafeTrack(properties);
+		else throw rejectionError(properties, decision.kind);
+	} else if (decision.lane !== "track") throw frozenRootError(properties);
 
 	if (options?.strict !== false) assertSafeDataPaths(properties, [], new Set());
 

@@ -194,7 +194,9 @@ describe("boundary: throws at entry", () => {
 		};
 
 		expect(() => createMutableState(withOwnProto())).toThrow("own __proto__ key is not supported on tracked state");
-		expect(() => createMutableState({ held: withOwnProto() })).toThrow("own __proto__ key is not supported on tracked state");
+		expect(() => createMutableState({ held: withOwnProto() })).toThrow(
+			"own __proto__ key is not supported on tracked state",
+		);
 
 		const state = createMutableState<{ value: unknown }>({ value: null });
 
@@ -426,7 +428,12 @@ describe("boundary: certification descends only where valtio proxies", () => {
 	it("admits a non-writable primitive as a ride-along, present and untracked", () => {
 		const carrier: { label?: string; tick: number } = { tick: 0 };
 
-		Object.defineProperty(carrier, "label", { value: "fixed", enumerable: true, writable: false, configurable: true });
+		Object.defineProperty(carrier, "label", {
+			value: "fixed",
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
 
 		const state = createMutableState({ box: carrier });
 		const emissions = recordEmissions(state);

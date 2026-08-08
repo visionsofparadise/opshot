@@ -54,6 +54,17 @@ export const nonWritablePropertyError = (value: object, path: ReadonlyArray<stri
 		path,
 	);
 
+export const frozenRootError = (value: object): Error =>
+	boundaryError(
+		constructorName(value.constructor),
+		"a frozen root would half-attach, keeping the freeze where it is inert and dropping it where it counts",
+		[
+			"pass the root unfrozen (tracked state cannot be frozen)",
+			"hold the frozen value as an auto-ignored leaf field inside a plain root",
+		],
+		undefined,
+	);
+
 export const snapshotDonationError = (key: string | symbol): Error =>
 	new Error(
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
