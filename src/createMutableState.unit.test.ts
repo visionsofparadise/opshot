@@ -7,6 +7,7 @@ import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
+import { isUnsafeTracked } from "./unsafeTrack";
 
 vi.mock(import("./ops/diff"), { spy: true });
 
@@ -432,8 +433,15 @@ describe("createMutableState: root certification", () => {
 		const root = new Map<string, number>();
 		const state = createMutableState(root, { strict: false });
 
+		expect(isUnsafeTracked(root)).toBe(true);
 		expect(isState(state)).toBe(true);
 		expect(state).toBeInstanceOf(Map);
+	});
+
+	it("still rejects a frozen root under strict false", () => {
+		expect(() => createMutableState(Object.freeze({ count: 0 }), { strict: false })).toThrow(
+			"a frozen root would half-attach",
+		);
 	});
 });
 
