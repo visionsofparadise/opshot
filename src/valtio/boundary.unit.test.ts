@@ -733,6 +733,82 @@ describe("boundary: meta-mutation trap gates", () => {
 	});
 });
 
+describe("boundary: refused writes", () => {
+	it("throws a native TypeError for an added key on a sealed child, leaving no key and no op", () => {
+		const state = createMutableState<{ box: { a: number; b?: number } }>({ box: Object.seal({ a: 1 }) });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			transact(state, () => {
+				state.box.b = 9;
+			});
+		}).toThrow(TypeError);
+
+		expect(Object.hasOwn(state.box, "b")).toBe(false);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("raises on a sealed array's push, leaving no hole and no length op", () => {
+		const state = createMutableState({ list: Object.seal([1, 2]) });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			transact(state, () => {
+				state.list.push(3);
+			});
+		}).toThrow(TypeError);
+
+		expect(state.list).toEqual([1, 2]);
+		expect(state.list).toHaveLength(2);
+		expect(Object.hasOwn(state.list, 2)).toBe(false);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("lands a sealed child's existing-key write and emits its assign op", () => {
+		const state = createMutableState({ box: Object.seal({ a: 1 }) });
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.box.a = 2;
+		});
+
+		expect(state.box.a).toBe(2);
+		expect(emissions.map((emission) => emission.ops)).toEqual([
+			[
+				{
+					do: { verb: "assign", path: ["box", "a"], value: 2 },
+					undo: { verb: "assign", path: ["box", "a"], value: 1 },
+				},
+			],
+		]);
+	});
+
+	it("refuses an inherited writable-data key on a sealed child like a new key", () => {
+		const state = createMutableState({ box: Object.seal({ a: 1 }) });
+
+		expect(() => {
+			transact(state, () => {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(state.box as any).toString = (): string => "written";
+			});
+		}).toThrow(TypeError);
+
+		expect(Object.hasOwn(state.box, "toString")).toBe(false);
+	});
+
+	it("keeps delete on a sealed child throwing", () => {
+		const state = createMutableState<{ box: { a?: number } }>({ box: Object.seal({ a: 1 }) });
+
+		expect(() => {
+			transact(state, () => {
+				delete state.box.a;
+			});
+		}).toThrow(TypeError);
+
+		expect(state.box.a).toBe(1);
+	});
+});
+
 describe("boundary: install", () => {
 	it("installs idempotently", () => {
 		installBoundary();
