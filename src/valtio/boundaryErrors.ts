@@ -59,8 +59,25 @@ export const snapshotDonationError = (key: string | symbol): Error =>
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
 	);
 
-export const reservedDataPathError = (path: ReadonlyArray<string>): Error =>
-	new Error(`opshot: reserved data path /${path.join("/")}`);
+export const ownProtoKeyError = (): Error =>
+	new Error(
+		"opshot: own __proto__ key is not supported on tracked state; do not place an own __proto__ key in state (an own __proto__ key resolves to an inherited accessor, and prototype mutation is not tracked data)",
+	);
+
+export const definePropertyError = (): Error =>
+	new Error(
+		"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input (meta-mutation has no faithful operation representation)",
+	);
+
+export const setPrototypeOfError = (): Error =>
+	new Error(
+		"opshot: setPrototypeOf is not supported on tracked state; set the prototype before the value enters state (meta-mutation has no faithful operation representation)",
+	);
+
+export const preventExtensionsError = (): Error =>
+	new Error(
+		"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (a non-extensible target silently drops tracked writes)",
+	);
 
 const inheritsFromPrototype = (value: object, prototype: object): boolean => {
 	for (let current = Reflect.getPrototypeOf(value); current !== null; current = Reflect.getPrototypeOf(current))

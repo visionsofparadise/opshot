@@ -5,22 +5,26 @@ import { peelReadProxy } from "../react/peelReadProxy";
 import { getOptions, inheritOptions } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
-import { nonWritablePropertyError, rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
-import { admissionLane, classifyValue, type AdmissionLane } from "./classify";
+import {
+	definePropertyError,
+	nonWritablePropertyError,
+	ownProtoKeyError,
+	preventExtensionsError,
+	rejectionError,
+	setPrototypeOfError,
+	snapshotDonationError,
+} from "./boundaryErrors";
+import { admissionDecision, admissionLane, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>): AdmissionLane => {
-	const lane = admissionLane(value);
+	const decision = admissionDecision(value);
 
-	if (lane !== "reject") return lane;
+	if (decision.lane === "reject") throw rejectionError(value, decision.kind, path);
 
-	const kind = classifyValue(value);
-
-	if (kind === "plain" || kind === "plainArray") return "track";
-
-	throw rejectionError(value, kind, path);
+	return decision.lane;
 };
 
 const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
@@ -147,35 +151,27 @@ export function installBoundary(): void {
 				set(target, prop, value, receiver) {
 					const assigned: unknown = value;
 
-					if (prop === "__proto__") throw reservedDataPathError(["__proto__"]);
+					if (prop === "__proto__") throw ownProtoKeyError();
 
 					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 
 					const location = typeof prop === "string" ? [prop] : [];
 					const strict = getOptions(target)?.strict !== false;
 
-					if (
-						strict &&
-						!isInitializing() &&
-						typeof resolved === "object" &&
-						resolved !== null &&
-						admissionLane(resolved) === "track"
-					)
-						assertSafeDataPaths(resolved, location, new Set());
-
 					if (typeof resolved === "object" && resolved !== null) {
+						const decision = admissionDecision(resolved);
+
+						if (strict && !isInitializing() && decision.lane === "track")
+							assertSafeDataPaths(resolved, location, new Set());
+
 						if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
 						inheritOptions(target, resolved);
 
-						if (
-							getOptions(target)?.strict === false &&
-							!proxyStateMap.has(resolved) &&
-							admissionLane(resolved) === "reject"
-						)
-							unsafeTrack(resolved);
-
-						if (!proxyStateMap.has(resolved)) certifyAdmission(resolved, isInitializing() ? undefined : location);
+						if (!proxyStateMap.has(resolved) && decision.lane === "reject") {
+							if (getOptions(target)?.strict === false) unsafeTrack(resolved);
+							else throw rejectionError(resolved, decision.kind, isInitializing() ? undefined : location);
+						}
 					}
 
 					if (refusesWrite(target, prop, resolved)) return false;
@@ -191,17 +187,13 @@ export function installBoundary(): void {
 				defineProperty(target, prop, descriptor) {
 					if (setDepth > 0 || isInitializing()) return Reflect.defineProperty(target, prop, descriptor);
 
-					throw new Error(
-						"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input",
-					);
+					throw definePropertyError();
 				},
 				setPrototypeOf() {
-					throw new Error("opshot: setPrototypeOf is not supported on tracked state");
+					throw setPrototypeOfError();
 				},
 				preventExtensions() {
-					throw new Error(
-						"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (a non-extensible target silently drops tracked writes)",
-					);
+					throw preventExtensionsError();
 				},
 			};
 		},

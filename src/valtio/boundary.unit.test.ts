@@ -193,8 +193,8 @@ describe("boundary: throws at entry", () => {
 			return carrier;
 		};
 
-		expect(() => createMutableState(withOwnProto())).toThrow("reserved data path /__proto__");
-		expect(() => createMutableState({ held: withOwnProto() })).toThrow("reserved data path /__proto__");
+		expect(() => createMutableState(withOwnProto())).toThrow("own __proto__ key is not supported on tracked state");
+		expect(() => createMutableState({ held: withOwnProto() })).toThrow("own __proto__ key is not supported on tracked state");
 
 		const state = createMutableState<{ value: unknown }>({ value: null });
 
@@ -202,7 +202,7 @@ describe("boundary: throws at entry", () => {
 			transact(state, () => {
 				state.value = { deep: withOwnProto() };
 			});
-		}).toThrow("reserved data path /__proto__");
+		}).toThrow("own __proto__ key is not supported on tracked state");
 		expect(state.value).toBeNull();
 		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
@@ -290,13 +290,13 @@ describe("boundary: throws at entry", () => {
 		expect(() => {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(state as any).__proto__ = {};
-		}).toThrow("reserved data path /__proto__");
+		}).toThrow("own __proto__ key is not supported on tracked state");
 
 		expect(() => {
 			transact(state, () => {
 				state.value = carrier;
 			});
-		}).toThrow("reserved data path /__proto__");
+		}).toThrow("own __proto__ key is not supported on tracked state");
 
 		expect(state.value).toBeNull();
 		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
@@ -697,7 +697,7 @@ describe("boundary: meta-mutation trap gates", () => {
 		const state = createMutableState({ count: 0 });
 
 		expect(() => Object.defineProperty(state, "extra", { value: 1 })).toThrow(
-			"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input",
+			"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input (meta-mutation has no faithful operation representation)",
 		);
 	});
 
@@ -705,7 +705,7 @@ describe("boundary: meta-mutation trap gates", () => {
 		const state = createMutableState({ count: 0 });
 
 		expect(() => Object.setPrototypeOf(state, null)).toThrow(
-			"opshot: setPrototypeOf is not supported on tracked state",
+			"opshot: setPrototypeOf is not supported on tracked state; set the prototype before the value enters state (meta-mutation has no faithful operation representation)",
 		);
 	});
 
@@ -1105,7 +1105,7 @@ describe("boundary: strict false", () => {
 		};
 
 		expect(() => createMutableState({ held: withOwnProto() }, { strict: false })).toThrow(
-			"reserved data path /__proto__",
+			"own __proto__ key is not supported on tracked state",
 		);
 
 		const state = createMutableState<{ value: unknown }>({ value: null }, { strict: false });
@@ -1114,7 +1114,7 @@ describe("boundary: strict false", () => {
 			transact(state, () => {
 				state.value = { deep: withOwnProto() };
 			});
-		}).toThrow("reserved data path /__proto__");
+		}).toThrow("own __proto__ key is not supported on tracked state");
 		expect(state.value).toBeNull();
 	});
 
@@ -1124,7 +1124,7 @@ describe("boundary: strict false", () => {
 		expect(() => {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(state as any).__proto__ = {};
-		}).toThrow("reserved data path");
+		}).toThrow("own __proto__ key is not supported");
 
 		expect(() => {
 			Object.defineProperty(state, "extra", { value: 1 });

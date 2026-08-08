@@ -61,24 +61,37 @@ export function hasOwnEnumerableFunction(value: object): boolean {
 
 export type AdmissionLane = "track" | "leaf" | "reject";
 
-export function admissionLane(value: unknown): AdmissionLane {
-	if (typeof value !== "object" || value === null) return "leaf";
+export type AdmissionDecision =
+	| { readonly lane: "track" | "leaf" }
+	| { readonly lane: "reject"; readonly kind: Exclude<ValueKind, "plain" | "plainArray"> };
 
-	if (refSet.has(value)) return "leaf";
+export function admissionDecision(value: unknown): AdmissionDecision {
+	if (typeof value !== "object" || value === null) return { lane: "leaf" };
 
-	if (isUnsafeTracked(value)) return "track";
+	if (refSet.has(value)) return { lane: "leaf" };
+
+	if (isUnsafeTracked(value)) return { lane: "track" };
 
 	const kind = classifyValue(value);
 
-	if ((kind === "plain" || kind === "plainArray" || kind === "cleanClass") && Object.isFrozen(value)) return "leaf";
+	if ((kind === "plain" || kind === "plainArray" || kind === "cleanClass") && Object.isFrozen(value))
+		return { lane: "leaf" };
 
-	if (kind === "plain" || kind === "plainArray") return "track";
+	if (kind === "plain" || kind === "plainArray") return { lane: "track" };
 
-	if (kind === "cleanClass" && !hasOwnEnumerableFunction(value)) return "track";
+	if (kind === "cleanClass") {
+		if (!hasOwnEnumerableFunction(value)) return { lane: "track" };
 
-	return "reject";
+		return { lane: "reject", kind: "cleanClass" };
+	}
+
+	return { lane: "reject", kind };
+}
+
+export function admissionLane(value: unknown): AdmissionLane {
+	return admissionDecision(value).lane;
 }
 
 export function isTrackable(value: unknown): boolean {
-	return admissionLane(value) === "track";
+	return admissionDecision(value).lane === "track";
 }
