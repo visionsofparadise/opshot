@@ -46,6 +46,14 @@ const privateClassError = (className: string, path: ReadonlyArray<string> | unde
 const nativeClassError = (className: string, path: ReadonlyArray<string> | undefined): Error =>
 	boundaryError(className, "its state is hidden in internal slots", [unsafeTrackSlotOption, ignoreOption], path);
 
+export const nonWritablePropertyError = (value: object, path: ReadonlyArray<string>): Error =>
+	boundaryError(
+		constructorName(value.constructor),
+		"a non-writable property's interior is silently mutable and untracked",
+		["make the property writable", "ignore(value) to declare the escape"],
+		path,
+	);
+
 export const snapshotDonationError = (key: string | symbol): Error =>
 	new Error(
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,

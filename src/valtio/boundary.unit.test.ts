@@ -194,7 +194,7 @@ describe("boundary: throws at entry", () => {
 		};
 
 		expect(() => createMutableState(withOwnProto())).toThrow("reserved data path /__proto__");
-		expect(() => createMutableState({ held: withOwnProto() })).toThrow("reserved data path /held/__proto__");
+		expect(() => createMutableState({ held: withOwnProto() })).toThrow("reserved data path /__proto__");
 
 		const state = createMutableState<{ value: unknown }>({ value: null });
 
@@ -202,17 +202,33 @@ describe("boundary: throws at entry", () => {
 			transact(state, () => {
 				state.value = { deep: withOwnProto() };
 			});
-		}).toThrow("reserved data path /value/deep/__proto__");
+		}).toThrow("reserved data path /__proto__");
 		expect(state.value).toBeNull();
 		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 
-	it("rejects a non-writable __proto__ data key, which valtio never replays through the trap", () => {
-		const carrier = {};
+	it("admits a non-writable __proto__ data key visible on the live proxy and absent from snapshots and ops", () => {
+		const carrier: { tick: number } = { tick: 0 };
 
 		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: false });
 
-		expect(() => createMutableState({ held: carrier })).toThrow("reserved data path /held/__proto__");
+		const state = createMutableState({ held: carrier });
+		const emissions = recordEmissions(state);
+
+		expect(Object.keys(state.held)).toContain("__proto__");
+		expect(JSON.stringify(state.held)).toContain("polluted");
+
+		const snap = snapshot(state);
+
+		expect(Object.hasOwn(snap.held, "__proto__")).toBe(false);
+		expect(JSON.stringify(snap)).not.toContain("polluted");
+
+		transact(state, () => {
+			state.held.tick = 1;
+		});
+
+		expect(emissions).toHaveLength(1);
+		expect(JSON.stringify(emissions[0]?.ops)).not.toContain("__proto__");
 		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 
@@ -241,12 +257,10 @@ describe("boundary: throws at entry", () => {
 		expect(() => createMutableState({ graph: node })).toThrow("Map at /graph/hidden");
 	});
 
-	it("certifies a value reachable by both a certifying and a non-certifying route", () => {
+	it("throws for a non-writable object route before consulting a writable route to the same value", () => {
 		const shared: Record<string, unknown> = { held: { hidden: new Map() } };
 		const carrier: Record<string, unknown> = {};
 
-		// One route is non-writable, so valtio never replays it and certification stops there;
-		// the other is ordinary. The memo must not let the first route's visit mask the second.
 		Object.defineProperty(carrier, "sealed", {
 			value: shared,
 			enumerable: true,
@@ -255,18 +269,16 @@ describe("boundary: throws at entry", () => {
 		});
 		carrier.open = shared;
 
-		expect(() => createMutableState({ carrier })).toThrow("cannot be tracked");
+		expect(() => createMutableState({ carrier })).toThrow(
+			"opshot: Object at /carrier/sealed cannot be tracked (a non-writable property's interior is silently mutable and untracked)",
+		);
+	});
 
-		const reversed: Record<string, unknown> = { open: shared };
+	it("rejects a rejectable value reachable by two writable routes", () => {
+		const shared: Record<string, unknown> = { hidden: new Map() };
+		const carrier: Record<string, unknown> = { first: shared, second: shared };
 
-		Object.defineProperty(reversed, "sealed", {
-			value: shared,
-			enumerable: true,
-			writable: false,
-			configurable: true,
-		});
-
-		expect(() => createMutableState({ reversed })).toThrow("cannot be tracked");
+		expect(() => createMutableState({ carrier })).toThrow("opshot: Map at /carrier/first/hidden cannot be tracked");
 	});
 
 	it("rejects a __proto__ write through the trap under default strictness", () => {
@@ -284,7 +296,7 @@ describe("boundary: throws at entry", () => {
 			transact(state, () => {
 				state.value = carrier;
 			});
-		}).toThrow("reserved data path /value/__proto__");
+		}).toThrow("reserved data path /__proto__");
 
 		expect(state.value).toBeNull();
 		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
@@ -347,7 +359,7 @@ describe("boundary: located rejection", () => {
 });
 
 describe("boundary: certification descends only where valtio proxies", () => {
-	it("admits a rejectable value behind a non-writable property and rejects it behind a writable one", () => {
+	it("throws at admission for an object behind a non-writable property and rejects it behind a writable one", () => {
 		const held = new Map([["k", "v"]]);
 		const nonWritable: Record<string, unknown> = {};
 
@@ -358,9 +370,9 @@ describe("boundary: certification descends only where valtio proxies", () => {
 			configurable: true,
 		});
 
-		const state = createMutableState({ box: nonWritable });
-
-		expect(state.box.held).toBe(held);
+		expect(() => createMutableState({ box: nonWritable })).toThrow(
+			"opshot: Map at /box/held cannot be tracked (a non-writable property's interior is silently mutable and untracked). Options:\n- make the property writable\n- ignore(value) to declare the escape",
+		);
 
 		const writable: Record<string, unknown> = {};
 
@@ -374,9 +386,8 @@ describe("boundary: certification descends only where valtio proxies", () => {
 		expect(() => createMutableState({ box: writable })).toThrow("opshot: Map at /box/held cannot be tracked");
 	});
 
-	it("stops certifying the whole subtree beneath a non-writable property", () => {
-		const held = new Map([["k", "v"]]);
-		const outer = { lookup: held };
+	it("throws at the non-writable property itself rather than descending its subtree", () => {
+		const outer = { lookup: new Map([["k", "v"]]) };
 		const nested: Record<string, unknown> = {};
 
 		Object.defineProperty(nested, "outer", {
@@ -386,10 +397,65 @@ describe("boundary: certification descends only where valtio proxies", () => {
 			configurable: true,
 		});
 
-		const state = createMutableState({ box: nested });
+		expect(() => createMutableState({ box: nested })).toThrow(
+			"opshot: Object at /box/outer cannot be tracked (a non-writable property's interior is silently mutable and untracked)",
+		);
+	});
 
-		expect(state.box.outer).toBe(outer);
-		expect((state.box.outer as typeof outer).lookup).toBe(held);
+	it("throws the admission error at a consumer write's located path", () => {
+		const state = createMutableState<{ box: unknown }>({ box: null });
+		const fixed: Record<string, unknown> = {};
+
+		Object.defineProperty(fixed, "inner", {
+			value: { n: 1 },
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		expect(() => {
+			transact(state, () => {
+				state.box = { holder: fixed };
+			});
+		}).toThrow(
+			"opshot: Object at /box/holder/inner cannot be tracked (a non-writable property's interior is silently mutable and untracked)",
+		);
+		expect(state.box).toBeNull();
+	});
+
+	it("admits a non-writable primitive as a ride-along, present and untracked", () => {
+		const carrier: { label?: string; tick: number } = { tick: 0 };
+
+		Object.defineProperty(carrier, "label", { value: "fixed", enumerable: true, writable: false, configurable: true });
+
+		const state = createMutableState({ box: carrier });
+		const emissions = recordEmissions(state);
+
+		expect(state.box.label).toBe("fixed");
+
+		transact(state, () => {
+			state.box.tick = 1;
+		});
+
+		expect(emissions).toHaveLength(1);
+		expect(JSON.stringify(emissions[0]?.ops)).not.toContain("label");
+		expect(state.box.label).toBe("fixed");
+	});
+
+	it("admits a frozen container as a leaf whose non-writable interior never reaches the admission throw", () => {
+		const inner = { n: 1 };
+		const frozen = Object.freeze({ inner });
+		const state = createMutableState({ frozen, tick: 0 });
+		const emissions = recordEmissions(state);
+
+		expect(state.frozen).toBe(frozen);
+
+		transact(state, () => {
+			state.frozen.inner.n = 2;
+		});
+
+		expect(inner.n).toBe(2);
+		expect(emissions).toHaveLength(0);
 	});
 
 	it("leaves the interior of an ignored container uncertified on both paths", () => {
@@ -439,17 +505,20 @@ describe("boundary: certification descends only where valtio proxies", () => {
 		}
 	});
 
-	it("keeps the reserved-path guard descending inside an ignored container", () => {
+	it("admits a __proto__ carrier inside an ignored container, landing by reference", () => {
 		const carrier = {};
 
 		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
 
-		expect(() => createMutableState({ kept: ignore({ held: carrier }) })).toThrow(
-			"reserved data path /kept/held/__proto__",
-		);
+		const state = createMutableState({ kept: ignore({ held: carrier }) });
+
+		expect(state.kept.held).toBe(carrier);
+		expect(Object.keys(state.kept.held)).toContain("__proto__");
+		expect(Reflect.getPrototypeOf(state.kept.held)).toBe(Object.prototype);
+		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 
-	it("keeps the reserved-path guard descending beneath a non-writable property", () => {
+	it("admits an ignored value behind a non-writable property as the declared escape", () => {
 		const carrier = {};
 
 		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
@@ -457,13 +526,18 @@ describe("boundary: certification descends only where valtio proxies", () => {
 		const nested: Record<string, unknown> = {};
 
 		Object.defineProperty(nested, "held", {
-			value: carrier,
+			value: ignore(carrier),
 			enumerable: true,
 			writable: false,
 			configurable: true,
 		});
 
-		expect(() => createMutableState({ box: nested })).toThrow("reserved data path /box/held/__proto__");
+		const state = createMutableState({ box: nested });
+
+		expect(state.box.held).toBe(carrier);
+		expect(Object.keys(state.box.held as object)).toContain("__proto__");
+		expect(Reflect.getPrototypeOf(state.box.held as object)).toBe(Object.prototype);
+		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 });
 
@@ -1031,7 +1105,7 @@ describe("boundary: strict false", () => {
 		};
 
 		expect(() => createMutableState({ held: withOwnProto() }, { strict: false })).toThrow(
-			"reserved data path /held/__proto__",
+			"reserved data path /__proto__",
 		);
 
 		const state = createMutableState<{ value: unknown }>({ value: null }, { strict: false });
@@ -1040,7 +1114,7 @@ describe("boundary: strict false", () => {
 			transact(state, () => {
 				state.value = { deep: withOwnProto() };
 			});
-		}).toThrow("reserved data path /value/deep/__proto__");
+		}).toThrow("reserved data path /__proto__");
 		expect(state.value).toBeNull();
 	});
 

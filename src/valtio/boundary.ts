@@ -4,7 +4,8 @@ import { getRegisteredTarget } from "../identity";
 import { peelReadProxy } from "../react/peelReadProxy";
 import { getOptions, inheritOptions } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
-import { rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
+import { walkDataEntries } from "../utils/dataEntries";
+import { nonWritablePropertyError, rejectionError, reservedDataPathError, snapshotDonationError } from "./boundaryErrors";
 import { admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
@@ -37,48 +38,33 @@ const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 	return current;
 };
 
-const CERTIFYING_VISIT = 1;
-const UNCERTIFIED_VISIT = 2;
-
-const walkDataPaths = (
-	value: unknown,
-	path: Array<string> | undefined,
-	visits: Map<object, number>,
-	certifying: boolean,
-): void => {
+const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>): void => {
 	if (typeof value !== "object" || value === null) return;
 
-	const visit = certifying ? CERTIFYING_VISIT : UNCERTIFIED_VISIT;
-	const seen = visits.get(value) ?? 0;
+	if (visits.has(value)) return;
 
-	if ((seen & visit) !== 0) return;
+	visits.add(value);
 
-	visits.set(value, seen | visit);
+	for (const entry of walkDataEntries(value)) {
+		const child: unknown = entry.value;
 
-	for (const key of Object.keys(value)) {
-		const nextPath = path === undefined ? undefined : [...path, key];
+		if (typeof child !== "object" || child === null) continue;
 
-		if (key === "__proto__") throw reservedDataPathError(nextPath ?? [key]);
+		const childPath = [...path, entry.key];
 
-		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+		if (!entry.writable) {
+			if (admissionLane(child) === "leaf") continue;
 
-		if (!descriptor || !("value" in descriptor)) continue;
+			throw nonWritablePropertyError(child, childPath);
+		}
 
-		const child: unknown = descriptor.value;
-		const reachable = certifying && descriptor.writable === true && typeof child === "object" && child !== null;
-		const certifyBelow = reachable && !proxyStateMap.has(child) && certifyAdmission(child, nextPath) === "track";
-
-		walkDataPaths(child, nextPath, visits, certifyBelow);
+		if (!proxyStateMap.has(child) && certifyAdmission(child, childPath) === "track")
+			walkDataPaths(child, childPath, visits);
 	}
 };
 
-export const assertSafeDataPaths = (
-	value: unknown,
-	path: Array<string> | undefined,
-	visits: Map<object, number>,
-	strict: boolean,
-): void => {
-	walkDataPaths(value, path, visits, strict);
+export const assertSafeDataPaths = (value: unknown, path: Array<string>, visits: Set<object>): void => {
+	walkDataPaths(value, path, visits);
 };
 
 const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
@@ -167,12 +153,15 @@ export function installBoundary(): void {
 
 					const location = typeof prop === "string" ? [prop] : [];
 					const strict = getOptions(target)?.strict !== false;
-					const certifyAssigned =
-						strict && typeof resolved === "object" && resolved !== null
-							? admissionLane(resolved) === "track"
-							: strict;
 
-					assertSafeDataPaths(resolved, isInitializing() ? undefined : location, new Map(), certifyAssigned);
+					if (
+						strict &&
+						!isInitializing() &&
+						typeof resolved === "object" &&
+						resolved !== null &&
+						admissionLane(resolved) === "track"
+					)
+						assertSafeDataPaths(resolved, location, new Set());
 
 					if (typeof resolved === "object" && resolved !== null) {
 						if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
