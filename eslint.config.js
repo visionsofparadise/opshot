@@ -308,11 +308,22 @@ export default tseslint.config(
 	{
 		files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
 		...tseslint.configs.disableTypeChecked,
+		languageOptions: {
+			globals: {
+				...globals.node,
+				...globals.es2022,
+			},
+			parserOptions: {
+				project: null,
+				projectService: false,
+			},
+		},
 		rules: {
 			...tseslint.configs.disableTypeChecked.rules,
 			"prefer-arrow-callback": "error",
 			"prefer-const": "error",
 			"no-var": "error",
+			"no-console": "off",
 		},
 	},
 

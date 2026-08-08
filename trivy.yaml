@@ -4,10 +4,12 @@ scan:
       - secret
       - misconfig
    skip-dirs:
-      - node_modules
-      - dist
-      - out
-      - build
-      - coverage
-      - scratch
-      - .git
+      - "**/node_modules"
+      - "**/dist"
+      - "**/out"
+      - "**/build"
+      - "**/cdk.out"
+      - "**/coverage"
+      - "**/.scratch"
+      - "**/scratch"
+      - "**/.git"

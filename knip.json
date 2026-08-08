@@ -2,7 +2,13 @@
 	"$schema": "https://unpkg.com/knip@6/schema.json",
 	"project": ["src/**/*.{ts,tsx}"],
 	"ignore": [],
-	"ignoreDependencies": ["opshot-react18", "prettier", "textlint-filter-rule-comments", "textlint-rule-no-dead-link"],
+	"ignoreDependencies": [
+		"opshot-react18",
+		"prettier",
+		"textlint-filter-rule-comments",
+		"textlint-rule-no-dead-link",
+		"@commitlint/cli"
+	],
 	"ignoreIssues": {
 		"src/valtio/boundary.ts": ["exports", "types"]
 	}
