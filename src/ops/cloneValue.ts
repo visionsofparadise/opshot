@@ -1,6 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
-import { carriedOwnKeys } from "../utils/dataEntries";
+import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { isTrackable } from "../valtio/classify";
 import { createOperationPath, formatOperationPath, type OperationPath } from "./path";
 
@@ -46,7 +46,7 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 
 	Reflect.setPrototypeOf(clone, Reflect.getPrototypeOf(value));
 
-	for (const key of carriedOwnKeys(value)) {
+	for (const key of carriedOwnKeysOf(value)) {
 		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
 		if (!descriptor) continue;

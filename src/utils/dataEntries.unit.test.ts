@@ -1,4 +1,4 @@
-import { carriedOwnKeys, walkDataEntries } from "./dataEntries";
+import { carriedOwnKeysOf, walkDataEntries } from "./dataEntries";
 
 const symbolKey = Symbol("symbolKey");
 
@@ -80,8 +80,8 @@ describe("walkDataEntries", () => {
 	});
 });
 
-describe("carriedOwnKeys", () => {
+describe("carriedOwnKeysOf", () => {
 	it("yields every own key except __proto__", () => {
-		expect(carriedOwnKeys(createFixture())).toEqual(["plain", "hidden", "locked", "computed", symbolKey]);
+		expect(carriedOwnKeysOf(createFixture())).toEqual(["plain", "hidden", "locked", "computed", symbolKey]);
 	});
 });

@@ -2,7 +2,7 @@ import { markToTrack } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { registerSnapshotCopy } from "../identity";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
-import { carriedOwnKeys } from "../utils/dataEntries";
+import { carriedOwnKeysOf } from "../utils/dataEntries";
 
 const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
 
@@ -23,7 +23,7 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 	markToTrack(snap, true);
 	snapCache.set(target, [version, snap]);
 
-	for (const key of carriedOwnKeys(target)) {
+	for (const key of carriedOwnKeysOf(target)) {
 		if (Object.getOwnPropertyDescriptor(snap, key)) continue;
 
 		const descriptor = Reflect.getOwnPropertyDescriptor(target, key);

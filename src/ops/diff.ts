@@ -1,5 +1,5 @@
 import { isSameIdentity } from "../identity";
-import { carriedOwnKeys, walkDataEntries } from "../utils/dataEntries";
+import { carriedOwnKeysOf, walkDataEntries } from "../utils/dataEntries";
 import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, getValueOriginal, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
@@ -49,7 +49,7 @@ const assertAcyclic = (value: unknown, path: OperationPath, black: WeakSet<objec
 
 		grey.add(node);
 
-		for (const key of carriedOwnKeys(node)) {
+		for (const key of carriedOwnKeysOf(node)) {
 			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
 
 			if (!descriptor || !("value" in descriptor)) continue;
@@ -162,10 +162,14 @@ const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): 
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
 
-const dataEntryValues = (value: object): Map<string, unknown> => {
+const dataEntryValuesOf = (value: object, ignoreArrayIndexes: boolean): Map<string, unknown> => {
 	const entries = new Map<string, unknown>();
 
-	for (const entry of walkDataEntries(value)) entries.set(entry.key, entry.value);
+	for (const entry of walkDataEntries(value)) {
+		if (ignoreArrayIndexes && isCanonicalArrayIndexString(entry.key)) continue;
+
+		entries.set(entry.key, entry.value);
+	}
 
 	return entries;
 };
@@ -180,13 +184,11 @@ const diffObjectProperties = (
 	black: WeakSet<object>,
 ): number => {
 	let weight = 0;
-	const beforeEntries = dataEntryValues(before);
-	const afterEntries = dataEntryValues(after);
+	const beforeEntries = dataEntryValuesOf(before, ignoreArrayIndexes);
+	const afterEntries = dataEntryValuesOf(after, ignoreArrayIndexes);
 	const keys = new Set<string>([...beforeEntries.keys(), ...afterEntries.keys()]);
 
 	for (const key of keys) {
-		if (ignoreArrayIndexes && isCanonicalArrayIndexString(key)) continue;
-
 		const nextPath = appendOperationPath(path, key);
 		const beforePresent = beforeEntries.has(key);
 		const afterPresent = afterEntries.has(key);

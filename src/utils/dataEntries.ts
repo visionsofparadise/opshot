@@ -30,5 +30,5 @@ export const walkDataEntries = (value: object, includeArrayLength = false): Arra
 	return entries;
 };
 
-export const carriedOwnKeys = (value: object): Array<string | symbol> =>
+export const carriedOwnKeysOf = (value: object): Array<string | symbol> =>
 	Reflect.ownKeys(value).filter((key) => key !== "__proto__");
