@@ -1,7 +1,7 @@
 import { isSameIdentity } from "../identity";
 import { carriedOwnKeys, walkDataEntries } from "../utils/dataEntries";
 import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
-import { createAssignMutation, createDeleteMutation, type Operation } from "./operation";
+import { createAssignMutation, createDeleteMutation, getValueOriginal, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
@@ -35,11 +35,10 @@ const changePair = (path: OperationPath, before: unknown, after: unknown): Opera
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
 
-const assertAcyclic = (value: unknown, path: OperationPath): void => {
+const assertAcyclic = (value: unknown, path: OperationPath, black: WeakSet<object>): void => {
 	if (!isCloneable(value)) return;
 
 	const grey = new WeakSet<object>();
-	const black = new WeakSet<object>();
 
 	const visit = (node: unknown): void => {
 		if (!isCloneable(node)) return;
@@ -65,27 +64,42 @@ const assertAcyclic = (value: unknown, path: OperationPath): void => {
 	visit(value);
 };
 
-const pushAddition = (ops: Array<Operation>, path: OperationPath, after: unknown): number => {
-	assertAcyclic(after, path);
+const commitOperation = (
+	ops: Array<Operation>,
+	opsStart: number,
+	path: OperationPath,
+	pair: Operation,
+	weighHalf: (value: unknown) => number,
+	black: WeakSet<object>,
+): number => {
+	ops.splice(opsStart, ops.length - opsStart, pair);
 
-	ops.push(additionPair(path, after));
+	if ("value" in pair.do) assertAcyclic(getValueOriginal(pair.do), path, black);
 
-	return OPERATION_WEIGHT + weighCarried(after);
+	if (path.length === 1) return 0;
+
+	let weight = OPERATION_WEIGHT;
+
+	if ("value" in pair.do) weight += weighHalf(getValueOriginal(pair.do));
+
+	if ("value" in pair.undo) weight += weighHalf(getValueOriginal(pair.undo));
+
+	return weight;
 };
 
-const pushRemoval = (ops: Array<Operation>, path: OperationPath, before: unknown): number => {
-	ops.push(removalPair(path, before));
+const pushAddition = (ops: Array<Operation>, path: OperationPath, after: unknown, black: WeakSet<object>): number =>
+	commitOperation(ops, ops.length, path, additionPair(path, after), weighCarried, black);
 
-	return OPERATION_WEIGHT + weighCarried(before);
-};
+const pushRemoval = (ops: Array<Operation>, path: OperationPath, before: unknown, black: WeakSet<object>): number =>
+	commitOperation(ops, ops.length, path, removalPair(path, before), weighCarried, black);
 
-const pushChange = (ops: Array<Operation>, path: OperationPath, before: unknown, after: unknown): number => {
-	assertAcyclic(after, path);
-
-	ops.push(changePair(path, before, after));
-
-	return OPERATION_WEIGHT + weighCarried(before) + weighCarried(after);
-};
+const pushChange = (
+	ops: Array<Operation>,
+	path: OperationPath,
+	before: unknown,
+	after: unknown,
+	black: WeakSet<object>,
+): number => commitOperation(ops, ops.length, path, changePair(path, before, after), weighCarried, black);
 
 const tryCollapse = (
 	before: unknown,
@@ -94,6 +108,7 @@ const tryCollapse = (
 	ops: Array<Operation>,
 	opsStart: number,
 	atomicWeight: number,
+	black: WeakSet<object>,
 ): number => {
 	if (atomicWeight === 0) return 0;
 
@@ -102,11 +117,23 @@ const tryCollapse = (
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
 	if (collapsedWeight < atomicWeight) {
-		assertAcyclic(after, path);
+		const decisionWeights = new Map<object, number>();
 
-		ops.splice(opsStart, ops.length - opsStart, changePair(path, before, after));
+		if (isObjectLike(before)) decisionWeights.set(before, beforeWeight);
 
-		return collapsedWeight;
+		if (isObjectLike(after)) decisionWeights.set(after, afterWeight);
+
+		const weighHalf = (value: unknown): number => {
+			if (isObjectLike(value)) {
+				const memoized = decisionWeights.get(value);
+
+				if (memoized !== undefined) return memoized;
+			}
+
+			return weighCarried(value);
+		};
+
+		return commitOperation(ops, opsStart, path, changePair(path, before, after), weighHalf, black);
 	}
 
 	return atomicWeight;
@@ -150,6 +177,7 @@ const diffObjectProperties = (
 	ops: Array<Operation>,
 	ancestors: Ancestors,
 	ignoreArrayIndexes: boolean,
+	black: WeakSet<object>,
 ): number => {
 	let weight = 0;
 	const beforeEntries = dataEntryValues(before);
@@ -164,11 +192,11 @@ const diffObjectProperties = (
 		const afterPresent = afterEntries.has(key);
 
 		if (beforePresent && afterPresent) {
-			weight += diffValue(beforeEntries.get(key), afterEntries.get(key), nextPath, ops, ancestors);
+			weight += diffValue(beforeEntries.get(key), afterEntries.get(key), nextPath, ops, ancestors, black);
 		} else if (beforePresent && !Object.hasOwn(after, key)) {
-			weight += pushRemoval(ops, nextPath, beforeEntries.get(key));
+			weight += pushRemoval(ops, nextPath, beforeEntries.get(key), black);
 		} else if (afterPresent && !Object.hasOwn(before, key)) {
-			weight += pushAddition(ops, nextPath, afterEntries.get(key));
+			weight += pushAddition(ops, nextPath, afterEntries.get(key), black);
 		}
 	}
 
@@ -181,6 +209,7 @@ const diffArray = (
 	path: OperationPath,
 	ops: Array<Operation>,
 	ancestors: Ancestors,
+	black: WeakSet<object>,
 ): number => {
 	const overlap = Math.min(before.length, after.length);
 	let weight = 0;
@@ -193,26 +222,28 @@ const diffArray = (
 
 		const nextPath = appendOperationPath(path, index);
 
-		if (!beforePresent) weight += pushAddition(ops, nextPath, after[index]);
-		else if (!afterPresent) weight += pushRemoval(ops, nextPath, before[index]);
-		else weight += diffValue(before[index], after[index], nextPath, ops, ancestors);
+		if (!beforePresent) weight += pushAddition(ops, nextPath, after[index], black);
+		else if (!afterPresent) weight += pushRemoval(ops, nextPath, before[index], black);
+		else weight += diffValue(before[index], after[index], nextPath, ops, ancestors, black);
 	}
 
 	if (after.length > before.length) {
-		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length);
+		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length, black);
 
 		for (let index = before.length; index < after.length; index++) {
-			if (Object.hasOwn(after, index)) weight += pushAddition(ops, appendOperationPath(path, index), after[index]);
+			if (Object.hasOwn(after, index))
+				weight += pushAddition(ops, appendOperationPath(path, index), after[index], black);
 		}
 	} else if (after.length < before.length) {
 		for (let index = after.length; index < before.length; index++) {
-			if (Object.hasOwn(before, index)) weight += pushRemoval(ops, appendOperationPath(path, index), before[index]);
+			if (Object.hasOwn(before, index))
+				weight += pushRemoval(ops, appendOperationPath(path, index), before[index], black);
 		}
 
-		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length);
+		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length, black);
 	}
 
-	weight += diffObjectProperties(before, after, path, ops, ancestors, true);
+	weight += diffObjectProperties(before, after, path, ops, ancestors, true, black);
 
 	return weight;
 };
@@ -223,6 +254,7 @@ const walkContainer = (
 	path: OperationPath,
 	ops: Array<Operation>,
 	ancestors: Ancestors,
+	black: WeakSet<object>,
 	walk: () => number,
 ): number => {
 	if (hasAncestorPair(ancestors, before, after)) throw cyclicError(path);
@@ -239,7 +271,7 @@ const walkContainer = (
 		const opsStart = ops.length;
 		const atomicWeight = walk();
 
-		return tryCollapse(before, after, path, ops, opsStart, atomicWeight);
+		return tryCollapse(before, after, path, ops, opsStart, atomicWeight, black);
 	} finally {
 		exitAncestorPair(ancestors, before, after);
 	}
@@ -251,24 +283,27 @@ const diffValue = (
 	path: OperationPath,
 	ops: Array<Operation>,
 	ancestors: Ancestors,
+	black: WeakSet<object>,
 ): number => {
 	if (Object.is(before, after)) return 0;
 
 	if (path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after)) {
-		return pushChange(ops, path, before, after);
+		return pushChange(ops, path, before, after, black);
 	}
 
 	if (isPlainArray(before) && isPlainArray(after)) {
-		return walkContainer(before, after, path, ops, ancestors, () => diffArray(before, after, path, ops, ancestors));
-	}
-
-	if (isPlainObject(before) && isPlainObject(after)) {
-		return walkContainer(before, after, path, ops, ancestors, () =>
-			diffObjectProperties(before, after, path, ops, ancestors, false),
+		return walkContainer(before, after, path, ops, ancestors, black, () =>
+			diffArray(before, after, path, ops, ancestors, black),
 		);
 	}
 
-	return pushChange(ops, path, before, after);
+	if (isPlainObject(before) && isPlainObject(after)) {
+		return walkContainer(before, after, path, ops, ancestors, black, () =>
+			diffObjectProperties(before, after, path, ops, ancestors, false, black),
+		);
+	}
+
+	return pushChange(ops, path, before, after, black);
 };
 
 const getRootKind = (value: object): RootKind | undefined => {
@@ -295,7 +330,7 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 
 	const ops = new Array<Operation>();
 
-	diffValue(before, after, createOperationPath([]), ops, new Map());
+	diffValue(before, after, createOperationPath([]), ops, new Map(), new WeakSet());
 
 	return ops;
 }
