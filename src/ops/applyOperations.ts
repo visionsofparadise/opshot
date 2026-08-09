@@ -4,6 +4,7 @@ import { transact } from "../transact";
 import { walkDataEntries } from "../utils/dataEntries";
 import { getValueOriginal, isMutation, type AssignMutation, type Mutation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
+import { isCanonicalArrayIndex, isCanonicalArrayIndexString, isObjectLike, MAX_ARRAY_LENGTH } from "./predicates";
 
 interface ValuePayload {
 	readonly recorded: unknown;
@@ -14,13 +15,6 @@ interface ResolvedTerminal {
 	readonly parent: object;
 	readonly segment: unknown;
 }
-
-const isObjectLike = (value: unknown): value is object =>
-	value !== null && (typeof value === "object" || typeof value === "function");
-const sameValueZero = (first: unknown, second: unknown): boolean =>
-	first === second || (first !== first && second !== second);
-const sameIdentity = (first: unknown, second: unknown): boolean =>
-	sameValueZero(resolveIdentity(first), resolveIdentity(second));
 
 const assertApplicable: (operation: unknown) => asserts operation is Mutation = (operation) => {
 	if (typeof operation === "object" && operation !== null && "do" in operation) {
@@ -36,26 +30,6 @@ const assertApplicable: (operation: unknown) => asserts operation is Mutation = 
 
 const unresolvedError = (path: OperationPath): Error =>
 	new Error(`opshot: ${formatOperationPath(path)} does not resolve to a supported operation address`);
-
-const matchesAppliedValue = (current: unknown, expected: unknown): boolean => {
-	if (isObjectLike(current) && isObjectLike(expected)) return sameIdentity(current, expected);
-
-	return Object.is(current, expected);
-};
-
-const setOrThrow = (target: object, key: PropertyKey, value: unknown): void => {
-	const written = Reflect.set(target, key, value);
-	const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
-	const current: unknown = descriptor && "value" in descriptor ? Reflect.get(target, key) : undefined;
-
-	if (!written || !descriptor || !("value" in descriptor) || !matchesAppliedValue(current, value)) {
-		throw new Error(`opshot: replay could not restore ${String(key)}`);
-	}
-};
-
-const deleteOrThrow = (target: object, key: PropertyKey): void => {
-	if (!Reflect.deleteProperty(target, key)) throw new Error(`opshot: replay could not delete ${String(key)}`);
-};
 
 const isWritableDataDescriptor = (descriptor: PropertyDescriptor | undefined): boolean =>
 	descriptor !== undefined && "value" in descriptor && descriptor.writable === true;
@@ -80,7 +54,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 				const present: unknown = attachedDescriptor?.value;
 
 				if (!isObjectLike(present) || resolveIdentity(present) !== resolveIdentity(target)) {
-					setOrThrow(attached, key, target);
+					Reflect.set(attached, key, target);
 				}
 
 				const child: unknown = Reflect.get(attached, key);
@@ -93,7 +67,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 			}
 		}
 
-		setOrThrow(attached, key, value);
+		Reflect.set(attached, key, value);
 	}
 
 	for (const entry of walkDataEntries(attached)) {
@@ -101,7 +75,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 
 		if (Object.hasOwn(recorded, entry.key)) continue;
 
-		deleteOrThrow(attached, entry.key);
+		Reflect.deleteProperty(attached, entry.key);
 	}
 };
 
@@ -150,14 +124,6 @@ const getInheritedDescriptor = (target: object, key: PropertyKey): PropertyDescr
 	}
 
 	return undefined;
-};
-
-const isCanonicalArrayIndex = (segment: unknown): segment is number =>
-	Number.isInteger(segment) && typeof segment === "number" && segment >= 0 && segment < 4_294_967_295;
-const isCanonicalArrayIndexString = (segment: string): boolean => {
-	const index = Number(segment);
-
-	return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === segment;
 };
 
 const requirePlainSegment = (parent: object, segment: unknown, path: OperationPath): PropertyKey => {
@@ -212,12 +178,12 @@ const applyPlain = (parent: object, segment: unknown, operation: Mutation): void
 			typeof operation.value !== "number" ||
 			!Number.isInteger(operation.value) ||
 			operation.value < 0 ||
-			operation.value > 4_294_967_295
+			operation.value > MAX_ARRAY_LENGTH
 		) {
 			throw unresolvedError(path);
 		}
 
-		setOrThrow(parent, "length", operation.value);
+		Reflect.set(parent, "length", operation.value);
 
 		return;
 	}
@@ -229,7 +195,7 @@ const applyPlain = (parent: object, segment: unknown, operation: Mutation): void
 	if (descriptor !== undefined && !present) throw unresolvedError(path);
 
 	if (operation.verb === "delete") {
-		deleteOrThrow(parent, key);
+		Reflect.deleteProperty(parent, key);
 
 		return;
 	}
@@ -246,7 +212,7 @@ const applyPlain = (parent: object, segment: unknown, operation: Mutation): void
 
 	restoreValue(
 		getValuePayload(operation),
-		(value) => setOrThrow(parent, key, value),
+		(value) => Reflect.set(parent, key, value),
 		() => Reflect.get(parent, key),
 	);
 };

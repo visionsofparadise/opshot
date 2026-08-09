@@ -3,6 +3,7 @@ import { carriedOwnKeys, walkDataEntries } from "../utils/dataEntries";
 import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
+import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
 
 type RootKind = "plainObject" | "plainArray";
@@ -131,17 +132,8 @@ const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): 
 	if (afterSet.size === 0) ancestors.delete(before);
 };
 
-const isObjectLike = (value: unknown): value is object =>
-	value !== null && (typeof value === "object" || typeof value === "function");
-
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
-
-const isCanonicalArrayIndex = (key: string): boolean => {
-	const index = Number(key);
-
-	return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === key;
-};
 
 const dataEntryValues = (value: object): Map<string, unknown> => {
 	const entries = new Map<string, unknown>();
@@ -165,7 +157,7 @@ const diffObjectProperties = (
 	const keys = new Set<string>([...beforeEntries.keys(), ...afterEntries.keys()]);
 
 	for (const key of keys) {
-		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
+		if (ignoreArrayIndexes && isCanonicalArrayIndexString(key)) continue;
 
 		const nextPath = appendOperationPath(path, key);
 		const beforePresent = beforeEntries.has(key);

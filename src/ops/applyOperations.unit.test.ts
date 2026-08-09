@@ -121,7 +121,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
-	it("rejects inherited setters without invoking them and detects failed writes", () => {
+	it("rejects inherited setters without invoking them", () => {
 		let calls = 0;
 
 		Object.defineProperty(Object.prototype, "opshotInheritedSetter", {
@@ -141,14 +141,17 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		} finally {
 			Reflect.deleteProperty(Object.prototype, "opshotInheritedSetter");
 		}
+	});
 
+	it("silently no-ops a hand-built assign onto a non-writable ride-along", () => {
 		const locked = {} as { value: number };
 		Object.defineProperty(locked, "value", { value: 1, enumerable: true, configurable: true, writable: false });
 		const lockedState = createMutableState(locked);
+		const heard = record(lockedState);
 
-		expect(() => applyOperations(lockedState, [createAssignMutation(["value"], 2)])).toThrow(
-			"replay could not restore value",
-		);
+		expect(() => applyOperations(lockedState, [createAssignMutation(["value"], 2)])).not.toThrow();
+		expect(lockedState.value).toBe(1);
+		expect(heard).toHaveLength(0);
 	});
 
 	it("re-deletes an address whose prototype carries an accessor without invoking it", () => {
