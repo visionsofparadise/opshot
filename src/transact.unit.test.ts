@@ -2,6 +2,7 @@ import { createMutableState } from "./createMutableState";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
+import { shapeOps } from "./ops/operationShape";
 
 describe("transact", () => {
 	it("runs the mutate callback and emits ops with meta when subscribed", () => {
@@ -21,7 +22,7 @@ describe("transact", () => {
 		);
 
 		expect(state.count).toBe(3);
-		expect(heard).toEqual([
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [
 					{
@@ -113,7 +114,7 @@ describe("transact", () => {
 
 		expect(rootHeard).toHaveLength(1);
 		expect(rootHeard[0]?.meta).toEqual({ tag: "outer" });
-		expect(rootHeard[0]?.ops).toEqual([
+		expect(shapeOps(rootHeard[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["top"], value: 2 }, undo: { verb: "assign", path: ["top"], value: 0 } },
 			{ do: { verb: "assign", path: ["a", "n"], value: 1 }, undo: { verb: "assign", path: ["a", "n"], value: 0 } },
 		]);
@@ -146,7 +147,7 @@ describe("transact", () => {
 
 		expect(rootHeard).toHaveLength(1);
 		expect(rootHeard[0]?.meta).toEqual({ tag: "outer" });
-		expect(rootHeard[0]?.ops).toEqual([
+		expect(shapeOps(rootHeard[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["top"], value: 2 }, undo: { verb: "assign", path: ["top"], value: 0 } },
 			{ do: { verb: "assign", path: ["a", "n"], value: 1 }, undo: { verb: "assign", path: ["a", "n"], value: 0 } },
 		]);
@@ -308,7 +309,7 @@ describe("transact", () => {
 			{ tag: "outer" },
 		);
 
-		expect(heard).toEqual([
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [{ do: { verb: "assign", path: ["n"], value: 5 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 				meta: { tag: "outer" },
@@ -345,7 +346,7 @@ describe("transact", () => {
 			{ replay: true },
 		);
 
-		expect(recorded).toEqual([
+		expect(shapeOps(recorded)).toEqual([
 			{ do: { verb: "assign", path: ["n"], value: 15 }, undo: { verb: "assign", path: ["n"], value: 5 } },
 		]);
 	});

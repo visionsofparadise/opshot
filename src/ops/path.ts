@@ -12,10 +12,7 @@ export const createOperationPath = (segments: ReadonlyArray<string | number>): O
 export const appendOperationPath = (path: OperationPath, segment: string | number): OperationPath =>
 	Object.freeze([...path, segment]);
 
-const escapeSegment = (segment: string): string => segment.replaceAll("~", "~0").replaceAll("/", "~1");
-
-const formatSegment = (segment: string | number): string =>
-	typeof segment === "string" ? escapeSegment(segment) : String(segment);
+const formatSegment = (segment: string | number): string => String(segment);
 
 export const formatOperationPath = (path: OperationPath): string =>
 	path.length === 0 ? "" : `/${path.map(formatSegment).join("/")}`;

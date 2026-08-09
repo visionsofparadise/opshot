@@ -6,6 +6,7 @@ import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
+import { shapeOps } from "./ops/operationShape";
 
 vi.mock(import("./ops/diff"), { spy: true });
 
@@ -41,7 +42,7 @@ describe("createGroup", () => {
 		expect(emissions[0]?.state).toBe(first);
 		expect(isSameIdentity(first, emissions[0]!.state)).toBe(true);
 		expect(isSameIdentity(second, emissions[0]!.state)).toBe(false);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });

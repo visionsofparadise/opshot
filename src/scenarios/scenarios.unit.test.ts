@@ -5,6 +5,7 @@ import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
+import { shapeOps } from "../ops/operationShape";
 
 interface HistoryEntry {
 	state: object;
@@ -153,7 +154,7 @@ describe("scenarios", () => {
 
 		expect(received).toHaveLength(3);
 		expect(received.every((entry) => entry.meta.transactionKey === "drag")).toBe(true);
-		expect(received.map((emission) => emission.ops)).toEqual([
+		expect(received.map((emission) => shapeOps(emission.ops))).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["exposure"], value: 1 },
@@ -316,8 +317,8 @@ describe("scenarios", () => {
 			},
 		];
 
-		expect(aHeard).toEqual(shape);
-		expect(bHeard).toEqual(shape);
+		expect(aHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(shape);
+		expect(bHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(shape);
 		expect(b.box.x).toBe(2);
 	});
 
@@ -355,8 +356,8 @@ describe("scenarios", () => {
 			},
 		];
 
-		expect(aHeard).toEqual(shape);
-		expect(bHeard).toEqual(shape);
+		expect(aHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(shape);
+		expect(bHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(shape);
 
 		await Promise.resolve();
 
@@ -435,7 +436,7 @@ describe("scenarios", () => {
 		expect(aHeard).toHaveLength(1);
 		expect(bHeard).toHaveLength(2);
 		expect(bHeard[1]?.meta).toBeUndefined();
-		expect(bHeard[1]?.ops).toEqual([
+		expect(shapeOps(bHeard[1]?.ops ?? [])).toEqual([
 			{
 				do: { verb: "assign", path: ["items", 0, "gain"], value: 2 },
 				undo: { verb: "assign", path: ["items", 0, "gain"], value: 1 },

@@ -5,6 +5,7 @@ import { applyOperations } from "./ops/applyOperations";
 import { type Operation } from "./ops/operation";
 import { subscribe, type EmissionContext } from "./subscribe";
 import { transact } from "./transact";
+import { shapeOps } from "./ops/operationShape";
 
 describe("subscribe", () => {
 	it("subscribes and unsubscribes a state listener", () => {
@@ -213,10 +214,10 @@ describe("subscribe", () => {
 		state.a.x = 1;
 		await Promise.resolve();
 
-		expect(nodeHeard).toEqual([
+		expect(nodeHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["x"], value: 1 }, undo: { verb: "assign", path: ["x"], value: 0 } }],
 		]);
-		expect(rootHeard).toEqual([
+		expect(rootHeard.map(shapeOps)).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["a", "x"], value: 1 },
@@ -232,7 +233,7 @@ describe("subscribe", () => {
 		await Promise.resolve();
 
 		expect(nodeHeard).toEqual([]);
-		expect(rootHeard).toEqual([
+		expect(rootHeard.map(shapeOps)).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["b", "y"], value: 2 },
@@ -256,7 +257,7 @@ describe("subscribe", () => {
 		state.a.x = 1;
 		await Promise.resolve();
 
-		expect(rootHeard).toEqual([
+		expect(rootHeard.map(shapeOps)).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["a", "x"], value: 1 },
@@ -380,7 +381,7 @@ describe("subscribe", () => {
 
 		await Promise.resolve();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
 	});
@@ -410,7 +411,7 @@ describe("subscribe", () => {
 		await Promise.resolve();
 
 		expect(invocations).toBe(1);
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
 	});
@@ -435,7 +436,7 @@ describe("subscribe", () => {
 
 		for (const flush of scheduled) flush();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
 	});

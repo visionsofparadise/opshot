@@ -1,9 +1,9 @@
 import { appendOperationPath, createOperationPath, formatOperationPath } from "./path";
 
 describe("operation paths", () => {
-	it("formats root, escaped strings, and numbers", () => {
+	it("formats root, plain strings, and numbers without escaping", () => {
 		expect(formatOperationPath(createOperationPath([]))).toBe("");
-		expect(formatOperationPath(createOperationPath(["a/b", "c~d", 3, "3"]))).toBe("/a~1b/c~0d/3/3");
+		expect(formatOperationPath(createOperationPath(["a/b", "c~d", 3, "3"]))).toBe("/a/b/c~d/3/3");
 	});
 
 	it("retains number and string segments as distinct values", () => {

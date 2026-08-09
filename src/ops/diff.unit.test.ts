@@ -12,6 +12,7 @@ import { applyOperations } from "./applyOperations";
 import { getCyclicPath } from "./cloneValue";
 import { diffObjects } from "./diff";
 import { type Operation, type Mutation } from "./operation";
+import { shapeHalf, shapeOps } from "./operationShape";
 
 const readValue = (operation: Mutation): unknown => ("value" in operation ? operation.value : undefined);
 
@@ -38,7 +39,7 @@ describe("diffObjects: atomic flat paths", () => {
 	it("emits addition, change, and removal pairs at frozen array paths", () => {
 		const ops = diffObjects({ kept: 1, changed: 2, removed: 3 }, { kept: 1, changed: 4, added: 5 });
 
-		expect(ops).toEqual([
+		expect(shapeOps(ops)).toEqual([
 			{ do: { verb: "assign", path: ["changed"], value: 4 }, undo: { verb: "assign", path: ["changed"], value: 2 } },
 			{ do: { verb: "delete", path: ["removed"] }, undo: { verb: "assign", path: ["removed"], value: 3 } },
 			{ do: { verb: "assign", path: ["added"], value: 5 }, undo: { verb: "delete", path: ["added"] } },
@@ -85,7 +86,7 @@ describe("diffObjects: atomic flat paths", () => {
 
 	it("compares leaves with Object.is so NaN equals NaN and 0 differs from -0", () => {
 		expect(diffObjects({ n: Number.NaN }, { n: Number.NaN })).toEqual([]);
-		expect(diffObjects({ z: 0 }, { z: -0 }).map((pair) => pair.do)).toEqual([
+		expect(diffObjects({ z: 0 }, { z: -0 }).map((pair) => shapeHalf(pair.do))).toEqual([
 			{ verb: "assign", path: ["z"], value: -0 },
 		]);
 	});
@@ -162,11 +163,11 @@ describe("diffObjects: atomic flat paths", () => {
 
 		const ops = diffObjects(before, after);
 
-		expect(ops.map((pair) => pair.do)).toEqual([
+		expect(ops.map((pair) => shapeHalf(pair.do))).toEqual([
 			{ verb: "assign", path: ["length"], value: 4 },
 			{ verb: "assign", path: [3], value: undefined },
 		]);
-		expect(ops.map((pair) => pair.undo)).toEqual([
+		expect(ops.map((pair) => shapeHalf(pair.undo))).toEqual([
 			{ verb: "assign", path: ["length"], value: 1 },
 			{ verb: "delete", path: [3] },
 		]);
@@ -177,12 +178,12 @@ describe("diffObjects: atomic flat paths", () => {
 		const after = [1];
 		const ops = diffObjects(before, after);
 
-		expect(ops.map((pair) => pair.do)).toEqual([
+		expect(ops.map((pair) => shapeHalf(pair.do))).toEqual([
 			{ verb: "delete", path: [1] },
 			{ verb: "delete", path: [2] },
 			{ verb: "assign", path: ["length"], value: 1 },
 		]);
-		expect([...ops].reverse().map((pair) => pair.undo)).toEqual([
+		expect([...ops].reverse().map((pair) => shapeHalf(pair.undo))).toEqual([
 			{ verb: "assign", path: ["length"], value: 3 },
 			{ verb: "assign", path: [2], value: 3 },
 			{ verb: "assign", path: [1], value: 2 },
@@ -204,7 +205,7 @@ describe("diffObjects: atomic flat paths", () => {
 		Object.defineProperty(before, "label", { value: "a", enumerable: true });
 		Object.defineProperty(after, "label", { value: "b", enumerable: true });
 
-		expect(diffObjects(before, after)[0]?.do).toEqual({ verb: "assign", path: ["label"], value: "b" });
+		expect(shapeHalf(diffObjects(before, after)[0]!.do)).toEqual({ verb: "assign", path: ["label"], value: "b" });
 	});
 
 	it("mints nothing for a set-only accessor ↔ data transition in either direction", () => {
@@ -417,7 +418,7 @@ describe("diffObjects: container collapse", () => {
 		const ops = heard[0] ?? [];
 
 		expect(ops).toHaveLength(5);
-		expect(ops.map((pair) => pair.do)).toEqual(
+		expect(ops.map((pair) => shapeHalf(pair.do))).toEqual(
 			edited.map((index) => ({ verb: "assign", path: ["tree", index, "n"], value: index + 1 })),
 		);
 	});

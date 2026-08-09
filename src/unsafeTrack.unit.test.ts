@@ -6,6 +6,7 @@ import { applyOperations } from "./ops/applyOperations";
 import { type Operation } from "./ops/operation";
 import { isUnsafeTracked, unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 import { isTrackable } from "./valtio/classify";
+import { shapeOps } from "./ops/operationShape";
 
 const recordOwned = <T extends object>(state: T): Array<Array<Operation>> => {
 	const heard = new Array<Array<Operation>>();
@@ -84,7 +85,7 @@ describe("unsafeTrack stories", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]).toEqual([
+		expect(shapeOps(heard[0] ?? [])).toEqual([
 			{
 				do: { verb: "assign", path: ["arrow", "count"], value: 5 },
 				undo: { verb: "assign", path: ["arrow", "count"], value: 0 },

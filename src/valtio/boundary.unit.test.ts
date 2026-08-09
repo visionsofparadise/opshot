@@ -9,6 +9,7 @@ import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { ignore } from "../ignore";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
+import { shapeOps } from "../ops/operationShape";
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
 	const emissions = new Array<{ state: T; ops: Array<Operation> }>();
@@ -33,7 +34,7 @@ describe("boundary: tracked lane", () => {
 			state.document.tags[1] = "z";
 		});
 
-		expect(emissions.map((emission) => emission.ops)).toEqual([
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["document", "title"], value: "b" },
@@ -65,7 +66,7 @@ describe("boundary: tracked lane", () => {
 		});
 
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{
 				do: { verb: "assign", path: ["collection", "count"], value: 1 },
 				undo: { verb: "assign", path: ["collection", "count"], value: 0 },
@@ -317,7 +318,7 @@ describe("boundary: throws at entry", () => {
 		});
 
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{
 				do: { verb: "assign", path: ["emitter", "count"], value: 1 },
 				undo: { verb: "assign", path: ["emitter", "count"], value: 0 },
@@ -561,7 +562,7 @@ describe("boundary: admitted by rule", () => {
 		});
 
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
 		]);
 		expect(state.box).toBe(frozen);
@@ -620,7 +621,7 @@ describe("boundary: admitted by rule", () => {
 		});
 
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 
@@ -643,7 +644,7 @@ describe("boundary: admitted by rule", () => {
 		});
 
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{
 				do: { verb: "assign", path: ["run"], value: second },
 				undo: { verb: "assign", path: ["run"], value: first },
@@ -890,7 +891,7 @@ describe("boundary: refused writes", () => {
 		});
 
 		expect(state.box.a).toBe(2);
-		expect(emissions.map((emission) => emission.ops)).toEqual([
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["box", "a"], value: 2 },
@@ -970,7 +971,7 @@ describe("boundary: refused writes", () => {
 		});
 
 		expect(state.count).toBe(3);
-		expect(emissions.map((emission) => emission.ops)).toEqual([
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["count"], value: 3 },
@@ -1045,8 +1046,8 @@ describe("boundary: strict false", () => {
 			},
 		];
 
-		expect(nonStrictHeard.map((emission) => emission.ops)).toEqual([expected]);
-		expect(explicitHeard.map((emission) => emission.ops)).toEqual([expected]);
+		expect(nonStrictHeard.map((emission) => shapeOps(emission.ops))).toEqual([expected]);
+		expect(explicitHeard.map((emission) => shapeOps(emission.ops))).toEqual([expected]);
 
 		const op = nonStrictHeard[0]!.ops[0]!;
 
@@ -1065,7 +1066,7 @@ describe("boundary: strict false", () => {
 			state.arrow.count = 3;
 		});
 
-		expect(emissions.map((emission) => emission.ops)).toEqual([
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[
 				{
 					do: { verb: "assign", path: ["arrow", "count"], value: 3 },

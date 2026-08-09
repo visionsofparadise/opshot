@@ -7,6 +7,7 @@ import { transact } from "../transact";
 import { emitBareFlush } from "./emitterBare";
 import { getEmitter } from "./emitterRegistry";
 import { addStateListener, holdsBinding } from "./emitterListeners";
+import { shapeOps } from "../ops/operationShape";
 
 vi.mock(import("../ops/diff"), { spy: true });
 
@@ -44,7 +45,7 @@ describe("emitterListeners", () => {
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toEqual({ actor: "a" });
-		expect(heard[0]?.ops).toEqual([
+		expect(shapeOps(heard[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 	});
@@ -66,7 +67,7 @@ describe("emitterListeners", () => {
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.meta).toBeUndefined();
-		expect(heard[0]?.ops).toEqual([
+		expect(shapeOps(heard[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 5 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 	});
@@ -218,7 +219,7 @@ describe("emitterListeners", () => {
 
 		for (const flush of pending.splice(0)) flush();
 
-		expect(stateHeard).toEqual([
+		expect(stateHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
@@ -249,7 +250,7 @@ describe("emitterListeners", () => {
 		state.count = 1;
 		unsubscribe();
 
-		expect(firstHeard).toEqual([
+		expect(firstHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 
@@ -263,7 +264,7 @@ describe("emitterListeners", () => {
 		state.count = 2;
 		emitBareFlush(state);
 
-		expect(secondHeard).toEqual([
+		expect(secondHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
@@ -317,7 +318,7 @@ describe("emitterListeners", () => {
 		await Promise.resolve();
 
 		expect(groupHeard).toEqual([]);
-		expect(ownHeard).toEqual([
+		expect(ownHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});

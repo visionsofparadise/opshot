@@ -1,4 +1,4 @@
-import { cloneValue, isCloneable } from "./cloneValue";
+import { cloneValue } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 
 /**
@@ -90,8 +90,6 @@ abstract class ValueHalf extends OperationHalf {
 	constructor(path: OperationPath, value: unknown) {
 		super(path);
 		valueOriginals.set(this, value);
-
-		if (!isCloneable(value)) Object.defineProperty(this, "value", { value, enumerable: true });
 	}
 }
 

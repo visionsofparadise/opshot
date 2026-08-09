@@ -18,12 +18,15 @@ describe("operation", () => {
 		expect(getValueOriginal(half)).toBe(original);
 	});
 
-	it("keeps non-cloneable values directly readable", () => {
+	it("reads non-cloneable values through the prototype accessor with no own value descriptor", () => {
 		const run = (): string => "a";
 		const half = createAssignMutation(["run"], run);
 
 		expect(half.value).toBe(run);
-		expect(Object.getOwnPropertyDescriptor(half, "value")?.enumerable).toBe(true);
+		expect(Object.getOwnPropertyDescriptor(half, "value")).toBeUndefined();
+		expect("value" in half).toBe(true);
+		expect({ ...half }).not.toHaveProperty("value");
+		expect(JSON.parse(JSON.stringify(half))).not.toHaveProperty("value");
 	});
 
 	it("stores a frozen copied path on every half", () => {

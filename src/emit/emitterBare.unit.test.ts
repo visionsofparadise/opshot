@@ -7,6 +7,7 @@ import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { emitBareFlush, mintGroupedEmitter } from "./emitterBare";
 import { getOrCreateEmitter } from "./emitterRegistry";
+import { shapeOps } from "../ops/operationShape";
 
 type CyclicNode = { n: number; self?: CyclicNode };
 
@@ -60,7 +61,7 @@ describe("emitterBare", () => {
 
 		await Promise.resolve();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
@@ -136,10 +137,10 @@ describe("emitOn window", () => {
 
 		scheduler.flushAll();
 
-		expect(stateHeard).toEqual([
+		expect(stateHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
-		expect(groupHeard).toEqual(stateHeard);
+		expect(groupHeard.map(shapeOps)).toEqual(stateHeard.map(shapeOps));
 	});
 
 	it("group subscribe does not recapture an open window", async () => {
@@ -158,7 +159,7 @@ describe("emitOn window", () => {
 
 		scheduler.flushAll();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
@@ -183,7 +184,7 @@ describe("emitOn window", () => {
 
 		scheduler.flushAll();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 3 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 		expect(scheduler.pending).toHaveLength(0);
@@ -212,7 +213,7 @@ describe("emitOn window", () => {
 			{ tag: "txn" },
 		);
 
-		expect(heard).toEqual([
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [
 					{
@@ -269,7 +270,7 @@ describe("emitOn window", () => {
 		heard.length = 0;
 		scheduler.flushAll();
 
-		expect(heard).toEqual([
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [
 					{
@@ -308,7 +309,7 @@ describe("emitOn window", () => {
 
 		scheduler.flushAll();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
@@ -330,7 +331,7 @@ describe("emitOn window", () => {
 
 		stop();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
@@ -353,7 +354,7 @@ describe("emitOn window", () => {
 
 		scheduler.flushAll();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["x"], value: 1 }, undo: { verb: "assign", path: ["x"], value: 0 } }],
 		]);
 	});

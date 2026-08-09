@@ -8,6 +8,7 @@ import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
 import { unsafeTrack } from "./unsafeTrack";
+import { shapeOps } from "./ops/operationShape";
 
 vi.mock(import("./ops/diff"), { spy: true });
 
@@ -66,7 +67,7 @@ describe("createMutableState", () => {
 		);
 
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
@@ -99,7 +100,7 @@ describe("createMutableState", () => {
 		});
 
 		expect(diffObjects).toHaveBeenCalledTimes(1);
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 
@@ -219,7 +220,7 @@ describe("createMutableState", () => {
 
 		expect(state.entries).toEqual(["one"]);
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["index"], value: 1 }, undo: { verb: "assign", path: ["index"], value: 0 } },
 		]);
 	});
@@ -261,7 +262,7 @@ describe("createMutableState", () => {
 			state.count = 1;
 		});
 
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 		expect(state.doubled).toBe(2);
@@ -281,7 +282,7 @@ describe("createMutableState", () => {
 
 		await Promise.resolve();
 
-		expect(heard).toEqual([
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [
 					{
@@ -366,7 +367,7 @@ describe("createMutableState", () => {
 		state.count = 2;
 		await Promise.resolve();
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
@@ -424,7 +425,7 @@ describe("createMutableState: root certification", () => {
 
 		expect(state.count).toBe(1);
 		expect(emissions).toHaveLength(1);
-		expect(emissions[0]?.ops).toEqual([
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } },
 		]);
 	});
@@ -452,7 +453,7 @@ describe("createMutableState: root certification", () => {
 		});
 
 		expect(state.count).toBe(1);
-		expect(emissions.map((emission) => emission.ops)).toEqual([
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
@@ -473,7 +474,7 @@ describe("createMutableState: root certification", () => {
 		});
 
 		expect(state.count).toBe(1);
-		expect(emissions.map((emission) => emission.ops)).toEqual([
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 	});
