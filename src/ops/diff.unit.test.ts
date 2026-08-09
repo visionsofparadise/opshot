@@ -137,7 +137,7 @@ describe("diffObjects: atomic flat paths", () => {
 
 		const hostile = JSON.parse('{"__proto__": {"polluted": true}}') as object;
 
-		expect(diffObjects({}, hostile).map((op) => op.do.path)).toEqual([["__proto__"]]);
+		expect(diffObjects({}, hostile)).toEqual([]);
 		expect(Object.prototype).not.toHaveProperty("polluted");
 
 		const nestedHostile = JSON.parse('{"__proto__": {"polluted": true}, "keep": 2}') as object;
@@ -205,6 +205,20 @@ describe("diffObjects: atomic flat paths", () => {
 		Object.defineProperty(after, "label", { value: "b", enumerable: true });
 
 		expect(diffObjects(before, after)[0]?.do).toEqual({ verb: "assign", path: ["label"], value: "b" });
+	});
+
+	it("mints nothing for a set-only accessor ↔ data transition in either direction", () => {
+		const withData = { key: 1 };
+		const withAccessor: Record<string, unknown> = {};
+
+		Object.defineProperty(withAccessor, "key", {
+			set: () => undefined,
+			enumerable: true,
+			configurable: true,
+		});
+
+		expect(diffObjects(withData, withAccessor)).toEqual([]);
+		expect(diffObjects(withAccessor, withData)).toEqual([]);
 	});
 
 	it("emits stable Map key and value interiors through slots", () => {
@@ -584,6 +598,66 @@ describe("diffObjects: container collapse", () => {
 		replayDo(state, ops);
 		expect(state.big.length).toBe(5);
 		expect(state.small.flag).toBe(true);
+	});
+
+	it("round-trips wholesale-array growth, shrink, and sparse holes through collapse", () => {
+		const shrinkState = createMutableState({ list: Array.from({ length: 2000 }, (_, index) => index) });
+		const shrinkHeard = record(shrinkState);
+
+		transact(shrinkState, () => {
+			shrinkState.list.length = 10;
+		});
+
+		const shrinkOps = shrinkHeard[0] ?? [];
+
+		expect(shrinkOps).toHaveLength(1);
+		expect(shrinkOps[0]?.do).toMatchObject({ verb: "assign", path: ["list"] });
+		replayUndo(shrinkState, shrinkOps);
+		expect(shrinkState.list).toEqual(Array.from({ length: 2000 }, (_, index) => index));
+		replayDo(shrinkState, shrinkOps);
+		expect(shrinkState.list).toEqual(Array.from({ length: 10 }, (_, index) => index));
+
+		const growthState = createMutableState({ list: Array.from({ length: 10 }, (_, index) => index) });
+		const growthHeard = record(growthState);
+
+		transact(growthState, () => {
+			for (let index = 10; index < 2000; index++) growthState.list[index] = index;
+		});
+
+		const growthOps = growthHeard[0] ?? [];
+
+		expect(growthOps).toHaveLength(1);
+		expect(growthOps[0]?.do).toMatchObject({ verb: "assign", path: ["list"] });
+		replayUndo(growthState, growthOps);
+		expect(growthState.list).toEqual(Array.from({ length: 10 }, (_, index) => index));
+		replayDo(growthState, growthOps);
+		expect(growthState.list).toEqual(Array.from({ length: 2000 }, (_, index) => index));
+
+		const sparseState = createMutableState({ list: Array.from({ length: 2000 }, (_, index) => index) });
+		const sparseHeard = record(sparseState);
+
+		transact(sparseState, () => {
+			for (let index = 0; index < 2000; index += 2) delete sparseState.list[index];
+			sparseState.list.length = 1800;
+		});
+
+		const sparseOps = sparseHeard[0] ?? [];
+
+		expect(sparseOps).toHaveLength(1);
+		expect(sparseOps[0]?.do).toMatchObject({ verb: "assign", path: ["list"] });
+
+		const afterSparse = [...sparseState.list.keys()];
+
+		replayUndo(sparseState, sparseOps);
+		expect(sparseState.list).toHaveLength(2000);
+		expect(Object.hasOwn(sparseState.list, 0)).toBe(true);
+		expect(Object.hasOwn(sparseState.list, 100)).toBe(true);
+		expect(Object.hasOwn(sparseState.list, 1998)).toBe(true);
+		replayDo(sparseState, sparseOps);
+		expect(sparseState.list).toHaveLength(1800);
+		expect(Object.hasOwn(sparseState.list, 0)).toBe(false);
+		expect(Object.hasOwn(sparseState.list, 100)).toBe(false);
+		expect([...sparseState.list.keys()]).toEqual(afterSparse);
 	});
 });
 

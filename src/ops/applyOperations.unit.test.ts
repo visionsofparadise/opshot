@@ -812,22 +812,15 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		expect({}).not.toHaveProperty("x");
 	});
 
-	it("refuses a diffObjects-minted __proto__ op through the inherited-accessor guard", () => {
-		const hostile = JSON.parse('{"__proto__": {"polluted": "PWNED"}}') as object;
-		const ops = diffObjects({}, hostile);
-
-		expect(ops.map((op) => op.do.path)).toEqual([["__proto__"]]);
-
+	it("refuses a hand-built __proto__ path through the inherited-accessor guard", () => {
 		const state = createMutableState<{ a: number }>({ a: 1 });
 
-		expect(() =>
-			applyOperations(
-				state,
-				ops.map((op) => op.do),
-			),
-		).toThrow("inherited accessor");
+		expect(() => applyOperations(state, [createAssignMutation(["__proto__"], { polluted: "PWNED" })])).toThrow(
+			"inherited accessor",
+		);
 		expect(Object.prototype).not.toHaveProperty("polluted");
 		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
+		expect(diffObjects({}, JSON.parse('{"__proto__": {"polluted": true}}') as object)).toEqual([]);
 	});
 
 	it("keeps an own __proto__ ride-along out of the record and restores it at its original descriptor", () => {
@@ -869,6 +862,59 @@ describe("applyOperations: resolution is the pollution defence", () => {
 
 		roundTrip({ value: "poison", writable: false, enumerable: false, configurable: false });
 		roundTrip({ value: "poison", writable: false, enumerable: false, configurable: true });
+	});
+
+	it("leaves symbol-keyed and non-enumerable ride-alongs alone through a wholesale-restore undo that removes keys", () => {
+		const symbolKey = Symbol("ride");
+		const held: Record<string, unknown> = Object.fromEntries(
+			Array.from({ length: 80 }, (_, index) => [`k${String(index)}`, index]),
+		);
+
+		Object.defineProperty(held, "hidden", {
+			value: "secret",
+			enumerable: false,
+			writable: true,
+			configurable: true,
+		});
+		Object.defineProperty(held, symbolKey, {
+			value: "symbol",
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+
+		const state = createMutableState({ held });
+		const hiddenBefore = Reflect.getOwnPropertyDescriptor(state.held, "hidden");
+		const symbolBefore = Reflect.getOwnPropertyDescriptor(state.held, symbolKey);
+		const heard = record(state);
+
+		transact(state, () => {
+			for (let index = 0; index < 80; index++) state.held[`k${String(index)}`] = index + 1000;
+			state.held.extra = "added";
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["held"] });
+		expect(Object.hasOwn(state.held, "extra")).toBe(true);
+
+		applyOperations(state, ops.map((op) => op.undo).reverse());
+
+		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenBefore);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolBefore);
+		expect(Object.hasOwn(state.held, "extra")).toBe(false);
+		expect(state.held.k0).toBe(0);
+		expect(state.held.k79).toBe(79);
+
+		applyOperations(
+			state,
+			ops.map((op) => op.do),
+		);
+
+		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenBefore);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolBefore);
+		expect(state.held.extra).toBe("added");
 	});
 
 	it("does not re-assign a child that is already the recorded target, and still restores its interior", () => {

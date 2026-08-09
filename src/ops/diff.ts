@@ -1,4 +1,5 @@
 import { isSameIdentity } from "../identity";
+import { carriedOwnKeys, walkDataEntries } from "../utils/dataEntries";
 import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
@@ -48,9 +49,7 @@ const assertAcyclic = (value: unknown, path: OperationPath): void => {
 
 		grey.add(node);
 
-		for (const key of Reflect.ownKeys(node)) {
-			if (key === "__proto__") continue;
-
+		for (const key of carriedOwnKeys(node)) {
 			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
 
 			if (!descriptor || !("value" in descriptor)) continue;
@@ -144,26 +143,12 @@ const isCanonicalArrayIndex = (key: string): boolean => {
 	return Number.isInteger(index) && index >= 0 && index < 4_294_967_295 && String(index) === key;
 };
 
-const collectComparedKeys = (
-	before: Record<string, unknown> | Array<unknown>,
-	after: Record<string, unknown> | Array<unknown>,
-	ignoreArrayIndexes: boolean,
-): Iterable<string> => {
-	const keys = new Set<string>();
+const dataEntryValues = (value: object): Map<string, unknown> => {
+	const entries = new Map<string, unknown>();
 
-	for (const key of Object.keys(before)) {
-		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
+	for (const entry of walkDataEntries(value)) entries.set(entry.key, entry.value);
 
-		keys.add(key);
-	}
-
-	for (const key of Object.keys(after)) {
-		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
-
-		keys.add(key);
-	}
-
-	return keys;
+	return entries;
 };
 
 const diffObjectProperties = (
@@ -175,21 +160,23 @@ const diffObjectProperties = (
 	ignoreArrayIndexes: boolean,
 ): number => {
 	let weight = 0;
+	const beforeEntries = dataEntryValues(before);
+	const afterEntries = dataEntryValues(after);
+	const keys = new Set<string>([...beforeEntries.keys(), ...afterEntries.keys()]);
 
-	for (const key of collectComparedKeys(before, after, ignoreArrayIndexes)) {
+	for (const key of keys) {
+		if (ignoreArrayIndexes && isCanonicalArrayIndex(key)) continue;
+
 		const nextPath = appendOperationPath(path, key);
+		const beforePresent = beforeEntries.has(key);
+		const afterPresent = afterEntries.has(key);
 
-		const beforeDescriptor = Reflect.getOwnPropertyDescriptor(before, key);
-		const afterDescriptor = Reflect.getOwnPropertyDescriptor(after, key);
-
-		if (beforeDescriptor?.get || afterDescriptor?.get) continue;
-
-		if (!beforeDescriptor) {
-			weight += pushAddition(ops, nextPath, Reflect.get(after, key));
-		} else if (!afterDescriptor) {
-			weight += pushRemoval(ops, nextPath, Reflect.get(before, key));
-		} else {
-			weight += diffValue(Reflect.get(before, key), Reflect.get(after, key), nextPath, ops, ancestors);
+		if (beforePresent && afterPresent) {
+			weight += diffValue(beforeEntries.get(key), afterEntries.get(key), nextPath, ops, ancestors);
+		} else if (beforePresent && !Object.hasOwn(after, key)) {
+			weight += pushRemoval(ops, nextPath, beforeEntries.get(key));
+		} else if (afterPresent && !Object.hasOwn(before, key)) {
+			weight += pushAddition(ops, nextPath, afterEntries.get(key));
 		}
 	}
 

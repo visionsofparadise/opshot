@@ -65,6 +65,19 @@ describe("walkDataEntries", () => {
 
 		expect(keys).not.toContain("computed");
 	});
+
+	it("appends array length only when includeArrayLength is true", () => {
+		const list = [10, 20];
+
+		expect(walkDataEntries(list).map((entry) => entry.key)).toEqual(["0", "1"]);
+		expect(walkDataEntries(list, true)).toEqual([
+			{ key: "0", value: 10, writable: true },
+			{ key: "1", value: 20, writable: true },
+			{ key: "length", value: 2, writable: true },
+		]);
+		expect(walkDataEntries({ length: 3 }, true).map((entry) => entry.key)).toEqual(["length"]);
+		expect(walkDataEntries({ length: 3 }, true)[0]).toEqual({ key: "length", value: 3, writable: true });
+	});
 });
 
 describe("carriedOwnKeys", () => {

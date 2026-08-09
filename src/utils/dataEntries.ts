@@ -4,7 +4,7 @@ export interface DataEntry {
 	readonly writable: boolean;
 }
 
-export const walkDataEntries = (value: object): Array<DataEntry> => {
+export const walkDataEntries = (value: object, includeArrayLength = false): Array<DataEntry> => {
 	const entries = new Array<DataEntry>();
 
 	for (const key of Object.keys(value)) {
@@ -15,6 +15,16 @@ export const walkDataEntries = (value: object): Array<DataEntry> => {
 		if (!descriptor || !("value" in descriptor)) continue;
 
 		entries.push({ key, value: descriptor.value, writable: descriptor.writable === true });
+	}
+
+	if (includeArrayLength && Array.isArray(value)) {
+		const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+
+		entries.push({
+			key: "length",
+			value: value.length,
+			writable: lengthDescriptor?.writable === true,
+		});
 	}
 
 	return entries;

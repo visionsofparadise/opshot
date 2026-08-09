@@ -1,6 +1,7 @@
 import { resolveWriteProxy } from "../emit/resolveWriteProxy";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
+import { walkDataEntries } from "../utils/dataEntries";
 import { getValueOriginal, isMutation, type AssignMutation, type Mutation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 
@@ -56,23 +57,21 @@ const deleteOrThrow = (target: object, key: PropertyKey): void => {
 	if (!Reflect.deleteProperty(target, key)) throw new Error(`opshot: replay could not delete ${String(key)}`);
 };
 
+const isWritableDataDescriptor = (descriptor: PropertyDescriptor | undefined): boolean =>
+	descriptor !== undefined && "value" in descriptor && descriptor.writable === true;
+
 const restoreRecordedContent = (attached: object, recorded: object, restored: WeakSet<object>): void => {
 	if (restored.has(recorded)) return;
 
 	restored.add(recorded);
 
-	const recordedKeys = Reflect.ownKeys(recorded);
-	const orderedKeys = Array.isArray(recorded)
-		? ["length", ...recordedKeys.filter((key) => key !== "length")]
-		: recordedKeys;
-
-	for (const key of orderedKeys) {
-		const descriptor = Reflect.getOwnPropertyDescriptor(recorded, key);
+	for (const entry of walkDataEntries(recorded, true)) {
+		const key = entry.key;
 		const attachedDescriptor = Reflect.getOwnPropertyDescriptor(attached, key);
 
-		if (!descriptor || !("value" in descriptor) || (attachedDescriptor && !("value" in attachedDescriptor))) continue;
+		if (attachedDescriptor !== undefined && !isWritableDataDescriptor(attachedDescriptor)) continue;
 
-		const value: unknown = descriptor.value;
+		const value: unknown = entry.value;
 
 		if (isObjectLike(value)) {
 			const target = getRegisteredTarget(value);
@@ -86,7 +85,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 
 				const child: unknown = Reflect.get(attached, key);
 
-				if (!isObjectLike(child)) throw new Error(`opshot: replay could not reattach ${String(key)}`);
+				if (!isObjectLike(child)) throw new Error(`opshot: replay could not reattach ${key}`);
 
 				restoreRecordedContent(child, value, restored);
 
@@ -97,14 +96,12 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 		setOrThrow(attached, key, value);
 	}
 
-	for (const key of Reflect.ownKeys(attached)) {
-		if (key === "__proto__") continue;
+	for (const entry of walkDataEntries(attached)) {
+		if (!entry.writable) continue;
 
-		if (Object.hasOwn(recorded, key)) continue;
+		if (Object.hasOwn(recorded, entry.key)) continue;
 
-		const descriptor = Reflect.getOwnPropertyDescriptor(attached, key);
-
-		if (descriptor && "value" in descriptor) deleteOrThrow(attached, key);
+		deleteOrThrow(attached, entry.key);
 	}
 };
 
