@@ -255,10 +255,10 @@ describe("TrackedDate atomic emission", () => {
 
 		if (!pair) throw new Error("the epoch pair was not heard");
 
-		applyOperations(state, [pair.undo]);
+		applyOperations(state, [pair], "undo");
 		expect(state.when.getTime()).toBe(0);
 
-		applyOperations(state, [pair.do]);
+		applyOperations(state, [pair], "do");
 		expect(state.when.getTime()).toBe(1);
 	});
 });

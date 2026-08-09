@@ -11,6 +11,7 @@ import { isReadProxy } from "./readTracker";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 import type { Operation } from "../ops/operation";
+import { shapeOps } from "../ops/operationShape";
 
 const valtioSubscribeCounts = vi.hoisted(() => ({ subscribes: 0, unsubscribes: 0 }));
 
@@ -356,7 +357,7 @@ describe("useMutableState", () => {
 			fireEvent.click(screen.getByRole("button"));
 		});
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
 
@@ -364,7 +365,7 @@ describe("useMutableState", () => {
 			fireEvent.click(screen.getByRole("button"));
 		});
 
-		expect(heard).toEqual([
+		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);

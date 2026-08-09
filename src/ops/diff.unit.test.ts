@@ -24,16 +24,8 @@ const record = <T extends object>(state: T): Array<Array<Operation>> => {
 	return heard;
 };
 
-const replayUndo = <T extends object>(state: T, ops: Array<Operation>): void =>
-	applyOperations(
-		state,
-		[...ops].reverse().map((pair) => pair.undo),
-	);
-const replayDo = <T extends object>(state: T, ops: Array<Operation>): void =>
-	applyOperations(
-		state,
-		ops.map((pair) => pair.do),
-	);
+const replayUndo = <T extends object>(state: T, ops: Array<Operation>): void => applyOperations(state, ops, "undo");
+const replayDo = <T extends object>(state: T, ops: Array<Operation>): void => applyOperations(state, ops, "do");
 
 describe("diffObjects: atomic flat paths", () => {
 	it("emits addition, change, and removal pairs at frozen array paths", () => {

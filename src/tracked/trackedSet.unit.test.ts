@@ -145,15 +145,9 @@ describe("TrackedSet", () => {
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["set"] });
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.set]).toEqual(["a", "b"]);
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.set]).toEqual(["b", "a"]);
 	});
 
@@ -165,10 +159,7 @@ describe("TrackedSet", () => {
 
 		transact(state, () => state.set.delete(member));
 		const ops = heard[0] ?? [];
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const restored = [...state.set][0];
 

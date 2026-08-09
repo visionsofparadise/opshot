@@ -121,11 +121,7 @@ describe("createChannel", () => {
 			if (context.isTransaction) replayHeard.push(context.meta);
 		});
 
-		channel.applyOperations(
-			replay,
-			ops.map((op) => op.do),
-			{},
-		);
+		channel.applyOperations(replay, ops, "do", {});
 
 		expect(replay.count).toBe(5);
 		expect(replayHeard).toEqual([{ replay: false }]);

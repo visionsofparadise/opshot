@@ -225,18 +225,12 @@ describe("TrackedMap", () => {
 
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["map"] });
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.map]).toEqual([
 			["a", 1],
 			["b", 2],
 		]);
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.map]).toEqual([
 			["b", 20],
 			["a", 10],
@@ -257,10 +251,7 @@ describe("TrackedMap", () => {
 
 		transact(state, () => state.map.clear());
 		const ops = heard[0] ?? [];
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const entries = [...state.map];
 
@@ -282,16 +273,10 @@ describe("TrackedMap", () => {
 		});
 
 		const ops = heard[0] ?? [];
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect(state.map.get("a")?.items).toEqual(["x"]);
 		expect(state.map.get("a")?.when.getTime()).toBe(0);
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect(state.map.get("a")?.items).toEqual(["x", "y"]);
 		expect(state.map.get("a")?.when.getTime()).toBe(1);
 	});

@@ -303,11 +303,7 @@ describe("subscribe", () => {
 
 		subscribe(state.a, (_ops, meta) => heard.push(meta));
 
-		applyOperations(
-			state,
-			recorded.map((op) => op.undo),
-			{ replay: true },
-		);
+		applyOperations(state, recorded, "undo", { replay: true });
 
 		expect(heard).toEqual([{ replay: true }]);
 		expect(state.a.n).toBe(0);
@@ -332,11 +328,7 @@ describe("subscribe", () => {
 		transact(
 			state,
 			() => {
-				applyOperations(
-					state.a,
-					recorded.map((op) => op.undo),
-					{ replay: true },
-				);
+				applyOperations(state.a, recorded, "undo", { replay: true });
 				state.top = 1;
 			},
 			{ transactionKey: "user-drag" },
@@ -358,11 +350,7 @@ describe("subscribe", () => {
 
 		expect(() =>
 			transact(state, () => {
-				applyOperations(
-					state,
-					recorded.map((op) => op.undo),
-					{ replay: true },
-				);
+				applyOperations(state, recorded, "undo", { replay: true });
 			}),
 		).toThrow("opshot: nested transact on the same state");
 	});

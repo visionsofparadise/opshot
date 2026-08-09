@@ -145,7 +145,7 @@ describe("unsafeTrack stories", () => {
 		expect(replaceOp.do.verb).toBe("assign");
 		expect(replaceOp.do.path).toEqual(["vault"]);
 
-		applyOperations(state, [replaceOp.undo]);
+		applyOperations(state, [replaceOp], "undo");
 
 		const restored = state.vault;
 

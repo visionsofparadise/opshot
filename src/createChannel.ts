@@ -1,9 +1,9 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
-import { applyOperations as standaloneApplyOperations } from "./ops/applyOperations";
+import { applyOperations as standaloneApplyOperations, type ApplyDirection } from "./ops/applyOperations";
 import { stampChannelMeta, toChannelContext, type EmissionContext } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
-import type { Operation, Mutation } from "./ops/operation";
+import type { Operation } from "./ops/operation";
 
 /**
  * Channel-bound `transact`, `subscribe`, and `applyOperations`.
@@ -44,14 +44,20 @@ export interface Channel<M extends object> {
 	subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void): () => void;
 
 	/**
-	 * Applies operations with this channel's meta.
+	 * Applies operation pairs with this channel's meta.
 	 *
 	 * @param state - State to change.
-	 * @param operations - Operations to apply.
+	 * @param operations - Operation pairs to apply.
+	 * @param direction - Which half to apply, and the ordering that direction implies.
 	 * @param meta - Meta for this write.
 	 * @returns Nothing.
 	 */
-	applyOperations(state: object, operations: ReadonlyArray<Mutation>, meta?: Partial<M>): void;
+	applyOperations(
+		state: object,
+		operations: ReadonlyArray<Operation>,
+		direction: ApplyDirection,
+		meta?: Partial<M>,
+	): void;
 }
 
 /**
@@ -102,8 +108,13 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		});
 	}
 
-	function applyOperations(state: object, operations: ReadonlyArray<Mutation>, meta?: Partial<M>): void {
-		standaloneApplyOperations(state, operations, stampChannelMeta(channelId, meta));
+	function applyOperations(
+		state: object,
+		operations: ReadonlyArray<Operation>,
+		direction: ApplyDirection,
+		meta?: Partial<M>,
+	): void {
+		standaloneApplyOperations(state, operations, direction, stampChannelMeta(channelId, meta));
 	}
 
 	return { transact, subscribe, applyOperations };

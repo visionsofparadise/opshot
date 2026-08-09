@@ -1,15 +1,8 @@
 import { createChannel } from "../createChannel";
 import { createGroup } from "../createGroup";
 import { createMutableState } from "../createMutableState";
-import {
-	TrackedDate,
-	TrackedMap,
-	TrackedSet,
-	type AssignMutation,
-	type DeleteMutation,
-	type Mutation,
-	type OperationPath,
-} from "../index";
+import { TrackedDate, TrackedMap, TrackedSet, type Operation, type OperationPath } from "../index";
+import { type Mutation } from "../ops/operation";
 import { useMutableState } from "../react/useMutableState";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
@@ -30,18 +23,19 @@ const docChannel = createChannel<DocMeta>();
 const defaultedChannel = createChannel<{ replay: boolean; transactionKey?: string }>({ replay: false });
 
 describe("typing", () => {
-	it("exports the frozen-path two-verb operation surface from the package root", () => {
-		expectTypeOf<Mutation>().toEqualTypeOf<AssignMutation | DeleteMutation>();
+	it("exports Operation and OperationPath from the package root", () => {
+		expectTypeOf<Operation>().toMatchTypeOf<{ readonly do: Mutation; readonly undo: Mutation }>();
 		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<string | number>>();
 	});
 
 	it("types address components entirely inside flat paths", () => {
-		const operation: Mutation = { verb: "assign", path: ["items", "o3", "id"], value: 2 };
+		const operation: Operation = {
+			do: { verb: "assign", path: ["items", "o3", "id"], value: 2 },
+			undo: { verb: "delete", path: ["items", "o3", "id"] },
+		};
 
-		if (operation.verb !== "assign") throw new Error("expected an assign operation");
-
-		expectTypeOf(operation.path).toEqualTypeOf<OperationPath>();
-		expect(operation.path).toEqual(["items", "o3", "id"]);
+		expectTypeOf(operation.do.path).toEqualTypeOf<OperationPath>();
+		expect(operation.do.path).toEqual(["items", "o3", "id"]);
 	});
 
 	it("hides facade backing from package-root class types while retaining runtime data properties", () => {
@@ -81,7 +75,7 @@ describe("typing", () => {
 		const state = createMutableState(makeDoc());
 
 		subscribe(state, (ops, meta) => {
-			expectTypeOf(ops).toEqualTypeOf<ReadonlyArray<{ readonly do: Mutation; readonly undo: Mutation }>>();
+			expectTypeOf(ops).toEqualTypeOf<ReadonlyArray<Operation>>();
 			expectTypeOf(meta).toEqualTypeOf<unknown>();
 		});
 	});
@@ -90,7 +84,7 @@ describe("typing", () => {
 		const state = createMutableState(makeDoc());
 
 		docChannel.subscribe(state, (ops, context) => {
-			expectTypeOf(ops).items.toMatchTypeOf<{ readonly do: Mutation; readonly undo: Mutation }>();
+			expectTypeOf(ops).items.toMatchTypeOf<Operation>();
 
 			if (context.isTransaction) {
 				expectTypeOf(context.meta).toEqualTypeOf<DocMeta>();

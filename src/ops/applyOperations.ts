@@ -2,9 +2,11 @@ import { resolveWriteProxy } from "../emit/resolveWriteProxy";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { transact } from "../transact";
 import { walkDataEntries } from "../utils/dataEntries";
-import { getValueOriginal, isMutation, type AssignMutation, type Mutation } from "./operation";
+import { getValueOriginal, isMutation, type AssignMutation, type Mutation, type Operation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndex, isCanonicalArrayIndexString, isObjectLike, MAX_ARRAY_LENGTH } from "./predicates";
+
+export type ApplyDirection = "do" | "undo";
 
 interface ValuePayload {
 	readonly recorded: unknown;
@@ -16,12 +18,19 @@ interface ResolvedTerminal {
 	readonly segment: unknown;
 }
 
-const assertApplicable: (operation: unknown) => asserts operation is Mutation = (operation) => {
-	if (typeof operation === "object" && operation !== null && "do" in operation) {
-		throw new Error("opshot: applyOperations applies operation halves; pass op.do or op.undo.");
+const assertApplicable: (operation: unknown) => asserts operation is Operation = (operation) => {
+	if (isMutation(operation)) {
+		throw new Error("opshot: applyOperations applies operation pairs; pass the operation, with a direction");
 	}
 
-	if (!isMutation(operation)) {
+	if (
+		typeof operation !== "object" ||
+		operation === null ||
+		!("do" in operation) ||
+		!("undo" in operation) ||
+		!isMutation(operation.do) ||
+		!isMutation(operation.undo)
+	) {
 		throw new Error(
 			"opshot: this op is a copy (spread, JSON, or structuredClone) and has lost its value. Apply the op objects the listener delivered; never copy them.",
 		);
@@ -217,29 +226,53 @@ const applyPlain = (parent: object, segment: unknown, operation: Mutation): void
 	);
 };
 
-function applyMutations(root: object, operations: ReadonlyArray<Mutation>): void {
-	for (const operation of operations) {
-		const terminal = resolveTerminal(root, operation.path);
+function applyMutations(root: object, operations: ReadonlyArray<Operation>, direction: ApplyDirection): void {
+	if (direction === "do") {
+		for (const operation of operations) {
+			const half = operation.do;
+			const terminal = resolveTerminal(root, half.path);
 
-		applyPlain(terminal.parent, terminal.segment, operation);
+			applyPlain(terminal.parent, terminal.segment, half);
+		}
+
+		return;
+	}
+
+	for (let index = operations.length - 1; index >= 0; index--) {
+		const operation = operations[index];
+
+		if (operation === undefined) continue;
+
+		const half = operation.undo;
+		const terminal = resolveTerminal(root, half.path);
+
+		applyPlain(terminal.parent, terminal.segment, half);
 	}
 }
 
 /**
- * Applies operations to a state.
+ * Applies operation pairs to a state in the given direction.
+ *
+ * `"do"` applies each pair's do half in delivery order. `"undo"` applies each pair's undo half in reverse delivery order.
  *
  * @param state - State to change.
- * @param operations - Operations to apply.
+ * @param operations - Operation pairs to apply.
+ * @param direction - Which half to apply, and the ordering that direction implies.
  * @param meta - Passed to listeners.
  * @returns Nothing.
  */
-export function applyOperations(state: object, operations: ReadonlyArray<Mutation>, meta?: unknown): void {
+export function applyOperations(
+	state: object,
+	operations: ReadonlyArray<Operation>,
+	direction: ApplyDirection,
+	meta?: unknown,
+): void {
 	for (const operation of operations) assertApplicable(operation);
 
 	transact(
 		state,
 		() => {
-			applyMutations(resolveWriteProxy(state), operations);
+			applyMutations(resolveWriteProxy(state), operations, direction);
 		},
 		meta,
 	);

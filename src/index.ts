@@ -6,7 +6,7 @@ export { identify, isSameIdentity } from "./identity";
 export { isState } from "./isState";
 export { applyOperations } from "./ops/applyOperations";
 export { diffObjects } from "./ops/diff";
-export { type AssignMutation, type DeleteMutation, type Operation, type Mutation } from "./ops/operation";
+export { type Operation } from "./ops/operation";
 export { type OperationPath } from "./ops/path";
 export { ignore, type Ignored } from "./ignore";
 export { unsafeTrack, type UnsafeTracked } from "./unsafeTrack";

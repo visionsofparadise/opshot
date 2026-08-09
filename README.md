@@ -205,11 +205,12 @@ Do not mutate the subscribed state inside the listener — that re-enters the li
 
 ## Ops
 
-An op is an invertible pair of `Mutation` halves. Every half uses one of two verbs:
+An op is an opaque invertible pair. The public type is `Operation`; each half uses one of two verbs:
 
 ```ts
 type OperationPath = ReadonlyArray<string | number>;
 
+// Halves are structural; prefer treating Operation as opaque.
 type Mutation =
 	| { readonly verb: "assign"; readonly path: OperationPath; readonly value: unknown }
 	| { readonly verb: "delete"; readonly path: OperationPath };
@@ -220,7 +221,7 @@ interface Operation {
 }
 ```
 
-`applyOperations` puts them back on a state, so a history is a list of ops and an undo is their `undo` halves in reverse.
+`applyOperations(state, ops, direction, meta?)` puts ops back on a state. Pass the operation pairs the listener delivered and a direction: `"do"` applies do halves in delivery order; `"undo"` applies undo halves in reverse delivery order. The library owns that ordering — do not reverse or map halves yourself.
 
 ```tsx
 import { useEffect, useRef } from "react";
@@ -248,11 +249,7 @@ const Counter = () => {
 
 		if (!ops) return;
 
-		applyOperations(
-			counter,
-			[...ops].reverse().map((op) => op.undo),
-			replay,
-		);
+		applyOperations(counter, ops, "undo", replay);
 	};
 
 	return (
@@ -268,7 +265,7 @@ Replay is exact for anything opshot can see: plain data. State behind a constrai
 
 Ops are **idempotent**.
 
-If your state is JSON serializable, **then ops are too**.
+If your state is JSON serializable, **then ops are too**. Project `verb` and `path` from a half; read `.value` explicitly on assign halves (it clones). Never spread, `JSON` round-trip, or `structuredClone` an op before applying it.
 
 ## Groups
 

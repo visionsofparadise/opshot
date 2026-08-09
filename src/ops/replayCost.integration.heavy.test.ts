@@ -38,10 +38,9 @@ describe("applyOperations: replay cost", () => {
 				state.tree = {};
 			});
 
-			const undo = recorded.map((op) => op.undo).reverse();
 			const started = performance.now();
 
-			applyOperations(state, undo);
+			applyOperations(state, recorded, "undo");
 
 			return performance.now() - started;
 		};

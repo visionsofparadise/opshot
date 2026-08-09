@@ -181,17 +181,11 @@ const scenarios = {
 			const recorded = heard.flat().map((op) => ({ do: op.do, undo: op.undo }));
 			const redoBaseline = snapshot(state).value;
 
-			applyOperations(
-				state,
-				[...recorded].reverse().map((op) => op.undo),
-			);
+			applyOperations(state, recorded, "undo");
 
 			if (!strictEqual(snapshot(state).value, undoBaseline)) return false;
 
-			applyOperations(
-				state,
-				recorded.map((op) => op.do),
-			);
+			applyOperations(state, recorded, "do");
 
 			return strictEqual(snapshot(state).value, redoBaseline);
 		} catch {

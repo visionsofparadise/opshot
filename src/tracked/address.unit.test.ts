@@ -9,7 +9,7 @@ import { type Operation } from "../ops/operation";
 import { addressOf } from "./address";
 
 const undo = <T extends object>(state: T, ops: Array<Operation>): void => {
-	applyOperations(state, ops.map((op) => op.undo).reverse());
+	applyOperations(state, ops, "undo");
 };
 
 describe("addressOf", () => {

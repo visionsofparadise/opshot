@@ -1051,10 +1051,10 @@ describe("boundary: strict false", () => {
 
 		const op = nonStrictHeard[0]!.ops[0]!;
 
-		applyOperations(nonStrict, [op.undo]);
+		applyOperations(nonStrict, [op], "undo");
 		expect(nonStrict.arrow.count).toBe(0);
 
-		applyOperations(nonStrict, [op.do]);
+		applyOperations(nonStrict, [op], "do");
 		expect(nonStrict.arrow.count).toBe(5);
 	});
 

@@ -11,6 +11,8 @@ import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
 import { createAssignMutation, createDeleteMutation, type Operation, type Mutation } from "./operation";
 
+const asPair = (half: Mutation): Operation => ({ do: half, undo: half });
+
 const record = <T extends object>(state: T): Array<Array<Operation>> => {
 	const heard = new Array<Array<Operation>>();
 
@@ -25,11 +27,15 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 			document: { replaced: 1, removed: 2 } as { added?: number; replaced: number; removed?: number },
 		});
 
-		applyOperations(state, [
-			createAssignMutation(["document", "added"], 3),
-			createAssignMutation(["document", "replaced"], 4),
-			createDeleteMutation(["document", "removed"]),
-		]);
+		applyOperations(
+			state,
+			[
+				asPair(createAssignMutation(["document", "added"], 3)),
+				asPair(createAssignMutation(["document", "replaced"], 4)),
+				asPair(createDeleteMutation(["document", "removed"])),
+			],
+			"do",
+		);
 
 		expect(state.document).toEqual({ added: 3, replaced: 4 });
 	});
@@ -37,14 +43,18 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 	it("distinguishes missing addresses from stored undefined", () => {
 		const state = createMutableState<{ document: { value?: number } }>({ document: { value: undefined } });
 
-		applyOperations(state, [
-			createAssignMutation(["document", "value"], 1),
-			createAssignMutation(["document", "value"], undefined),
-		]);
+		applyOperations(
+			state,
+			[
+				asPair(createAssignMutation(["document", "value"], 1)),
+				asPair(createAssignMutation(["document", "value"], undefined)),
+			],
+			"do",
+		);
 		expect(Object.hasOwn(state.document, "value")).toBe(true);
-		applyOperations(state, [createDeleteMutation(["document", "value"])]);
+		applyOperations(state, [asPair(createDeleteMutation(["document", "value"]))], "do");
 		expect(Object.hasOwn(state.document, "value")).toBe(false);
-		applyOperations(state, [createAssignMutation(["document", "value"], undefined)]);
+		applyOperations(state, [asPair(createAssignMutation(["document", "value"], undefined))], "do");
 		expect(Object.hasOwn(state.document, "value")).toBe(true);
 		expect(state.document.value).toBeUndefined();
 	});
@@ -55,11 +65,11 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const create = createAssignMutation(["document", "fresh"], 5);
 		const remove = createDeleteMutation(["document", "value"]);
 
-		applyOperations(state, [overwrite, overwrite, create, create]);
+		applyOperations(state, [asPair(overwrite), asPair(overwrite), asPair(create), asPair(create)], "do");
 		expect(state.document.value).toBe(2);
 		expect(state.document.fresh).toBe(5);
 
-		applyOperations(state, [remove, remove]);
+		applyOperations(state, [asPair(remove), asPair(remove)], "do");
 		expect(Object.hasOwn(state.document, "value")).toBe(false);
 	});
 
@@ -67,24 +77,21 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const ops = diffObjects({} as { value?: number }, { value: undefined });
 		const state = createMutableState<{ value?: number }>({});
 
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect(Object.hasOwn(state, "value")).toBe(true);
 		expect(state.value).toBeUndefined();
 
-		applyOperations(state, ops.map((pair) => pair.undo).reverse());
+		applyOperations(state, ops, "undo");
 		expect(Object.hasOwn(state, "value")).toBe(false);
 	});
 
 	it("uses sparse array assign and delete with no shifts", () => {
 		const state = createMutableState({ list: [1, 2, 3] });
 
-		applyOperations(state, [createDeleteMutation(["list", 1])]);
+		applyOperations(state, [asPair(createDeleteMutation(["list", 1]))], "do");
 		expect(state.list).toHaveLength(3);
 		expect(Object.hasOwn(state.list, 1)).toBe(false);
-		applyOperations(state, [createAssignMutation(["list", 1], undefined)]);
+		applyOperations(state, [asPair(createAssignMutation(["list", 1], undefined))], "do");
 		expect(Object.hasOwn(state.list, 1)).toBe(true);
 		expect(state.list[2]).toBe(3);
 	});
@@ -96,11 +103,15 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		const state = createMutableState({ list: initial });
 
-		applyOperations(state, [
-			createAssignMutation(["list", "length"], 3),
-			createAssignMutation(["list", "label"], "b"),
-			createAssignMutation(["list", 2], 9),
-		]);
+		applyOperations(
+			state,
+			[
+				asPair(createAssignMutation(["list", "length"], 3)),
+				asPair(createAssignMutation(["list", "label"], "b")),
+				asPair(createAssignMutation(["list", 2], 9)),
+			],
+			"do",
+		);
 		expect(state.list).toHaveLength(3);
 		expect(state.list[2]).toBe(9);
 		expect(state.list.label).toBe("b");
@@ -115,9 +126,13 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 			date: new TrackedDate(0),
 		});
 
-		expect(() => applyOperations(state, [createAssignMutation([], {})])).toThrow("root operations");
-		expect(() => applyOperations(state, [createAssignMutation(["list", "0"], 2)])).toThrow("does not resolve");
-		expect(() => applyOperations(state, [createDeleteMutation(["list", "length"])])).toThrow("does not resolve");
+		expect(() => applyOperations(state, [asPair(createAssignMutation([], {}))], "do")).toThrow("root operations");
+		expect(() => applyOperations(state, [asPair(createAssignMutation(["list", "0"], 2))], "do")).toThrow(
+			"does not resolve",
+		);
+		expect(() => applyOperations(state, [asPair(createDeleteMutation(["list", "length"]))], "do")).toThrow(
+			"does not resolve",
+		);
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
@@ -134,9 +149,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		try {
 			const state = createMutableState<Record<string, number>>({});
 
-			expect(() => applyOperations(state, [createAssignMutation(["opshotInheritedSetter"], 1)])).toThrow(
-				"inherited accessor",
-			);
+			expect(() =>
+				applyOperations(state, [asPair(createAssignMutation(["opshotInheritedSetter"], 1))], "do"),
+			).toThrow("inherited accessor");
 			expect(calls).toBe(0);
 		} finally {
 			Reflect.deleteProperty(Object.prototype, "opshotInheritedSetter");
@@ -149,7 +164,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const lockedState = createMutableState(locked);
 		const heard = record(lockedState);
 
-		expect(() => applyOperations(lockedState, [createAssignMutation(["value"], 2)])).not.toThrow();
+		expect(() => applyOperations(lockedState, [asPair(createAssignMutation(["value"], 2))], "do")).not.toThrow();
 		expect(lockedState.value).toBe(1);
 		expect(heard).toHaveLength(0);
 	});
@@ -169,8 +184,8 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 			const state = createMutableState<Record<string, number>>({ present: 1 });
 			const remove = createDeleteMutation(["opshotAccessorAboveDelete"]);
 
-			applyOperations(state, [remove]);
-			applyOperations(state, [remove]);
+			applyOperations(state, [asPair(remove)], "do");
+			applyOperations(state, [asPair(remove)], "do");
 
 			expect(Object.hasOwn(state, "opshotAccessorAboveDelete")).toBe(false);
 			expect(calls).toBe(0);
@@ -183,22 +198,24 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ count: 0 });
 		const copied = { ...createAssignMutation(["count"], 2) };
 
-		expect(() => applyOperations(state, [createAssignMutation(["count"], 1), copied as Mutation])).toThrow(
-			"this op is a copy",
-		);
+		expect(() =>
+			applyOperations(state, [asPair(createAssignMutation(["count"], 1)), asPair(copied as Mutation)], "do"),
+		).toThrow("this op is a copy");
 		expect(state.count).toBe(0);
 	});
 
-	it("rejects full Operation envelopes; pass op.do or op.undo halves", () => {
+	it("rejects bare halves; accepts branded-half Operation pairs", () => {
 		const state = createMutableState({ count: 0 });
 		const half = createAssignMutation(["count"], 1);
 
-		expect(() => applyOperations(state, [{ do: half, undo: half } as unknown as Mutation])).toThrow(
-			"opshot: applyOperations applies operation halves; pass op.do or op.undo.",
+		expect(() => applyOperations(state, [half as unknown as Operation], "do")).toThrow(
+			"applies operation pairs; pass the operation, with a direction",
 		);
-		expect(() => applyOperations(state, [{ do: half } as unknown as Mutation])).toThrow(
-			"opshot: applyOperations applies operation halves; pass op.do or op.undo.",
-		);
+
+		applyOperations(state, [{ do: half, undo: createDeleteMutation(["count"]) }], "do");
+		expect(state.count).toBe(1);
+
+		expect(() => applyOperations(state, [{ do: half } as unknown as Operation], "do")).toThrow("this op is a copy");
 	});
 
 	it("restores Map membership through plain index/slots/count ops", () => {
@@ -217,18 +234,12 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		const ops = heard[0] ?? [];
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.map]).toEqual([
 			["a", 1],
 			["b", 2],
 		]);
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.map]).toEqual([
 			["b", 2],
 			["c", undefined],
@@ -247,15 +258,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		const ops = heard[0] ?? [];
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.set]).toEqual(["a", "b"]);
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.set]).toEqual(["b", "c"]);
 	});
 
@@ -265,11 +270,15 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const member = { count: 1 };
 		const state = createMutableState({ map: new TrackedMap([[key, value]]), set: new TrackedSet([member]) });
 
-		applyOperations(state, [
-			createAssignMutation(["map", "slots", 0, 0, "profile", "id"], 2),
-			createAssignMutation(["map", "slots", 0, 1, "count"], 2),
-			createAssignMutation(["set", "slots", 0, 0, "count"], 2),
-		]);
+		applyOperations(
+			state,
+			[
+				asPair(createAssignMutation(["map", "slots", 0, 0, "profile", "id"], 2)),
+				asPair(createAssignMutation(["map", "slots", 0, 1, "count"], 2)),
+				asPair(createAssignMutation(["set", "slots", 0, 0, "count"], 2)),
+			],
+			"do",
+		);
 
 		const storedKey = [...state.map.keys()][0];
 		const storedMember = [...state.set][0];
@@ -285,11 +294,11 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const held = new TrackedDate(0);
 		const state = createMutableState({ date: held });
 
-		applyOperations(state, [createAssignMutation(["date", "epochMs"], 5)]);
+		applyOperations(state, [asPair(createAssignMutation(["date", "epochMs"], 5))], "do");
 		expect(state.date.getTime()).toBe(5);
 		expect(isSameIdentity(state.date, held)).toBe(true);
 
-		applyOperations(state, [createAssignMutation(["date"], new TrackedDate(10))]);
+		applyOperations(state, [asPair(createAssignMutation(["date"], new TrackedDate(10)))], "do");
 		expect(state.date.getTime()).toBe(10);
 		expect(state.date).toBeInstanceOf(TrackedDate);
 		expect(isSameIdentity(state.date, held)).toBe(false);
@@ -314,9 +323,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		held.extra = true;
 		shared.count = 9;
 
-		const undo = heard[0]?.[0]?.undo;
-		if (!undo) throw new Error("missing undo");
-		applyOperations(state, [undo]);
+		const op = heard[0]?.[0];
+		if (!op) throw new Error("missing undo");
+		applyOperations(state, [op], "undo");
 
 		const restored = state.item;
 		if (!restored) throw new Error("missing restored item");
@@ -350,16 +359,10 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const ops = heard[0] ?? [];
 		const after = state;
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.map]).toEqual([...before.map]);
 		expect([...state.set]).toEqual([...before.set]);
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.map]).toEqual([...after.map]);
 		expect([...state.set]).toEqual([...after.set]);
 	});
@@ -381,11 +384,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		});
 		const ops = recorded[0];
 		if (!ops) throw new Error("missing history");
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-			{ replay: true },
-		);
+		applyOperations(state, ops, "undo", { replay: true });
 
 		expect(state.count).toBe(0);
 		expect(recorded).toHaveLength(1);
@@ -396,15 +395,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ count: 0 });
 		const ops = diffObjects({ count: 0 }, { count: 2 });
 
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect(state.count).toBe(2);
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect(state.count).toBe(0);
 	});
 
@@ -443,10 +436,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const undoHeard: Array<Array<Operation>> = [];
 
 		subscribe(state, (next) => undoHeard.push([...next]));
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const restored = state.map;
 		const restoredEntries = [...restored];
@@ -467,15 +457,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		const afterUndo = [...restored].map(([key, value]) => [key.id, value.label]);
 
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.map]).toEqual([[{ id: "z" }, { label: "Z" }]]);
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.map].map(([key, value]) => [key.id, value.label])).toEqual(afterUndo);
 		expect(isSameIdentity(state.map, original)).toBe(true);
 		expect(beforeEntries.map(([key]) => identify(key as object))).toEqual(
@@ -513,10 +497,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		inner.set({ id: "stomp" }, { label: "stomped" });
 		valueA.label = "mutated-while-detached";
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const restored = state.outer.get(outerKey);
 
@@ -537,15 +518,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(restoredEntries[0]?.[1] && isSameIdentity(restoredEntries[0][1], valueA)).toBe(true);
 		expect(restoredEntries[1]?.[1] && isSameIdentity(restoredEntries[1][1], valueB)).toBe(true);
 
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.outer.get(outerKey)!]).toEqual([[{ id: "z" }, { label: "Z" }]]);
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.outer.get(outerKey)!].map(([key, value]) => [key.id, value.label])).toEqual([
 			["a", "A"],
 			["b", "B"],
@@ -577,10 +552,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		original.add({ id: "stomp" });
 		memberA.id = "mutated-while-detached";
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const restored = state.set;
 		const restoredMembers = [...restored];
@@ -595,15 +567,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(restoredMembers[0] && isSameIdentity(restoredMembers[0], memberA)).toBe(true);
 		expect(restoredMembers[1] && isSameIdentity(restoredMembers[1], memberB)).toBe(true);
 
-		applyOperations(
-			state,
-			ops.map((pair) => pair.do),
-		);
+		applyOperations(state, ops, "do");
 		expect([...state.set].map((member) => member.id)).toEqual(["z"]);
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 		expect([...state.set].map((member) => member.id)).toEqual(["a", "b"]);
 		expect(isSameIdentity(state.set, original)).toBe(true);
 	});
@@ -628,10 +594,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(ops).toHaveLength(1);
 		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["document"] });
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const restored = state.document;
 
@@ -653,10 +616,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		const ops = heard[0] ?? [];
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		const restored = state.document;
 
@@ -679,10 +639,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		expect(isSameIdentity(state.document, container)).toBe(false);
 
-		applyOperations(
-			state,
-			[...ops].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, ops, "undo");
 
 		expect(isSameIdentity(state.document, container)).toBe(true);
 		expect(state.document.count).toBe(1);
@@ -712,30 +669,18 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(secondOps).toHaveLength(1);
 		expect(secondOps[0]?.do).toMatchObject({ verb: "assign", path: ["root"] });
 
-		applyOperations(
-			state,
-			[...secondOps].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, secondOps, "undo");
 		expect(state.root.nested.value).toBe(2);
 
-		applyOperations(
-			state,
-			[...firstOps].reverse().map((pair) => pair.undo),
-		);
+		applyOperations(state, firstOps, "undo");
 		expect(state.root.nested.value).toBe(1);
 		expect(isSameIdentity(state.root, outer)).toBe(true);
 		expect(isSameIdentity(state.root.nested, inner)).toBe(true);
 
-		applyOperations(
-			state,
-			firstOps.map((pair) => pair.do),
-		);
+		applyOperations(state, firstOps, "do");
 		expect(state.root.nested.value).toBe(2);
 
-		applyOperations(
-			state,
-			secondOps.map((pair) => pair.do),
-		);
+		applyOperations(state, secondOps, "do");
 		expect(state.root.nested.value).toBe(3);
 	});
 
@@ -744,16 +689,63 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ map: new TrackedMap([[key, 1]]) });
 		const addr = addressOf(key);
 
-		applyOperations(state, [createAssignMutation(["map", "slots", 0], [key, 9] as const)]);
+		applyOperations(state, [asPair(createAssignMutation(["map", "slots", 0], [key, 9] as const))], "do");
 		expect(state.map.get(key)).toBe(9);
-		applyOperations(state, [
-			createDeleteMutation(["map", "index", addr]),
-			createAssignMutation(["map", "slots", 0], null),
-			createAssignMutation(["map", "count"], 0),
-		]);
+		applyOperations(
+			state,
+			[
+				asPair(createDeleteMutation(["map", "index", addr])),
+				asPair(createAssignMutation(["map", "slots", 0], null)),
+				asPair(createAssignMutation(["map", "count"], 0)),
+			],
+			"do",
+		);
 		expect(state.map.size).toBe(0);
 		expect(state.map.has(key)).toBe(false);
 	});
+});
+
+it("applies undo halves in reverse delivery order for overlapping paths", () => {
+	const state = createMutableState({ a: 0 });
+	const ops: Array<Operation> = [
+		{ do: createAssignMutation(["a"], 1), undo: createAssignMutation(["a"], 0) },
+		{ do: createAssignMutation(["a"], 2), undo: createAssignMutation(["a"], 1) },
+	];
+
+	applyOperations(state, ops, "do");
+	expect(state.a).toBe(2);
+
+	applyOperations(state, ops, "undo");
+	expect(state.a).toBe(0);
+});
+
+it("applies a mixed assign and delete stream in delivery order under do", () => {
+	const state = createMutableState({
+		document: { kept: 1, gone: 2 } as { kept: number; gone?: number; added?: number },
+	});
+	const ops: Array<Operation> = [
+		{ do: createAssignMutation(["document", "added"], 3), undo: createDeleteMutation(["document", "added"]) },
+		{ do: createAssignMutation(["document", "kept"], 4), undo: createAssignMutation(["document", "kept"], 1) },
+		{ do: createDeleteMutation(["document", "gone"]), undo: createAssignMutation(["document", "gone"], 2) },
+	];
+
+	applyOperations(state, ops, "do");
+	expect(state.document).toEqual({ kept: 4, added: 3 });
+});
+
+it("round-trips do then undo for a multi-op stream", () => {
+	const state = createMutableState({ a: 0, b: 0 });
+	const ops: Array<Operation> = [
+		{ do: createAssignMutation(["a"], 1), undo: createAssignMutation(["a"], 0) },
+		{ do: createAssignMutation(["b"], 2), undo: createAssignMutation(["b"], 0) },
+	];
+
+	applyOperations(state, ops, "do");
+	expect(state).toMatchObject({ a: 1, b: 2 });
+	applyOperations(state, ops, "undo");
+	expect(state).toMatchObject({ a: 0, b: 0 });
+	applyOperations(state, ops, "do");
+	expect(state).toMatchObject({ a: 1, b: 2 });
 });
 
 describe("applyOperations: resolution is the pollution defence", () => {
@@ -763,15 +755,21 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		// The pollution ladder itself: `constructor` then `prototype`, the shape a reserved-path
 		// rule used to reject before emission. Resolution alone must now refuse it.
 		expect(() =>
-			applyOperations(state, [createAssignMutation(["constructor", "prototype", "polluted"], "PWNED")]),
+			applyOperations(
+				state,
+				[asPair(createAssignMutation(["constructor", "prototype", "polluted"], "PWNED"))],
+				"do",
+			),
 		).toThrow("does not resolve");
-		expect(() => applyOperations(state, [createDeleteMutation(["constructor", "prototype", "polluted"])])).toThrow(
+		expect(() =>
+			applyOperations(state, [asPair(createDeleteMutation(["constructor", "prototype", "polluted"]))], "do"),
+		).toThrow("does not resolve");
+		expect(() =>
+			applyOperations(state, [asPair(createAssignMutation(["constructor", "polluted"], "PWNED"))], "do"),
+		).toThrow("does not resolve");
+		expect(() => applyOperations(state, [asPair(createAssignMutation(["zzz", "added"], 1))], "do")).toThrow(
 			"does not resolve",
 		);
-		expect(() => applyOperations(state, [createAssignMutation(["constructor", "polluted"], "PWNED")])).toThrow(
-			"does not resolve",
-		);
-		expect(() => applyOperations(state, [createAssignMutation(["zzz", "added"], 1)])).toThrow("does not resolve");
 
 		expect(Object.prototype).not.toHaveProperty("polluted");
 		expect(Object).not.toHaveProperty("polluted");
@@ -793,23 +791,15 @@ describe("applyOperations: resolution is the pollution defence", () => {
 
 		expect(ops.map((op) => op.do.path)).toEqual([["h", "constructor", "prototype"]]);
 
-		applyOperations(state, ops.map((op) => op.undo).reverse());
+		applyOperations(state, ops, "undo");
 		expect(Object.hasOwn(state.h.constructor, "prototype")).toBe(false);
 
-		applyOperations(
-			state,
-			ops.map((op) => op.do),
-		);
+		applyOperations(state, ops, "do");
 		expect(state.h.constructor.prototype).toEqual({ x: 1 });
 
 		const withoutOwnConstructor = createMutableState<{ h: Record<string, unknown> }>({ h: {} });
 
-		expect(() =>
-			applyOperations(
-				withoutOwnConstructor,
-				ops.map((op) => op.do),
-			),
-		).toThrow("does not resolve");
+		expect(() => applyOperations(withoutOwnConstructor, ops, "do")).toThrow("does not resolve");
 
 		expect(Object.prototype).not.toHaveProperty("x");
 		expect({}).not.toHaveProperty("x");
@@ -818,9 +808,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 	it("refuses a hand-built __proto__ path through the inherited-accessor guard", () => {
 		const state = createMutableState<{ a: number }>({ a: 1 });
 
-		expect(() => applyOperations(state, [createAssignMutation(["__proto__"], { polluted: "PWNED" })])).toThrow(
-			"inherited accessor",
-		);
+		expect(() =>
+			applyOperations(state, [asPair(createAssignMutation(["__proto__"], { polluted: "PWNED" }))], "do"),
+		).toThrow("inherited accessor");
 		expect(Object.prototype).not.toHaveProperty("polluted");
 		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
 		expect(diffObjects({}, JSON.parse('{"__proto__": {"polluted": true}}') as object)).toEqual([]);
@@ -848,15 +838,12 @@ describe("applyOperations: resolution is the pollution defence", () => {
 				expect(Object.getOwnPropertyNames(op.undo.value as object)).not.toContain("__proto__");
 			}
 
-			applyOperations(state, ops.map((op) => op.undo).reverse());
+			applyOperations(state, ops, "undo");
 
 			expect(state.held.a).toBe(1);
 			expect(Reflect.getOwnPropertyDescriptor(state.held, "__proto__")).toEqual(before);
 
-			applyOperations(
-				state,
-				ops.map((op) => op.do),
-			);
+			applyOperations(state, ops, "do");
 
 			expect(state.held.a).toBe(2);
 			expect(Reflect.getPrototypeOf(state.held)).toBe(Object.prototype);
@@ -902,7 +889,7 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["held"] });
 		expect(Object.hasOwn(state.held, "extra")).toBe(true);
 
-		applyOperations(state, ops.map((op) => op.undo).reverse());
+		applyOperations(state, ops, "undo");
 
 		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenBefore);
 		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolBefore);
@@ -910,10 +897,7 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		expect(state.held.k0).toBe(0);
 		expect(state.held.k79).toBe(79);
 
-		applyOperations(
-			state,
-			ops.map((op) => op.do),
-		);
+		applyOperations(state, ops, "do");
 
 		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenBefore);
 		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolBefore);
@@ -934,7 +918,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 			state.tree = {};
 		});
 
-		applyOperations(state, recorded.map((op) => op.undo).reverse());
+		const ops = [...recorded];
+
+		applyOperations(state, ops, "undo");
 
 		expect(state.tree.child?.n).toBe(1);
 		expect(state.tree.child?.deep?.m).toBe(1);
@@ -944,7 +930,7 @@ describe("applyOperations: resolution is the pollution defence", () => {
 
 		subscribe(state, (ops) => replayed.push(...ops));
 
-		applyOperations(state, recorded.map((op) => op.undo).reverse());
+		applyOperations(state, ops, "undo");
 
 		expect(replayed).toHaveLength(0);
 	});
@@ -959,13 +945,13 @@ describe("applyOperations: resolution is the pollution defence", () => {
 			state.tree = {};
 		});
 
-		const undo = recorded.map((op) => op.undo).reverse();
+		const ops = [...recorded];
 
-		applyOperations(state, undo);
+		applyOperations(state, ops, "undo");
 
 		const settled = getVersion(state);
 
-		applyOperations(state, undo);
+		applyOperations(state, ops, "undo");
 
 		expect(getVersion(state)).toBe(settled);
 	});

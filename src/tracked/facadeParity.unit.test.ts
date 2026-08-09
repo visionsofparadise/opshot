@@ -191,7 +191,7 @@ describe("facade parity with the built-in", () => {
 
 		expect(layoutOf(state.map)).toEqual(["c", "d"]);
 
-		applyOperations(state, heard.map((op) => op.undo).reverse());
+		applyOperations(state, heard, "undo");
 
 		expect([...state.map.entries()]).toEqual(before);
 		expect(layoutOf(state.map)).toEqual([null, "b", "c", "d"]);

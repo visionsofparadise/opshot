@@ -30,11 +30,7 @@ const createRecorder = (group: Group): Recorder => {
 
 			if (!entry) return;
 
-			applyOperations(
-				entry.state,
-				[...entry.ops].reverse().map((op) => op.undo),
-				{ replay: true },
-			);
+			applyOperations(entry.state, entry.ops, "undo", { replay: true });
 
 			recorder.index -= 1;
 		},
@@ -43,11 +39,7 @@ const createRecorder = (group: Group): Recorder => {
 
 			if (!entry) return;
 
-			applyOperations(
-				entry.state,
-				entry.ops.map((op) => op.do),
-				{ replay: true },
-			);
+			applyOperations(entry.state, entry.ops, "do", { replay: true });
 
 			recorder.index += 1;
 		},
