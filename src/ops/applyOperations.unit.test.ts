@@ -874,8 +874,6 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		});
 
 		const state = createMutableState({ held });
-		const hiddenBefore = Reflect.getOwnPropertyDescriptor(state.held, "hidden");
-		const symbolBefore = Reflect.getOwnPropertyDescriptor(state.held, symbolKey);
 		const heard = record(state);
 
 		transact(state, () => {
@@ -889,18 +887,35 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["held"] });
 		expect(Object.hasOwn(state.held, "extra")).toBe(true);
 
+		const lateSymbol = Symbol("late");
+
+		Reflect.set(held, "hidden", "post-hidden");
+		Reflect.set(held, symbolKey, "post-symbol");
+		Object.defineProperty(held, lateSymbol, {
+			value: "late",
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+
+		const hiddenMutated = Reflect.getOwnPropertyDescriptor(state.held, "hidden");
+		const symbolMutated = Reflect.getOwnPropertyDescriptor(state.held, symbolKey);
+		const lateMutated = Reflect.getOwnPropertyDescriptor(state.held, lateSymbol);
+
 		applyOperations(state, ops, "undo");
 
-		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenBefore);
-		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolBefore);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenMutated);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolMutated);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, lateSymbol)).toEqual(lateMutated);
 		expect(Object.hasOwn(state.held, "extra")).toBe(false);
 		expect(state.held.k0).toBe(0);
 		expect(state.held.k79).toBe(79);
 
 		applyOperations(state, ops, "do");
 
-		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenBefore);
-		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolBefore);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, "hidden")).toEqual(hiddenMutated);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, symbolKey)).toEqual(symbolMutated);
+		expect(Reflect.getOwnPropertyDescriptor(state.held, lateSymbol)).toEqual(lateMutated);
 		expect(state.held.extra).toBe("added");
 	});
 

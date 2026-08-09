@@ -639,18 +639,16 @@ describe("diffObjects: container collapse", () => {
 		expect(sparseOps).toHaveLength(1);
 		expect(sparseOps[0]?.do).toMatchObject({ verb: "assign", path: ["list"] });
 
-		const afterSparse = [...sparseState.list.keys()];
-
 		replayUndo(sparseState, sparseOps);
-		expect(sparseState.list).toHaveLength(2000);
-		expect(Object.hasOwn(sparseState.list, 0)).toBe(true);
-		expect(Object.hasOwn(sparseState.list, 100)).toBe(true);
-		expect(Object.hasOwn(sparseState.list, 1998)).toBe(true);
+		expect(sparseState.list).toEqual(Array.from({ length: 2000 }, (_, index) => index));
 		replayDo(sparseState, sparseOps);
 		expect(sparseState.list).toHaveLength(1800);
-		expect(Object.hasOwn(sparseState.list, 0)).toBe(false);
-		expect(Object.hasOwn(sparseState.list, 100)).toBe(false);
-		expect([...sparseState.list.keys()]).toEqual(afterSparse);
+
+		const survivingOdds = Array.from({ length: 900 }, (_, index) => sparseState.list[index * 2 + 1]);
+		const evenPresence = Array.from({ length: 900 }, (_, index) => Object.hasOwn(sparseState.list, index * 2));
+
+		expect(survivingOdds).toEqual(Array.from({ length: 900 }, (_, index) => index * 2 + 1));
+		expect(evenPresence).toEqual(Array.from({ length: 900 }, () => false));
 	});
 });
 
