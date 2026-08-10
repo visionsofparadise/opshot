@@ -1,8 +1,9 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
-import { applyOperations as standaloneApplyOperations, type ApplyDirection } from "./ops/applyOperations";
+import { applyOperations as standaloneApplyOperations } from "./ops/applyOperations";
 import { stampChannelMeta, toChannelContext, type EmissionContext } from "./subscribe";
 import { transact as standaloneTransact } from "./transact";
+import type { ApplyDirection } from "./ops/applyMutations";
 import type { Operation } from "./ops/operation";
 
 /**

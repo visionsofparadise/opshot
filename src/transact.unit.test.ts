@@ -1,8 +1,9 @@
 import { createMutableState } from "./createMutableState";
+import { ignore } from "./ignore";
 import { type Operation } from "./ops/operation";
+import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact";
-import { shapeOps } from "./ops/operationShape";
 
 describe("transact", () => {
 	it("runs the mutate callback and emits ops with meta when subscribed", () => {
@@ -137,7 +138,7 @@ describe("transact", () => {
 		expect(heard).toEqual([undefined, { tag: "mine" }]);
 	});
 
-	it("hands a claimed node to its own window when mutate throws", async () => {
+	it("rolls back a claimed node when mutate throws and emits nothing", async () => {
 		const state = createMutableState({ a: { n: 0 } });
 		const heard = new Array<unknown>();
 
@@ -154,11 +155,108 @@ describe("transact", () => {
 				{ tag: "mine" },
 			),
 		).toThrow("mutate failure");
+		expect(state.a.n).toBe(0);
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("emits nothing when a rolled-back transaction had written", async () => {
+		const state = createMutableState({ n: 0 });
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(state, (ops, meta) => heard.push({ ops: [...ops], meta }));
+
+		expect(() =>
+			transact(
+				state,
+				() => {
+					state.n = 7;
+
+					throw new Error("abort");
+				},
+				{ tag: "lost" },
+			),
+		).toThrow("abort");
+
+		expect(state.n).toBe(0);
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("restores a replaced object by identity when mutate throws", () => {
+		const state = createMutableState({ child: { a: 1, b: 2, c: 3, d: 4, e: 5 } });
+		const held = state.child;
+
+		subscribe(state, () => undefined);
+
+		expect(() =>
+			transact(state, () => {
+				state.child = { a: 9, b: 9, c: 9, d: 9, e: 9 };
+
+				throw new Error("abort");
+			}),
+		).toThrow("abort");
+
+		expect(state.child).toBe(held);
+		expect(state.child).toEqual({ a: 1, b: 2, c: 3, d: 4, e: 5 });
+	});
+
+	it("keeps writes on a record claimed dirty and reports them bare", async () => {
+		const state = createMutableState({ a: { n: 0 }, bare: 0 });
+		const heard = new Array<unknown>();
+
+		subscribe(state, (_ops, meta) => heard.push(meta));
+		subscribe(state.a, () => undefined);
+
+		state.bare = 1;
+
+		expect(() =>
+			transact(
+				state.a,
+				() => {
+					state.a.n = 1;
+					state.bare = 2;
+
+					throw new Error("abort");
+				},
+				{ tag: "mine" },
+			),
+		).toThrow("abort");
+
+		expect(state.a.n).toBe(0);
+		expect(state.bare).toBe(2);
 		expect(heard).toEqual([]);
 
 		await Promise.resolve();
 
 		expect(heard).toEqual([undefined]);
+		expect(state.bare).toBe(2);
+	});
+
+	it("leaves an ignore()d mutation standing when mutate throws", () => {
+		const bag = { x: 0 };
+		const state = createMutableState({ n: 0, bag: ignore(bag) });
+
+		subscribe(state, () => undefined);
+
+		expect(() =>
+			transact(state, () => {
+				state.n = 1;
+				state.bag.x = 99;
+
+				throw new Error("abort");
+			}),
+		).toThrow("abort");
+
+		expect(state.n).toBe(0);
+		expect(state.bag.x).toBe(99);
+		expect(bag.x).toBe(99);
 	});
 
 	it("never flushes a claimed record bare when a listener transacts it", () => {

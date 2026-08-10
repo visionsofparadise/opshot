@@ -4,9 +4,11 @@ import {
 	openTransaction,
 	releaseTransactionToWindows,
 	reportTransaction,
+	rollbackTransaction,
 	settlePendingBare,
 } from "./emit/emitterBare";
 import { getEmitter } from "./emit/emitterRegistry";
+import { getCyclicPath } from "./ops/cloneValue";
 
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
@@ -37,15 +39,43 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 	const transaction = openTransaction();
 
 	let completed = false;
+	let mutateError: unknown;
 
 	try {
 		mutate();
 		completed = true;
+	} catch (error) {
+		mutateError = error;
+
+		throw error;
 	} finally {
 		closeTransaction(transaction);
 
-		if (!completed) releaseTransactionToWindows(transaction);
+		if (!completed) {
+			try {
+				rollbackTransaction(transaction);
+			} catch (rollbackError) {
+				if (mutateError instanceof Error) {
+					mutateError.cause = rollbackError;
+				}
+			}
+
+			releaseTransactionToWindows(transaction);
+		}
 	}
 
-	reportTransaction(transaction, meta);
+	try {
+		reportTransaction(transaction, meta);
+	} catch (reportError) {
+		if (getCyclicPath(reportError) !== undefined) {
+			try {
+				rollbackTransaction(transaction);
+				releaseTransactionToWindows(transaction);
+			} catch {
+				void 0;
+			}
+		}
+
+		throw reportError;
+	}
 }

@@ -147,6 +147,8 @@ describe("createMutableState", () => {
 			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
 		);
 
+		expect(state.count).toBe(0);
+
 		expect(() =>
 			transact(state, () => {
 				throw new Error("boom");
@@ -154,7 +156,7 @@ describe("createMutableState", () => {
 		).toThrow("boom");
 
 		state.increment();
-		expect(state.count).toBe(2);
+		expect(state.count).toBe(1);
 	});
 
 	it("throws when a second state's transact runs inside another transaction", () => {

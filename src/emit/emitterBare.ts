@@ -1,4 +1,5 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
+import { applyMutations } from "../ops/applyMutations";
 import { getCyclicPath } from "../ops/cloneValue";
 import { diffObjects } from "../ops/diff";
 import { formatOperationPath } from "../ops/path";
@@ -14,6 +15,7 @@ import {
 interface Claim {
 	readonly record: EmitterRecord;
 	readonly wasDirty: boolean;
+	readonly baseline: object;
 }
 
 export interface Transaction {
@@ -66,7 +68,7 @@ const claimFor = (transaction: Transaction, record: EmitterRecord, wasDirty: boo
 	if (record.claimed) return;
 
 	record.claimed = true;
-	transaction.claimed.push({ record, wasDirty });
+	transaction.claimed.push({ record, wasDirty, baseline: record.lastReported });
 };
 
 export const openTransaction = (): Transaction => {
@@ -157,6 +159,29 @@ export const reportTransaction = (transaction: Transaction, meta: unknown): void
 
 export const releaseTransactionToWindows = (transaction: Transaction): void => {
 	for (const claim of transaction.claimed) scheduleFlush(claim.record);
+};
+
+export const rollbackTransaction = (transaction: Transaction): void => {
+	for (const claim of [...transaction.claimed]) {
+		if (claim.wasDirty) continue;
+
+		const { record, baseline } = claim;
+		const operations = diffObjects(
+			requireObjectSnapshot(snapshot(record.writeProxy)),
+			requireObjectSnapshot(baseline),
+		);
+
+		if (operations.length === 0) {
+			record.lastReported = baseline;
+			record.hasUnreported = false;
+
+			continue;
+		}
+
+		applyMutations(record.writeProxy, operations, "do");
+		record.lastReported = baseline;
+		record.hasUnreported = false;
+	}
 };
 
 export const settlePendingBare = (record: EmitterRecord): void => {

@@ -9,7 +9,7 @@ import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { transact } from "../transact";
 import { applyOperations } from "./applyOperations";
-import { getCyclicPath } from "./cloneValue";
+import { CyclicValueError, getCyclicPath } from "./cloneValue";
 import { diffObjects } from "./diff";
 import { type Operation, type Mutation } from "./operation";
 import { shapeHalf, shapeOps } from "./operationShape";
@@ -914,8 +914,119 @@ describe("diffObjects: cyclic values", () => {
 			replayUndo(state, delivered);
 		}).toThrow(/cyclic value at \/box\/self/);
 
-		expect(state.box.self).toBe(state.box);
+		expect(state.box.self).not.toBe(state.box);
+		expect(state.box.self).toBeUndefined();
 		expect(heard).toHaveLength(before);
+	});
+
+	it("surfaces the callback error with a CyclicValueError cause when the baseline is cyclic", async () => {
+		const thrown = new Array<unknown>();
+		const emitOn = (flush: () => void): void => {
+			try {
+				flush();
+			} catch (error) {
+				thrown.push(error);
+			}
+		};
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn });
+
+		state.box.self = state.box;
+
+		subscribe(state, () => undefined);
+
+		const callbackError = new Error("callback failed");
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.box.n = 99;
+
+				throw callbackError;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBe(callbackError);
+		expect((caught as Error).cause).toBeInstanceOf(CyclicValueError);
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(thrown.length).toBeGreaterThan(0);
+	});
+
+	it("surfaces the callback error with a CyclicValueError cause when rolling back a cycle repair", async () => {
+		const thrown = new Array<unknown>();
+		const emitOn = (flush: () => void): void => {
+			try {
+				flush();
+			} catch (error) {
+				thrown.push(error);
+			}
+		};
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn });
+
+		state.box.self = state.box;
+
+		subscribe(state, () => undefined);
+
+		const callbackError = new Error("callback failed");
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				delete state.box.self;
+
+				throw callbackError;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBe(callbackError);
+		expect((caught as Error).cause).toBeInstanceOf(CyclicValueError);
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(thrown).toHaveLength(0);
+	});
+
+	it("rolls back a cycle formed then thrown, emits nothing, and raises no unhandled rejection", async () => {
+		const thrown = new Array<unknown>();
+		const emitOn = (flush: () => void): void => {
+			try {
+				flush();
+			} catch (error) {
+				thrown.push(error);
+			}
+		};
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn });
+		const heard = record(state);
+		const callbackError = new Error("callback failed");
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.box.self = state.box;
+
+				throw callbackError;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBe(callbackError);
+		expect((caught as Error).cause).toBeUndefined();
+		expect(state.box.self).toBeUndefined();
+		expect(heard).toHaveLength(0);
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(thrown).toHaveLength(0);
+		expect(heard).toHaveLength(0);
 	});
 
 	it.each(rideAlongBackEdges)(
