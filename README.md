@@ -166,6 +166,33 @@ const state = useMutableState({ index: new TrackedMap<string, number>() });
 state.index.set("a", 1);
 ```
 
+## Transact
+
+`transact` runs a callback as one cohesive unit of work. Every covering subscriber hears one net diff with the optional `meta`, and listeners run before it returns.
+
+```ts
+import { createMutableState, subscribe, transact } from "opshot";
+
+const state = createMutableState({ x: 0, y: 0 });
+
+subscribe(state, (ops, meta) => {
+	// one delivery for both writes; meta is { source: "editor" }
+});
+
+transact(
+	state,
+	() => {
+		state.x = 1;
+		state.y = 2;
+	},
+	{ source: "editor" },
+);
+```
+
+**Nesting is banned.** A `transact` reached while another is open throws. Domain methods should mutate, not transact — the caller owns the transaction boundary. Run transactions in sequence, or call `applyOperations` at top level.
+
+**A throwing `transact` rolls back** its tracked writes and emits nothing. Rollback covers only tracked state: a request fired in the callback, an `ignore()`d value, or a write below `unsafeTrack()` is not undone.
+
 ## Subscribe
 
 `subscribe` hears every change to a state.
@@ -201,7 +228,7 @@ subscribe(state.a, (ops) => {
 });
 ```
 
-Do not mutate the subscribed state inside the listener — that re-enters the listener and loops forever.
+Do not mutate the subscribed state inside the listener — that re-enters the listener and loops forever. A `transact` from a listener is not nested: the open transaction has already closed before delivery runs.
 
 ## Ops
 
@@ -221,7 +248,7 @@ interface Operation {
 }
 ```
 
-`applyOperations(state, ops, direction, meta?)` puts ops back on a state. Pass the operation pairs the listener delivered and a direction: `"do"` applies do halves in delivery order; `"undo"` applies undo halves in reverse delivery order. The library owns that ordering — do not reverse or map halves yourself.
+`applyOperations(state, ops, direction, meta?)` puts ops back on a state. It runs through `transact`, so it belongs at top level — not inside another transaction. Pass the operation pairs the listener delivered and a direction: `"do"` applies do halves in delivery order; `"undo"` applies undo halves in reverse delivery order. The library owns that ordering — do not reverse or map halves yourself.
 
 ```tsx
 import { useEffect, useRef } from "react";
@@ -261,7 +288,7 @@ const Counter = () => {
 };
 ```
 
-Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception.
+Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception. The same bound applies to rollback: a throwing `transact` undoes only tracked state.
 
 Ops are **idempotent**.
 

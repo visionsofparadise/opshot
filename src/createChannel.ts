@@ -15,6 +15,9 @@ export interface Channel<M extends object> {
 	/**
 	 * Runs a transaction with this channel's meta.
 	 *
+	 * Nesting a `transact` inside another throws. A throwing callback rolls back tracked writes and
+	 * emits nothing; effects outside tracked state are not undone.
+	 *
 	 * @param state - State to change.
 	 * @param mutate - Function that writes the state.
 	 * @param meta - Meta for this write.
@@ -46,6 +49,8 @@ export interface Channel<M extends object> {
 
 	/**
 	 * Applies operation pairs with this channel's meta.
+	 *
+	 * Runs through `transact` and cannot run inside one — call at top level.
 	 *
 	 * @param state - State to change.
 	 * @param operations - Operation pairs to apply.

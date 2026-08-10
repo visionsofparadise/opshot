@@ -24,7 +24,8 @@ const isCyclicReportFailure = (error: unknown): boolean => {
  * Every subscriber covering a written key hears it, at any depth above or below `state`.
  * Listeners run before this returns, and a throwing one never skips another. Called from inside a
  * listener, or from one running while a transaction reports, it returns before its own listeners run.
- * Nesting a `transact` inside another throws.
+ * Nesting a `transact` inside another throws. A throwing callback rolls back tracked writes and emits
+ * nothing; effects outside tracked state are not undone.
  *
  * @param state - State to change.
  * @param mutate - Function that writes the state.

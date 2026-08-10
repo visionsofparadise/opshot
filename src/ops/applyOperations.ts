@@ -26,6 +26,7 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
  * Applies operation pairs to a state in the given direction.
  *
  * `"do"` applies each pair's do half in delivery order. `"undo"` applies each pair's undo half in reverse delivery order.
+ * Runs through `transact` and cannot run inside one — call at top level.
  *
  * @param state - State to change.
  * @param operations - Operation pairs to apply.
