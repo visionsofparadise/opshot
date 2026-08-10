@@ -17,8 +17,8 @@ export interface Channel<M extends object> {
 	 *
 	 * Nesting a `transact` inside another throws. A throwing callback rolls back tracked writes and
 	 * emits nothing, except a record that already carried unflushed bare writes when the transaction
-	 * first touched it — those bare writes stand and report bare. Effects outside tracked state are
-	 * not undone.
+	 * first touched it — that record keeps all of its writes, this transaction's included, and
+	 * reports them bare. Effects outside tracked state are not undone.
 	 *
 	 * @param state - State to change.
 	 * @param mutate - Function that writes the state.

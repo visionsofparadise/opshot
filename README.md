@@ -191,7 +191,7 @@ transact(
 
 **Nesting is banned.** A `transact` reached while another is open throws. Domain methods should mutate, not transact — the caller owns the transaction boundary. Run transactions in sequence, or call `applyOperations` at top level.
 
-**A throwing `transact` rolls back** its tracked writes and emits nothing, except a record that already carried unflushed bare writes when the transaction first touched it: those bare writes stand and report bare. Rollback covers only tracked state: a request fired in the callback, an `ignore()`d value, or a write below `unsafeTrack()` is not undone.
+**A throwing `transact` rolls back** its tracked writes and emits nothing, except a record that already carried unflushed bare writes when the transaction first touched it: that record keeps all of its writes, this transaction's included, and reports them bare. Rollback covers only tracked state: a request fired in the callback, an `ignore()`d value, or a write below `unsafeTrack()` is not undone.
 
 ## Subscribe
 
