@@ -288,6 +288,47 @@ describe("transact", () => {
 		expect(heard).toEqual([]);
 	});
 
+	it("still bare-reports a dirty co-claim when a multi-claim report hits a cycle", async () => {
+		const dirty = createMutableState({ n: 0 });
+		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
+		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(dirty, (ops, meta) => heard.push({ side: "dirty", ops: [...ops], meta }));
+		subscribe(cyclic, (ops, meta) => heard.push({ side: "cyclic", ops: [...ops], meta }));
+
+		dirty.n = 1;
+
+		expect(() =>
+			transact(
+				cyclic,
+				() => {
+					dirty.n = 2;
+					cyclic.box.self = cyclic.box;
+				},
+				{ tag: "lost" },
+			),
+		).toThrow(CyclicValueError);
+
+		expect(dirty.n).toBe(2);
+		expect(cyclic.box.self).toBeUndefined();
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard.map((entry) => ({ side: entry.side, ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				side: "dirty",
+				ops: [
+					{
+						do: { verb: "assign", path: ["n"], value: 2 },
+						undo: { verb: "assign", path: ["n"], value: 0 },
+					},
+				],
+				meta: undefined,
+			},
+		]);
+	});
+
 	it("never flushes a claimed record bare when a listener transacts it", () => {
 		const transacted = createMutableState({ x: 0 });
 		const claimed = createMutableState({ n: 0 });

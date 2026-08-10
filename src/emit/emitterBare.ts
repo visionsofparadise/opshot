@@ -183,6 +183,13 @@ export const reportTransaction = (transaction: Transaction, meta: unknown): void
 	}
 
 	if (prepareFailures.some((error) => getCyclicPath(error) !== undefined)) {
+		for (const claim of transaction.claimed) {
+			if (!claim.wasDirty) continue;
+
+			claim.record.lastReported = claim.baseline;
+			claim.record.hasUnreported = true;
+		}
+
 		raisePrepareFailures(prepareFailures);
 	}
 
