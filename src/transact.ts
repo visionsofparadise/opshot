@@ -10,6 +10,14 @@ import {
 import { getEmitter } from "./emit/emitterRegistry";
 import { getCyclicPath } from "./ops/cloneValue";
 
+const isCyclicReportFailure = (error: unknown): boolean => {
+	if (getCyclicPath(error) !== undefined) return true;
+
+	if (error instanceof AggregateError) return error.errors.some(isCyclicReportFailure);
+
+	return false;
+};
+
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
  *
@@ -67,13 +75,16 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 	try {
 		reportTransaction(transaction, meta);
 	} catch (reportError) {
-		if (getCyclicPath(reportError) !== undefined) {
+		if (isCyclicReportFailure(reportError)) {
 			try {
 				rollbackTransaction(transaction);
-				releaseTransactionToWindows(transaction);
-			} catch {
-				void 0;
+			} catch (rollbackError) {
+				if (reportError instanceof Error) {
+					reportError.cause = rollbackError;
+				}
 			}
+
+			releaseTransactionToWindows(transaction);
 		}
 
 		throw reportError;

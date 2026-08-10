@@ -11,6 +11,7 @@ import {
 	type EmitterRecord,
 	type GroupListeners,
 } from "./emitterRegistry";
+import type { Operation } from "../ops/operation";
 
 interface Claim {
 	readonly record: EmitterRecord;
@@ -117,24 +118,38 @@ export const disarmEmitter = (record: EmitterRecord): void => {
 	record.disarmEmission = undefined;
 };
 
-const reportRecord = (record: EmitterRecord, meta: unknown): void => {
+interface PreparedRecordReport {
+	readonly record: EmitterRecord;
+	readonly ops: ReadonlyArray<Operation>;
+	readonly meta: unknown;
+}
+
+const prepareRecordReport = (record: EmitterRecord, meta: unknown): PreparedRecordReport | undefined => {
 	const current = snapshot(record.writeProxy);
 
 	record.hasUnreported = false;
 
-	if (current === record.lastReported) return;
+	if (current === record.lastReported) return undefined;
 
 	const previous = record.lastReported;
 
 	record.lastReported = current;
 
-	if (!hasListeners(record)) return;
+	if (!hasListeners(record)) return undefined;
 
 	const ops = diffObjects(requireObjectSnapshot(previous), requireObjectSnapshot(current));
 
-	if (ops.length === 0) return;
+	if (ops.length === 0) return undefined;
 
-	deliver(record, ops, meta);
+	return { record, ops, meta };
+};
+
+const reportRecord = (record: EmitterRecord, meta: unknown): void => {
+	const prepared = prepareRecordReport(record, meta);
+
+	if (prepared === undefined) return;
+
+	deliver(prepared.record, prepared.ops, prepared.meta);
 };
 
 const reportBareDiff = (record: EmitterRecord): void => {
@@ -145,15 +160,36 @@ const reportBareDiff = (record: EmitterRecord): void => {
 	}
 };
 
+const raisePrepareFailures = (failures: ReadonlyArray<unknown>): void => {
+	if (failures.length === 0) return;
+
+	if (failures.length > 1) throw new AggregateError(failures, "opshot: listeners failed during delivery");
+
+	throw failures[0];
+};
+
 export const reportTransaction = (transaction: Transaction, meta: unknown): void => {
-	bracketDelivery((failures) => {
-		for (const claim of transaction.claimed) {
-			try {
-				reportRecord(claim.record, claim.wasDirty ? undefined : meta);
-			} catch (error) {
-				failures.push(error);
-			}
+	const prepared: Array<PreparedRecordReport> = [];
+	const prepareFailures: Array<unknown> = [];
+
+	for (const claim of transaction.claimed) {
+		try {
+			const pending = prepareRecordReport(claim.record, claim.wasDirty ? undefined : meta);
+
+			if (pending !== undefined) prepared.push(pending);
+		} catch (error) {
+			prepareFailures.push(error);
 		}
+	}
+
+	if (prepareFailures.some((error) => getCyclicPath(error) !== undefined)) {
+		raisePrepareFailures(prepareFailures);
+	}
+
+	bracketDelivery((failures) => {
+		failures.push(...prepareFailures);
+
+		for (const pending of prepared) deliver(pending.record, pending.ops, pending.meta);
 	});
 };
 

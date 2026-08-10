@@ -1,5 +1,6 @@
 import { createMutableState } from "./createMutableState";
 import { ignore } from "./ignore";
+import { CyclicValueError } from "./ops/cloneValue";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
@@ -257,6 +258,34 @@ describe("transact", () => {
 		expect(state.n).toBe(0);
 		expect(state.bag.x).toBe(99);
 		expect(bag.x).toBe(99);
+	});
+
+	it("rolls back every claim without delivering when a multi-claim report hits a cycle", async () => {
+		const clean = createMutableState({ n: 0 });
+		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
+		const heard = new Array<unknown>();
+
+		subscribe(clean, (ops, meta) => heard.push({ side: "clean", ops: [...ops], meta }));
+		subscribe(cyclic, (ops, meta) => heard.push({ side: "cyclic", ops: [...ops], meta }));
+
+		expect(() =>
+			transact(
+				clean,
+				() => {
+					clean.n = 1;
+					cyclic.box.self = cyclic.box;
+				},
+				{ tag: "lost" },
+			),
+		).toThrow(CyclicValueError);
+
+		expect(clean.n).toBe(0);
+		expect(cyclic.box.self).toBeUndefined();
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
 	});
 
 	it("never flushes a claimed record bare when a listener transacts it", () => {
