@@ -3,9 +3,9 @@ import {
 	isTransactionOpen,
 	openTransaction,
 	releaseTransactionToWindows,
+	reportBareDiff,
 	reportTransaction,
 	rollbackTransaction,
-	settlePendingBare,
 } from "./emit/emitterBare";
 import { getEmitter } from "./emit/emitterRegistry";
 import { getCyclicPath } from "./ops/cloneValue";
@@ -41,7 +41,7 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 	const record = getEmitter(state);
 
 	if (record !== undefined) {
-		settlePendingBare(record);
+		reportBareDiff(record);
 	}
 
 	const transaction = openTransaction();

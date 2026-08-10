@@ -1,5 +1,5 @@
 import { snapshot } from "valtio/vanilla";
-import { armEmitter, disarmEmitter, settlePendingBare } from "./emitterBare";
+import { armEmitter, disarmEmitter, reportBareDiff } from "./emitterBare";
 import {
 	deleteEmitter,
 	getOrCreateEmitter,
@@ -67,7 +67,7 @@ export function addStateListener(
 			return;
 		}
 
-		settlePendingBare(held.record);
+		reportBareDiff(held.record);
 		channels.delete(held.channelId);
 
 		if (channels.size === 0) held.record.listeners.delete(held.listener);

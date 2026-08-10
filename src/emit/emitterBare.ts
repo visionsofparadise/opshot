@@ -3,7 +3,13 @@ import { applyMutations } from "../ops/applyMutations";
 import { getCyclicPath } from "../ops/cloneValue";
 import { diffObjects } from "../ops/diff";
 import { formatOperationPath } from "../ops/path";
-import { bracketDelivery, deliver } from "./emitterDeliver";
+import {
+	drainDeliveries,
+	enqueueDelivery,
+	prepareDelivery,
+	recordDeliveryFailure,
+	type PendingDelivery,
+} from "./emitterDeliver";
 import {
 	getEmitter,
 	getOrCreateEmitter,
@@ -11,7 +17,6 @@ import {
 	type EmitterRecord,
 	type GroupListeners,
 } from "./emitterRegistry";
-import type { Operation } from "../ops/operation";
 
 interface Claim {
 	readonly record: EmitterRecord;
@@ -118,13 +123,7 @@ export const disarmEmitter = (record: EmitterRecord): void => {
 	record.disarmEmission = undefined;
 };
 
-interface PreparedRecordReport {
-	readonly record: EmitterRecord;
-	readonly ops: ReadonlyArray<Operation>;
-	readonly meta: unknown;
-}
-
-const prepareRecordReport = (record: EmitterRecord, meta: unknown): PreparedRecordReport | undefined => {
+const reportRecord = (record: EmitterRecord, meta: unknown): PendingDelivery | undefined => {
 	const current = snapshot(record.writeProxy);
 
 	record.hasUnreported = false;
@@ -141,20 +140,17 @@ const prepareRecordReport = (record: EmitterRecord, meta: unknown): PreparedReco
 
 	if (ops.length === 0) return undefined;
 
-	return { record, ops, meta };
+	return prepareDelivery(record, ops, meta);
 };
 
-const reportRecord = (record: EmitterRecord, meta: unknown): void => {
-	const prepared = prepareRecordReport(record, meta);
-
-	if (prepared === undefined) return;
-
-	deliver(prepared.record, prepared.ops, prepared.meta);
-};
-
-const reportBareDiff = (record: EmitterRecord): void => {
+export const reportBareDiff = (record: EmitterRecord): void => {
 	try {
-		reportRecord(record, undefined);
+		const pending = reportRecord(record, undefined);
+
+		if (pending === undefined) return;
+
+		enqueueDelivery(pending);
+		drainDeliveries();
 	} catch (error) {
 		throw augmentBareCycleError(error) ?? error;
 	}
@@ -169,12 +165,12 @@ const raisePrepareFailures = (failures: ReadonlyArray<unknown>): void => {
 };
 
 export const reportTransaction = (transaction: Transaction, meta: unknown): void => {
-	const prepared: Array<PreparedRecordReport> = [];
+	const prepared: Array<PendingDelivery> = [];
 	const prepareFailures: Array<unknown> = [];
 
 	for (const claim of transaction.claimed) {
 		try {
-			const pending = prepareRecordReport(claim.record, claim.wasDirty ? undefined : meta);
+			const pending = reportRecord(claim.record, claim.wasDirty ? undefined : meta);
 
 			if (pending !== undefined) prepared.push(pending);
 		} catch (error) {
@@ -193,11 +189,11 @@ export const reportTransaction = (transaction: Transaction, meta: unknown): void
 		raisePrepareFailures(prepareFailures);
 	}
 
-	bracketDelivery((failures) => {
-		failures.push(...prepareFailures);
+	for (const error of prepareFailures) recordDeliveryFailure(error);
 
-		for (const pending of prepared) deliver(pending.record, pending.ops, pending.meta);
-	});
+	for (const pending of prepared) enqueueDelivery(pending);
+
+	drainDeliveries();
 };
 
 export const releaseTransactionToWindows = (transaction: Transaction): void => {
@@ -225,10 +221,6 @@ export const rollbackTransaction = (transaction: Transaction): void => {
 		record.lastReported = baseline;
 		record.hasUnreported = false;
 	}
-};
-
-export const settlePendingBare = (record: EmitterRecord): void => {
-	reportBareDiff(record);
 };
 
 export function emitBareFlush(state: object): void {

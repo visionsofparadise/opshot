@@ -5,7 +5,7 @@ type Delivery =
 	| { readonly kind: "group"; readonly deliver: GroupListener }
 	| { readonly kind: "own"; readonly deliver: StateListener };
 
-interface PendingDelivery {
+export interface PendingDelivery {
 	readonly writeProxy: object;
 	readonly deliveries: ReadonlyArray<Delivery>;
 	readonly ops: ReadonlyArray<Operation>;
@@ -55,52 +55,45 @@ const raiseFailures = (failures: ReadonlyArray<unknown>): void => {
 };
 
 const queuedDeliveries: Array<PendingDelivery> = [];
+const deliveryFailures: Array<unknown> = [];
 
-let isDelivering = false;
+let isDraining = false;
 
-const drainQueuedDeliveries = (failures: Array<unknown>): void => {
-	while (queuedDeliveries.length > 0) {
-		for (const queued of queuedDeliveries.splice(0, queuedDeliveries.length)) runDelivery(queued, failures);
-	}
+export const prepareDelivery = (
+	record: EmitterRecord,
+	ops: ReadonlyArray<Operation>,
+	meta: unknown,
+): PendingDelivery => ({
+	writeProxy: record.writeProxy,
+	deliveries: collectDeliveries(record),
+	ops,
+	meta,
+});
+
+export const enqueueDelivery = (pending: PendingDelivery): void => {
+	queuedDeliveries.push(pending);
 };
 
-export const bracketDelivery = (report: (failures: Array<unknown>) => void): void => {
-	const failures: Array<unknown> = [];
+export const recordDeliveryFailure = (error: unknown): void => {
+	deliveryFailures.push(error);
+};
 
-	if (isDelivering) {
-		report(failures);
+export const drainDeliveries = (): void => {
+	if (isDraining) return;
 
-		raiseFailures(failures);
-
-		return;
-	}
-
-	isDelivering = true;
+	isDraining = true;
 
 	try {
-		report(failures);
-
-		drainQueuedDeliveries(failures);
+		while (queuedDeliveries.length > 0) {
+			for (const queued of queuedDeliveries.splice(0, queuedDeliveries.length)) {
+				runDelivery(queued, deliveryFailures);
+			}
+		}
 	} finally {
-		isDelivering = false;
+		isDraining = false;
 	}
+
+	const failures = deliveryFailures.splice(0, deliveryFailures.length);
 
 	raiseFailures(failures);
-};
-
-export const deliver = (record: EmitterRecord, ops: ReadonlyArray<Operation>, meta: unknown): void => {
-	const pending: PendingDelivery = {
-		writeProxy: record.writeProxy,
-		deliveries: collectDeliveries(record),
-		ops,
-		meta,
-	};
-
-	if (isDelivering) {
-		queuedDeliveries.push(pending);
-
-		return;
-	}
-
-	bracketDelivery((failures) => runDelivery(pending, failures));
 };
