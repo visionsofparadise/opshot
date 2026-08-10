@@ -76,7 +76,7 @@ describe("deliver", () => {
 		expect(order).toEqual(["first hears cause", "second hears cause", "hears effect"]);
 	});
 
-	it("orders cause before effect for an observer of two records reported in one frame", () => {
+	it("orders cause before effect for an observer of two records reported in one transaction", () => {
 		const transacted = createMutableState<Counter>({ n: 0 });
 		const cause = createMutableState<Counter>({ n: 0 });
 		const effect = createMutableState<Counter>({ n: 0 });
@@ -132,7 +132,7 @@ describe("deliver", () => {
 		expect((raised as AggregateError).errors).toEqual([transactedFailure, otherFailure]);
 	});
 
-	it("does not deliver a frame's later record to a listener subscribed while an earlier record delivered", () => {
+	it("does not deliver a transaction's later record to a listener subscribed while an earlier record delivered", () => {
 		const transacted = createMutableState<Counter>({ n: 0 });
 		const other = createMutableState<Counter>({ n: 0 });
 		const heard = new Array<string>();

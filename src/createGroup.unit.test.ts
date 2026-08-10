@@ -313,7 +313,7 @@ describe("createGroup", () => {
 		expect(heard).toEqual(["cause", "effect"]);
 	});
 
-	it("delivers a frame's later record to a group listener removed while an earlier record delivered", () => {
+	it("delivers a transaction's later record to a group listener removed while an earlier record delivered", () => {
 		const group = createGroup();
 		const transacted = group.createMutableState({ name: "transacted", n: 0 });
 		const other = group.createMutableState({ name: "other", n: 0 });

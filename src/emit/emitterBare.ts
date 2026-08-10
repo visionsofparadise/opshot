@@ -221,6 +221,7 @@ export const restoreDirtyLedgers = (transaction: Transaction): void => {
 
 		claim.record.lastReported = claim.baseline;
 		claim.record.hasUnreported = true;
+		claim.record.pending = false;
 	}
 };
 
@@ -275,8 +276,8 @@ export function emitBareFlush(state: object): void {
 	reportBareDiff(record);
 }
 
-export function mintGroupedEmitter(state: object, groupChain: ReadonlyArray<GroupListeners>): EmitterRecord {
-	const record = getOrCreateEmitter(state, groupChain);
+export function mintGroupedEmitter(writeProxy: object, groupChain: ReadonlyArray<GroupListeners>): EmitterRecord {
+	const record = getOrCreateEmitter(writeProxy, groupChain);
 
 	armEmitter(record);
 

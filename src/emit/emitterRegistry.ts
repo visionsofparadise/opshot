@@ -58,12 +58,7 @@ export function getEmitter(state: object): EmitterRecord | undefined {
 export const hasListeners = (record: EmitterRecord): boolean =>
 	record.listeners.size > 0 || (record.groupChain?.some((map) => map.size > 0) ?? false);
 
-export function getOrCreateEmitter(
-	state: object,
-	groupChain?: ReadonlyArray<GroupListeners>,
-	resolved?: object,
-): EmitterRecord {
-	const writeProxy = resolved ?? resolveWriteProxy(state);
+export function getOrCreateEmitter(writeProxy: object, groupChain?: ReadonlyArray<GroupListeners>): EmitterRecord {
 	const existing = emitters.get(writeProxy);
 
 	if (existing !== undefined) return existing;

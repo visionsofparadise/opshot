@@ -611,16 +611,17 @@ describe("transact", () => {
 
 		expect(state.n).toBe(2);
 		expect(state.box.self).toBe(state.box);
-		// release withholds scheduleFlush from the failed record; emitOn must not run again
+
+		// restoreDirtyLedgers clears pending so a missing exclude would re-arm via scheduleFlush.
+		// Drain microtasks: release must not have called emitOn again.
+		await Promise.resolve();
+		await Promise.resolve();
+
 		expect(scheduled.length).toBe(scheduledAfterBare);
 
 		// Repair the cycle the dirty claim kept, then run the pre-existing window flush.
 		// A poisoned (cyclic) lastReported would refuse this diff; an acyclic baseline succeeds.
 		delete state.box.self;
-
-		await Promise.resolve();
-
-		expect(scheduled.length).toBe(scheduledAfterBare);
 
 		expect(() => {
 			for (const flush of scheduled.splice(0)) flush();

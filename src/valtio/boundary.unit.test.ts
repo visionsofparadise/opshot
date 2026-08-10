@@ -122,6 +122,8 @@ describe("boundary: snapshot donation", () => {
 		const destination = createMutableState<{ box: unknown }>({ box: null });
 		const donated = snapshot(source).item;
 
+		expect(peelIdentityLayer(donated as object)).not.toBeUndefined();
+
 		expect(() => {
 			transact(destination, () => {
 				destination.box = donated;
@@ -143,23 +145,6 @@ describe("boundary: snapshot donation", () => {
 				destination.box = wrapped;
 			});
 		}).toThrow("Clone the value, or replay through applyOperations");
-		expect(destination.box).toBe(null);
-	});
-
-	it("rejects a peelIdentityLayer-reducible snapshot so routing assignment peel through the identity layer cannot delete the donation guard", () => {
-		const source = createMutableState({ item: { value: 1 } });
-		const destination = createMutableState<{ box: unknown }>({ box: null });
-		const donated = snapshot(source).item;
-
-		expect(peelIdentityLayer(donated as object)).not.toBeUndefined();
-
-		expect(() => {
-			transact(destination, () => {
-				destination.box = donated;
-			});
-		}).toThrow(
-			'opshot: cannot assign a snapshot generation at "box": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.',
-		);
 		expect(destination.box).toBe(null);
 	});
 

@@ -168,7 +168,7 @@ state.index.set("a", 1);
 
 ## Transact
 
-`transact` runs a callback as one cohesive unit of work. Every covering subscriber hears one net diff with the optional `meta`, and listeners run before it returns.
+`transact` runs a callback as one cohesive unit of work. Every covering subscriber hears one net diff with the optional `meta`, and listeners run before it returns — except when it is called from inside a listener, or from one running while a transaction reports, in which case it returns before its own listeners run.
 
 ```ts
 import { createMutableState, subscribe, transact } from "opshot";
@@ -191,7 +191,7 @@ transact(
 
 **Nesting is banned.** A `transact` reached while another is open throws. Domain methods should mutate, not transact — the caller owns the transaction boundary. Run transactions in sequence, or call `applyOperations` at top level.
 
-**A throwing `transact` rolls back** its tracked writes and emits nothing. Rollback covers only tracked state: a request fired in the callback, an `ignore()`d value, or a write below `unsafeTrack()` is not undone.
+**A throwing `transact` rolls back** its tracked writes and emits nothing, except a record that already carried unflushed bare writes when the transaction first touched it: those bare writes stand and report bare. Rollback covers only tracked state: a request fired in the callback, an `ignore()`d value, or a write below `unsafeTrack()` is not undone.
 
 ## Subscribe
 

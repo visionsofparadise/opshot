@@ -86,6 +86,8 @@ export const drainDeliveries = (): void => {
 
 	isDraining = true;
 
+	let failures: Array<unknown> = [];
+
 	try {
 		while (queuedDeliveries.length > 0) {
 			for (const queued of queuedDeliveries.splice(0, queuedDeliveries.length)) {
@@ -94,9 +96,8 @@ export const drainDeliveries = (): void => {
 		}
 	} finally {
 		isDraining = false;
+		failures = deliveryFailures.splice(0, deliveryFailures.length);
 	}
-
-	const failures = deliveryFailures.splice(0, deliveryFailures.length);
 
 	raiseFailures(failures);
 };
