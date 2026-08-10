@@ -90,6 +90,49 @@ describe("subscribe", () => {
 		expect(heard).toEqual([{ actor: "matt" }, undefined]);
 	});
 
+	it("bounds a plain state listener to two arguments under a channel transact", () => {
+		const channel = createChannel<{ actor: string }>();
+		const state = createMutableState({ count: 0 });
+		const arities = new Array<number>();
+
+		// eslint-disable-next-line prefer-rest-params -- pin the library call arity, not a rest binding
+		subscribe(state, function () {
+			arities.push(arguments.length);
+		});
+
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ actor: "matt" },
+		);
+
+		expect(arities).toEqual([2]);
+	});
+
+	it("bounds a plain group listener to three arguments under a channel transact", () => {
+		const channel = createChannel<{ actor: string }>();
+		const group = createGroup();
+		const state = group.createMutableState({ count: 0 });
+		const arities = new Array<number>();
+
+		// eslint-disable-next-line prefer-rest-params -- pin the library call arity, not a rest binding
+		subscribe(group, function () {
+			arities.push(arguments.length);
+		});
+
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			{ actor: "matt" },
+		);
+
+		expect(arities).toEqual([3]);
+	});
+
 	it("subscribing the same function twice to a state is one subscription", () => {
 		const state = createMutableState({ count: 0 });
 		const heard = new Array<ReadonlyArray<Operation>>();

@@ -1,6 +1,6 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
-import type { GroupDeliver, GroupListener, StateDeliver, StateListener } from "./emit/emitterRegistry";
+import type { GroupListener, StateListener } from "./emit/emitterRegistry";
 
 /**
  * Listener context from a channel subscription.
@@ -36,10 +36,12 @@ export function subscribe(group: Group, listener: GroupListener): () => void;
 export function subscribe(state: object, listener: StateListener): () => void;
 export function subscribe(target: object | Group, listener: StateListener | GroupListener): () => void {
 	if (isGroup(target)) {
-		return addGroupListener(getGroupListeners(target), listener, undefined, listener as GroupDeliver);
+		return addGroupListener(getGroupListeners(target), listener, undefined, (state, ops, meta) =>
+			(listener as GroupListener)(state, ops, meta),
+		);
 	}
 
-	return addStateListener(target, listener, undefined, listener as StateDeliver);
+	return addStateListener(target, listener, undefined, (ops, meta) => (listener as StateListener)(ops, meta));
 }
 
 export function toChannelContext<M extends object>(
