@@ -1,22 +1,17 @@
 import {
 	closeTransaction,
+	cyclicFailureRecords,
+	deliverPreparedReport,
+	failedRecords,
 	isTransactionOpen,
 	openTransaction,
+	prepareTransactionReport,
 	releaseTransactionToWindows,
 	reportBareDiff,
-	reportTransaction,
+	restoreDirtyLedgers,
 	rollbackTransaction,
 } from "./emit/emitterBare";
 import { getEmitter } from "./emit/emitterRegistry";
-import { getCyclicPath } from "./ops/cloneValue";
-
-const isCyclicReportFailure = (error: unknown): boolean => {
-	if (getCyclicPath(error) !== undefined) return true;
-
-	if (error instanceof AggregateError) return error.errors.some(isCyclicReportFailure);
-
-	return false;
-};
 
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
@@ -77,21 +72,32 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		}
 	}
 
-	try {
-		reportTransaction(transaction, meta, channelId);
-	} catch (reportError) {
-		if (isCyclicReportFailure(reportError)) {
-			try {
-				rollbackTransaction(transaction);
-			} catch (rollbackError) {
-				if (reportError instanceof Error) {
-					reportError.cause = rollbackError;
-				}
-			}
+	const report = prepareTransactionReport(transaction, meta, channelId);
+	const cyclicRecords = cyclicFailureRecords(report);
 
-			releaseTransactionToWindows(transaction);
+	if (cyclicRecords.size > 0) {
+		const [soleFailure, ...otherFailures] = report.failures;
+		const raised: unknown =
+			soleFailure !== undefined && otherFailures.length === 0
+				? soleFailure.error
+				: new AggregateError(
+						report.failures.map((failure) => failure.error),
+						"opshot: failures during reporting",
+					);
+
+		try {
+			rollbackTransaction(transaction);
+		} catch (rollbackError) {
+			if (raised instanceof Error && raised.cause === undefined) {
+				raised.cause = rollbackError;
+			}
 		}
 
-		throw reportError;
+		restoreDirtyLedgers(transaction);
+		releaseTransactionToWindows(transaction, failedRecords(report));
+
+		throw raised;
 	}
+
+	deliverPreparedReport(report);
 }

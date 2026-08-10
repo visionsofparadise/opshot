@@ -1,6 +1,7 @@
 import { createMutableState } from "./createMutableState";
 import { ignore } from "./ignore";
 import { CyclicValueError } from "./ops/cloneValue";
+import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
@@ -471,5 +472,168 @@ describe("transact", () => {
 		});
 
 		expect([...heard].sort()).toEqual(["a", "deep", "root"]);
+	});
+
+	it("leaves delivered writes standing when a listener throws CyclicValueError", () => {
+		const state = createMutableState({ n: 0 });
+		const cyclic: { self?: object } = {};
+
+		cyclic.self = cyclic;
+
+		subscribe(state, () => {
+			// Cycle on the after side so assertAcyclic on the do-half throws CyclicValueError.
+			diffObjects({ box: {} }, { box: cyclic });
+		});
+
+		expect(() =>
+			transact(state, () => {
+				state.n = 42;
+			}),
+		).toThrow(CyclicValueError);
+
+		expect(state.n).toBe(42);
+	});
+
+	it("leaves delivered writes standing when a listener throws AggregateError containing CyclicValueError", () => {
+		const state = createMutableState({ n: 0 });
+		const cyclic: { self?: object } = {};
+
+		cyclic.self = cyclic;
+
+		subscribe(state, () => {
+			try {
+				diffObjects({ box: {} }, { box: cyclic });
+			} catch (error) {
+				throw new AggregateError([error], "listener aggregate");
+			}
+		});
+
+		expect(() =>
+			transact(state, () => {
+				state.n = 42;
+			}),
+		).toThrow(AggregateError);
+
+		expect(state.n).toBe(42);
+	});
+
+	it("rolls back a cycle formed in the transaction, emits nothing, and raises synchronously", () => {
+		const state = createMutableState<{ box: { self?: object } }>({ box: {} });
+		const heard = new Array<unknown>();
+
+		subscribe(state, (_ops, meta) => heard.push(meta));
+
+		expect(() =>
+			transact(
+				state,
+				() => {
+					state.box.self = state.box;
+				},
+				{ tag: "lost" },
+			),
+		).toThrow(CyclicValueError);
+
+		expect(state.box.self).toBeUndefined();
+		expect(heard).toEqual([]);
+	});
+
+	it("still bare-delivers a dirty co-claim after a cyclic abort", async () => {
+		const dirty = createMutableState({ n: 0 });
+		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
+		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(dirty, (ops, meta) => heard.push({ side: "dirty", ops: [...ops], meta }));
+		subscribe(cyclic, (ops, meta) => heard.push({ side: "cyclic", ops: [...ops], meta }));
+
+		dirty.n = 1;
+
+		expect(() =>
+			transact(
+				cyclic,
+				() => {
+					dirty.n = 2;
+					cyclic.box.self = cyclic.box;
+				},
+				{ tag: "lost" },
+			),
+		).toThrow(CyclicValueError);
+
+		expect(dirty.n).toBe(2);
+		expect(cyclic.box.self).toBeUndefined();
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard.map((entry) => ({ side: entry.side, ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				side: "dirty",
+				ops: [
+					{
+						do: { verb: "assign", path: ["n"], value: 2 },
+						undo: { verb: "assign", path: ["n"], value: 0 },
+					},
+				],
+				meta: undefined,
+			},
+		]);
+	});
+
+	it("never arms a dirty cyclic record and leaves its baseline acyclic", async () => {
+		const scheduled = new Array<() => void>();
+		// Transact a separate root so entry reportBareDiff does not settle this record's bare window.
+		const other = createMutableState({ x: 0 });
+		const state = createMutableState<{ n: number; box: { self?: object } }>(
+			{ n: 0, box: {} },
+			{
+				emitOn: (flush) => {
+					scheduled.push(flush);
+				},
+			},
+		);
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(state, (ops, meta) => heard.push({ ops: [...ops], meta }));
+
+		state.n = 1;
+
+		await Promise.resolve();
+
+		const scheduledAfterBare = scheduled.length;
+
+		expect(scheduledAfterBare).toBe(1);
+
+		expect(() =>
+			transact(other, () => {
+				state.n = 2;
+				state.box.self = state.box;
+			}),
+		).toThrow(CyclicValueError);
+
+		expect(state.n).toBe(2);
+		expect(state.box.self).toBe(state.box);
+		// release withholds scheduleFlush from the failed record; emitOn must not run again
+		expect(scheduled.length).toBe(scheduledAfterBare);
+
+		// Repair the cycle the dirty claim kept, then run the pre-existing window flush.
+		// A poisoned (cyclic) lastReported would refuse this diff; an acyclic baseline succeeds.
+		delete state.box.self;
+
+		await Promise.resolve();
+
+		expect(scheduled.length).toBe(scheduledAfterBare);
+
+		expect(() => {
+			for (const flush of scheduled.splice(0)) flush();
+		}).not.toThrow();
+
+		expect(state.n).toBe(2);
+		expect(heard).toHaveLength(1);
+		expect(shapeOps(heard[0]!.ops)).toEqual([
+			{
+				do: { verb: "assign", path: ["n"], value: 2 },
+				undo: { verb: "assign", path: ["n"], value: 0 },
+			},
+		]);
+		expect(heard[0]!.meta).toBeUndefined();
 	});
 });

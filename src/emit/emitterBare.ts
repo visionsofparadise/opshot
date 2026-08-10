@@ -161,17 +161,23 @@ export const reportBareDiff = (record: EmitterRecord): void => {
 	}
 };
 
-const raisePrepareFailures = (failures: ReadonlyArray<unknown>): void => {
-	if (failures.length === 0) return;
+interface RecordFailure {
+	readonly record: EmitterRecord;
+	readonly error: unknown;
+}
 
-	if (failures.length > 1) throw new AggregateError(failures, "opshot: listeners failed during delivery");
+interface TransactionReport {
+	readonly prepared: ReadonlyArray<PendingDelivery>;
+	readonly failures: ReadonlyArray<RecordFailure>;
+}
 
-	throw failures[0];
-};
-
-export const reportTransaction = (transaction: Transaction, meta: unknown, channelId: object | undefined): void => {
+export const prepareTransactionReport = (
+	transaction: Transaction,
+	meta: unknown,
+	channelId: object | undefined,
+): TransactionReport => {
 	const prepared: Array<PendingDelivery> = [];
-	const prepareFailures: Array<unknown> = [];
+	const failures: Array<RecordFailure> = [];
 
 	for (const claim of transaction.claimed) {
 		try {
@@ -183,30 +189,49 @@ export const reportTransaction = (transaction: Transaction, meta: unknown, chann
 
 			if (pending !== undefined) prepared.push(pending);
 		} catch (error) {
-			prepareFailures.push(error);
+			failures.push({ record: claim.record, error });
 		}
 	}
 
-	if (prepareFailures.some((error) => getCyclicPath(error) !== undefined)) {
-		for (const claim of transaction.claimed) {
-			if (!claim.wasDirty) continue;
+	return { prepared, failures };
+};
 
-			claim.record.lastReported = claim.baseline;
-			claim.record.hasUnreported = true;
-		}
+export const cyclicFailureRecords = (report: TransactionReport): ReadonlySet<EmitterRecord> => {
+	const cyclic = new Set<EmitterRecord>();
 
-		raisePrepareFailures(prepareFailures);
+	for (const failure of report.failures) {
+		if (getCyclicPath(failure.error) !== undefined) cyclic.add(failure.record);
 	}
 
-	for (const error of prepareFailures) recordDeliveryFailure(error);
+	return cyclic;
+};
 
-	for (const pending of prepared) enqueueDelivery(pending);
+export const failedRecords = (report: TransactionReport): ReadonlySet<EmitterRecord> =>
+	new Set(report.failures.map((failure) => failure.record));
+
+export const deliverPreparedReport = (report: TransactionReport): void => {
+	for (const failure of report.failures) recordDeliveryFailure(failure.error);
+
+	for (const pending of report.prepared) enqueueDelivery(pending);
 
 	drainDeliveries();
 };
 
-export const releaseTransactionToWindows = (transaction: Transaction): void => {
-	for (const claim of transaction.claimed) scheduleFlush(claim.record);
+export const restoreDirtyLedgers = (transaction: Transaction): void => {
+	for (const claim of transaction.claimed) {
+		if (!claim.wasDirty) continue;
+
+		claim.record.lastReported = claim.baseline;
+		claim.record.hasUnreported = true;
+	}
+};
+
+export const releaseTransactionToWindows = (transaction: Transaction, exclude?: ReadonlySet<EmitterRecord>): void => {
+	for (const claim of transaction.claimed) {
+		if (exclude?.has(claim.record) === true) continue;
+
+		scheduleFlush(claim.record);
+	}
 };
 
 export const rollbackTransaction = (transaction: Transaction): void => {
