@@ -1,6 +1,6 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
-import type { GroupListener, StateListener } from "./emit/emitterRegistry";
+import type { GroupDeliver, GroupListener, StateDeliver, StateListener } from "./emit/emitterRegistry";
 
 /**
  * Listener context from a channel subscription.
@@ -36,49 +36,24 @@ export function subscribe(group: Group, listener: GroupListener): () => void;
 export function subscribe(state: object, listener: StateListener): () => void;
 export function subscribe(target: object | Group, listener: StateListener | GroupListener): () => void {
 	if (isGroup(target)) {
-		return addGroupListener(getGroupListeners(target), listener, undefined, (state, ops, meta) => {
-			(listener as GroupListener)(state, ops, unwrapTransportMeta(meta));
-		});
+		return addGroupListener(getGroupListeners(target), listener, undefined, listener as GroupDeliver);
 	}
 
-	return addStateListener(target, listener, undefined, (ops, meta) => {
-		(listener as StateListener)(ops, unwrapTransportMeta(meta));
-	});
-}
-
-const channelStampBrand: unique symbol = Symbol.for("opshot.channelStamp");
-
-export interface ChannelStamp {
-	readonly [channelStampBrand]: object;
-	readonly meta: object | undefined;
-}
-
-export function stampChannelMeta(channelId: object, meta?: object): ChannelStamp {
-	return { [channelStampBrand]: channelId, meta };
-}
-
-function isChannelStamp(value: unknown): value is ChannelStamp {
-	return typeof value === "object" && value !== null && channelStampBrand in value;
-}
-
-function isOwnChannelStamp(value: unknown, channelId: object): value is ChannelStamp {
-	return isChannelStamp(value) && value[channelStampBrand] === channelId;
-}
-
-function unwrapTransportMeta(meta: unknown): unknown {
-	if (isChannelStamp(meta)) return meta.meta;
-
-	return meta;
+	return addStateListener(target, listener, undefined, listener as StateDeliver);
 }
 
 export function toChannelContext<M extends object>(
 	channelId: object,
 	defaults: M | undefined,
 	meta: unknown,
+	deliveredChannelId: object | undefined,
 ): EmissionContext<M> {
-	if (isOwnChannelStamp(meta, channelId)) {
-		return { isTransaction: true, meta: { ...defaults, ...meta.meta } as M };
+	if (deliveredChannelId === channelId) {
+		return {
+			isTransaction: true,
+			meta: { ...defaults, ...(typeof meta === "object" && meta !== null ? meta : undefined) } as M,
+		};
 	}
 
-	return { isTransaction: false, meta: unwrapTransportMeta(meta) };
+	return { isTransaction: false, meta };
 }

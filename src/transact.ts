@@ -32,6 +32,10 @@ const isCyclicReportFailure = (error: unknown): boolean => {
  * @returns Nothing.
  */
 export function transact(state: object, mutate: () => void, meta?: unknown): void {
+	runTransaction(state, mutate, meta, undefined);
+}
+
+export function runTransaction(state: object, mutate: () => void, meta: unknown, channelId: object | undefined): void {
 	if (isTransactionOpen()) {
 		throw new Error(
 			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
@@ -73,7 +77,7 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 	}
 
 	try {
-		reportTransaction(transaction, meta);
+		reportTransaction(transaction, meta, channelId);
 	} catch (reportError) {
 		if (isCyclicReportFailure(reportError)) {
 			try {

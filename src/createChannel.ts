@@ -1,8 +1,8 @@
 import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
-import { applyOperations as standaloneApplyOperations } from "./ops/applyOperations";
-import { stampChannelMeta, toChannelContext, type EmissionContext } from "./subscribe";
-import { transact as standaloneTransact } from "./transact";
+import { runOperations } from "./ops/applyOperations";
+import { toChannelContext, type EmissionContext } from "./subscribe";
+import { runTransaction } from "./transact";
 import type { ApplyDirection } from "./ops/applyMutations";
 import type { Operation } from "./ops/operation";
 
@@ -72,7 +72,7 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 	const channelId = Object.freeze({});
 
 	function transact(state: object, mutate: () => void, meta?: Partial<M>): void {
-		standaloneTransact(state, mutate, stampChannelMeta(channelId, meta));
+		runTransaction(state, mutate, meta, channelId);
 	}
 
 	function subscribe(
@@ -92,19 +92,24 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 			| ((state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void),
 	): () => void {
 		if (isGroup(target)) {
-			return addGroupListener(getGroupListeners(target), listener, channelId, (state, ops, meta) => {
-				(listener as (state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void)(
-					state,
-					ops,
-					toChannelContext(channelId, defaults, meta),
-				);
-			});
+			return addGroupListener(
+				getGroupListeners(target),
+				listener,
+				channelId,
+				(state, ops, meta, deliveredChannelId) => {
+					(listener as (state: object, ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void)(
+						state,
+						ops,
+						toChannelContext(channelId, defaults, meta, deliveredChannelId),
+					);
+				},
+			);
 		}
 
-		return addStateListener(target, listener, channelId, (ops, meta) => {
+		return addStateListener(target, listener, channelId, (ops, meta, deliveredChannelId) => {
 			(listener as (ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void)(
 				ops,
-				toChannelContext(channelId, defaults, meta),
+				toChannelContext(channelId, defaults, meta, deliveredChannelId),
 			);
 		});
 	}
@@ -115,7 +120,7 @@ export function createChannel<M extends object>(defaults?: M): Channel<M> {
 		direction: ApplyDirection,
 		meta?: Partial<M>,
 	): void {
-		standaloneApplyOperations(state, operations, direction, stampChannelMeta(channelId, meta));
+		runOperations(state, operations, direction, meta, channelId);
 	}
 
 	return { transact, subscribe, applyOperations };

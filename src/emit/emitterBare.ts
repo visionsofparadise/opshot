@@ -123,7 +123,11 @@ export const disarmEmitter = (record: EmitterRecord): void => {
 	record.disarmEmission = undefined;
 };
 
-const reportRecord = (record: EmitterRecord, meta: unknown): PendingDelivery | undefined => {
+const reportRecord = (
+	record: EmitterRecord,
+	meta: unknown,
+	channelId: object | undefined,
+): PendingDelivery | undefined => {
 	const current = snapshot(record.writeProxy);
 
 	record.hasUnreported = false;
@@ -140,12 +144,12 @@ const reportRecord = (record: EmitterRecord, meta: unknown): PendingDelivery | u
 
 	if (ops.length === 0) return undefined;
 
-	return prepareDelivery(record, ops, meta);
+	return prepareDelivery(record, ops, meta, channelId);
 };
 
 export const reportBareDiff = (record: EmitterRecord): void => {
 	try {
-		const pending = reportRecord(record, undefined);
+		const pending = reportRecord(record, undefined, undefined);
 
 		if (pending === undefined) return;
 
@@ -164,13 +168,17 @@ const raisePrepareFailures = (failures: ReadonlyArray<unknown>): void => {
 	throw failures[0];
 };
 
-export const reportTransaction = (transaction: Transaction, meta: unknown): void => {
+export const reportTransaction = (transaction: Transaction, meta: unknown, channelId: object | undefined): void => {
 	const prepared: Array<PendingDelivery> = [];
 	const prepareFailures: Array<unknown> = [];
 
 	for (const claim of transaction.claimed) {
 		try {
-			const pending = reportRecord(claim.record, claim.wasDirty ? undefined : meta);
+			const pending = reportRecord(
+				claim.record,
+				claim.wasDirty ? undefined : meta,
+				claim.wasDirty ? undefined : channelId,
+			);
 
 			if (pending !== undefined) prepared.push(pending);
 		} catch (error) {

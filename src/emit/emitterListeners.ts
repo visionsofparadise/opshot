@@ -5,9 +5,9 @@ import {
 	getOrCreateEmitter,
 	hasListeners,
 	type EmitterRecord,
-	type GroupListener,
+	type GroupDeliver,
 	type GroupListeners,
-	type StateListener,
+	type StateDeliver,
 } from "./emitterRegistry";
 import { resolveWriteProxy } from "./resolveWriteProxy";
 
@@ -32,7 +32,7 @@ export function addStateListener(
 	state: object,
 	listener: Function,
 	channelId: object | undefined,
-	deliver: StateListener,
+	deliver: StateDeliver,
 ): () => void {
 	const writeProxy = resolveWriteProxy(state);
 	const record = getOrCreateEmitter(writeProxy);
@@ -89,7 +89,7 @@ export function addGroupListener(
 	groupListeners: GroupListeners,
 	listener: Function,
 	channelId: object | undefined,
-	deliver: GroupListener,
+	deliver: GroupDeliver,
 ): () => void {
 	let byChannel = groupListeners.get(listener);
 

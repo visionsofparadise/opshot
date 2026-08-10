@@ -22,9 +22,18 @@ export type StateListener = (ops: ReadonlyArray<Operation>, meta: unknown) => vo
  */
 export type GroupListener = (state: object, ops: ReadonlyArray<Operation>, meta: unknown) => void;
 
-type StateListeners = Map<Function, Map<object | undefined, StateListener>>;
+export type StateDeliver = (ops: ReadonlyArray<Operation>, meta: unknown, channelId: object | undefined) => void;
 
-export type GroupListeners = Map<Function, Map<object | undefined, GroupListener>>;
+export type GroupDeliver = (
+	state: object,
+	ops: ReadonlyArray<Operation>,
+	meta: unknown,
+	channelId: object | undefined,
+) => void;
+
+type StateListeners = Map<Function, Map<object | undefined, StateDeliver>>;
+
+export type GroupListeners = Map<Function, Map<object | undefined, GroupDeliver>>;
 
 export interface EmitterRecord {
 	listeners: StateListeners;

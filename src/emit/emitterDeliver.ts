@@ -1,15 +1,16 @@
-import type { EmitterRecord, GroupListener, StateListener } from "./emitterRegistry";
+import type { EmitterRecord, GroupDeliver, StateDeliver } from "./emitterRegistry";
 import type { Operation } from "../ops/operation";
 
 type Delivery =
-	| { readonly kind: "group"; readonly deliver: GroupListener }
-	| { readonly kind: "own"; readonly deliver: StateListener };
+	| { readonly kind: "group"; readonly deliver: GroupDeliver }
+	| { readonly kind: "own"; readonly deliver: StateDeliver };
 
 export interface PendingDelivery {
 	readonly writeProxy: object;
 	readonly deliveries: ReadonlyArray<Delivery>;
 	readonly ops: ReadonlyArray<Operation>;
 	readonly meta: unknown;
+	readonly channelId: object | undefined;
 }
 
 const collectDeliveries = (record: EmitterRecord): Array<Delivery> => {
@@ -36,9 +37,9 @@ const runDelivery = (pending: PendingDelivery, failures: Array<unknown>): void =
 	for (const delivery of pending.deliveries) {
 		try {
 			if (delivery.kind === "group") {
-				delivery.deliver(pending.writeProxy, pending.ops, pending.meta);
+				delivery.deliver(pending.writeProxy, pending.ops, pending.meta, pending.channelId);
 			} else {
-				delivery.deliver(pending.ops, pending.meta);
+				delivery.deliver(pending.ops, pending.meta, pending.channelId);
 			}
 		} catch (error) {
 			failures.push(error);
@@ -63,11 +64,13 @@ export const prepareDelivery = (
 	record: EmitterRecord,
 	ops: ReadonlyArray<Operation>,
 	meta: unknown,
+	channelId: object | undefined,
 ): PendingDelivery => ({
 	writeProxy: record.writeProxy,
 	deliveries: collectDeliveries(record),
 	ops,
 	meta,
+	channelId,
 });
 
 export const enqueueDelivery = (pending: PendingDelivery): void => {

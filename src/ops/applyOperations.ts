@@ -1,5 +1,5 @@
 import { resolveWriteProxy } from "../emit/resolveWriteProxy";
-import { transact } from "../transact";
+import { runTransaction } from "../transact";
 import { applyMutations, type ApplyDirection } from "./applyMutations";
 import { isMutation, type Operation } from "./operation";
 
@@ -39,13 +39,24 @@ export function applyOperations(
 	direction: ApplyDirection,
 	meta?: unknown,
 ): void {
+	runOperations(state, operations, direction, meta, undefined);
+}
+
+export function runOperations(
+	state: object,
+	operations: ReadonlyArray<Operation>,
+	direction: ApplyDirection,
+	meta: unknown,
+	channelId: object | undefined,
+): void {
 	for (const operation of operations) assertApplicable(operation);
 
-	transact(
+	runTransaction(
 		state,
 		() => {
 			applyMutations(resolveWriteProxy(state), operations, direction);
 		},
 		meta,
+		channelId,
 	);
 }

@@ -148,4 +148,49 @@ describe("createChannel", () => {
 
 		expect(heard).toEqual([{ state, meta: { tag: "g" } }]);
 	});
+
+	it("plain subscriber receives the caller's meta bag by identity", () => {
+		const channel = createChannel<{ actor: string }>();
+		const state = createMutableState({ count: 0 });
+		const bag = { actor: "matt" };
+		const heard = new Array<unknown>();
+
+		subscribe(state, (_ops, meta) => {
+			heard.push(meta);
+		});
+
+		channel.transact(
+			state,
+			() => {
+				state.count = 1;
+			},
+			bag,
+		);
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]).toBe(bag);
+	});
+
+	it("a bare-reporting record inside a channel transaction reaches the channel as isTransaction false", () => {
+		const channel = createChannel<{ actor: string }>();
+		const state = createMutableState({ a: { n: 0 }, bare: 0 });
+		const heard = new Array<{ isTransaction: boolean; meta: unknown }>();
+
+		channel.subscribe(state, (_ops, context) => {
+			heard.push(context);
+		});
+
+		state.bare = 1;
+
+		channel.transact(
+			state.a,
+			() => {
+				state.a.n = 1;
+				state.bare = 2;
+			},
+			{ actor: "me" },
+		);
+
+		expect(heard).toEqual([{ isTransaction: false, meta: undefined }]);
+	});
 });
