@@ -1,5 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { getRegisteredReadProxyTarget } from "./readProxyRegistry";
+import { getRegisteredReadProxyTarget } from "./identity";
 
 const { proxyStateMap } = unstable_getInternalStates();
 

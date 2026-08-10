@@ -1,29 +1,4 @@
-import { resolveIdentity } from "../identity";
-
-const internTable = new WeakMap<WeakKey, number>();
-let nextInternId = 0;
-
-const internIdentity = (key: object | symbol): number => {
-	const resolved = resolveIdentity(key);
-
-	if (
-		resolved === null ||
-		(typeof resolved !== "object" && typeof resolved !== "function" && typeof resolved !== "symbol")
-	) {
-		throw new Error("opshot: addressOf interned a non-identity value");
-	}
-
-	const existing = internTable.get(resolved);
-
-	if (existing !== undefined) return existing;
-
-	const id = nextInternId;
-
-	nextInternId += 1;
-	internTable.set(resolved, id);
-
-	return id;
-};
+import { internIdentity } from "../identity";
 
 export const addressOf = (key: unknown): string => {
 	if (key === null) return "z";

@@ -35,7 +35,7 @@ export function addStateListener(
 	deliver: StateDeliver,
 ): () => void {
 	const writeProxy = resolveWriteProxy(state);
-	const record = getOrCreateEmitter(writeProxy);
+	const record = getOrCreateEmitter(writeProxy, undefined, writeProxy);
 
 	if (record.disarmEmission === undefined && record.groupChain === undefined) {
 		armEmitter(record);

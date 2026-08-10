@@ -2,6 +2,7 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { getOptions, inheritOptions, stampOptions, type EmissionScheduler } from "./settings";
+import { subscribe } from "./subscribe";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -165,5 +166,36 @@ describe("options inheritance through the boundary", () => {
 
 		expect(getOptions(target(destination.box))).toBe(getOptions(target(source)));
 		expect(getOptions(target(destination.box))?.emitOn).toBe(emitA);
+	});
+
+	it("a restamped emitOn after the emitter record is minted flushes on the new scheduler", async () => {
+		const firstPending = new Array<() => void>();
+		const secondPending = new Array<() => void>();
+		const first: EmissionScheduler = (flush) => {
+			firstPending.push(flush);
+		};
+		const second: EmissionScheduler = (flush) => {
+			secondPending.push(flush);
+		};
+		const heard = new Array<number>();
+		const state = createMutableState({ count: 0 }, { emitOn: first });
+
+		subscribe(state, () => {
+			heard.push(state.count);
+		});
+
+		stampOptions(target(state), { emitOn: second });
+
+		state.count = 1;
+
+		await Promise.resolve();
+
+		expect(firstPending).toHaveLength(0);
+		expect(secondPending).toHaveLength(1);
+		expect(heard).toEqual([]);
+
+		secondPending[0]!();
+
+		expect(heard).toEqual([1]);
 	});
 });

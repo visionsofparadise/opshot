@@ -1,12 +1,20 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { getRegisteredReadProxyTarget } from "./react/readProxyRegistry";
 
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
 
 const targetRegistry = new WeakMap<object, object>();
-const identityTokenRegistry = new WeakMap<object, object>();
+const readProxyTargets = new WeakMap<object, object>();
+
+interface IdentityRecord {
+	token?: object;
+	id?: number;
+}
+
+const identityRecords = new WeakMap<WeakKey, IdentityRecord>();
+let nextInternId = 0;
+
 const { proxyStateMap } = unstable_getInternalStates();
 
 export function registerSnapshotCopy(copy: object, target: object): void {
@@ -16,6 +24,12 @@ export function registerSnapshotCopy(copy: object, target: object): void {
 export function getRegisteredTarget(copy: object): object | undefined {
 	return targetRegistry.get(copy);
 }
+
+export const registerReadProxyTarget = (readProxy: object, target: object): void => {
+	readProxyTargets.set(readProxy, target);
+};
+
+export const getRegisteredReadProxyTarget = (readProxy: object): object | undefined => readProxyTargets.get(readProxy);
 
 export function peelIdentityLayer(current: object): object | undefined {
 	const untracked = getUntracked(current);
@@ -63,6 +77,17 @@ export function resolveIdentity(value: unknown): unknown {
 	return current;
 }
 
+const recordFor = (key: WeakKey): IdentityRecord => {
+	let record = identityRecords.get(key);
+
+	if (record === undefined) {
+		record = {};
+		identityRecords.set(key, record);
+	}
+
+	return record;
+};
+
 /**
  * Returns a stable identity key for a value.
  *
@@ -74,16 +99,38 @@ export function identify(value: object): object {
 
 	if (!isObjectLike(target)) return value;
 
-	const existing = identityTokenRegistry.get(target);
+	const record = recordFor(target);
 
-	if (existing !== undefined) return existing;
+	if (record.token !== undefined) return record.token;
 
 	const token = Object.freeze({});
 
-	identityTokenRegistry.set(target, token);
+	record.token = token;
 
 	return token;
 }
+
+export const internIdentity = (key: object | symbol): number => {
+	const resolved = resolveIdentity(key);
+
+	if (
+		resolved === null ||
+		(typeof resolved !== "object" && typeof resolved !== "function" && typeof resolved !== "symbol")
+	) {
+		throw new Error("opshot: addressOf interned a non-identity value");
+	}
+
+	const record = recordFor(resolved);
+
+	if (record.id !== undefined) return record.id;
+
+	const id = nextInternId;
+
+	nextInternId += 1;
+	record.id = id;
+
+	return id;
+};
 
 /**
  * Returns whether two values share the same identity.

@@ -23,15 +23,15 @@ export interface Group {
 	createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): T;
 }
 
-const groupListenersByGroup = new WeakMap<Group, GroupListeners>();
 const groupChainByGroup = new WeakMap<Group, ReadonlyArray<GroupListeners>>();
 
 export function isGroup(value: unknown): value is Group {
-	return typeof value === "object" && value !== null && groupListenersByGroup.has(value as Group);
+	return typeof value === "object" && value !== null && groupChainByGroup.has(value as Group);
 }
 
 export function getGroupListeners(group: Group): GroupListeners {
-	const listeners = groupListenersByGroup.get(group);
+	const chain = groupChainByGroup.get(group);
+	const listeners = chain?.at(-1);
 
 	if (listeners === undefined) throw new Error("opshot: unknown group");
 
@@ -63,8 +63,6 @@ export function createGroup(parent?: Group): Group {
 			return createMutableState(properties, { ...options, group });
 		},
 	};
-
-	groupListenersByGroup.set(group, listeners);
 
 	const chain: ReadonlyArray<GroupListeners> =
 		parent === undefined ? [listeners] : [...getGroupChain(parent), listeners];

@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { isState } from "../isState";
+import { peelReadProxy } from "../peelReadProxy";
 import { classifyValue } from "../valtio/classify";
-import { peelReadProxy } from "./peelReadProxy";
 
 const { refSet } = unstable_getInternalStates();
 

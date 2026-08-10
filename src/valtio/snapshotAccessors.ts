@@ -1,6 +1,6 @@
 import { markToTrack } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { registerSnapshotCopy } from "../identity";
+import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 
@@ -12,7 +12,9 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 	if (cached?.[0] === version) {
 		const cachedSnapshot = cached[1] as T;
 
-		registerSnapshotCopy(cachedSnapshot, target);
+		if (getRegisteredTarget(cachedSnapshot) === undefined) {
+			registerSnapshotCopy(cachedSnapshot, target);
+		}
 
 		return cachedSnapshot;
 	}

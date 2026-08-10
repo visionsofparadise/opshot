@@ -1,5 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { peelReadProxy } from "./react/peelReadProxy";
+import { peelReadProxy } from "./peelReadProxy";
 
 const { proxyStateMap } = unstable_getInternalStates();
 

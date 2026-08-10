@@ -1,7 +1,7 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { peelReadProxy } from "../react/peelReadProxy";
+import { peelReadProxy } from "../peelReadProxy";
 import { getOptions, inheritOptions } from "../settings";
 import { unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";

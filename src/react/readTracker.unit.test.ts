@@ -4,7 +4,7 @@ import { proxy, snapshot } from "valtio/vanilla";
 import { ignore } from "../ignore";
 import { installBoundary } from "../valtio/boundary";
 import { createReadTracker, isReadProxy } from "./readTracker";
-import { peelReadProxy } from "./peelReadProxy";
+import { peelReadProxy } from "../peelReadProxy";
 
 installBoundary();
 

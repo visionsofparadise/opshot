@@ -3,6 +3,7 @@ import { applyMutations } from "../ops/applyMutations";
 import { getCyclicPath } from "../ops/cloneValue";
 import { diffObjects } from "../ops/diff";
 import { formatOperationPath } from "../ops/path";
+import { getOptions } from "../settings";
 import {
 	drainDeliveries,
 	enqueueDelivery,
@@ -14,6 +15,7 @@ import {
 	getEmitter,
 	getOrCreateEmitter,
 	hasListeners,
+	targetOf,
 	type EmitterRecord,
 	type GroupListeners,
 } from "./emitterRegistry";
@@ -50,7 +52,7 @@ const scheduleFlush = (record: EmitterRecord): void => {
 	record.pending = true;
 
 	void Promise.resolve().then(() => {
-		const { emitOn } = record;
+		const emitOn = getOptions(targetOf(record.writeProxy))?.emitOn;
 
 		if (emitOn === undefined) {
 			record.pending = false;
@@ -96,7 +98,6 @@ export const closeTransaction = (transaction: Transaction): void => {
 export const armEmitter = (record: EmitterRecord): void => {
 	if (record.disarmEmission !== undefined) return;
 
-	record.lastReported = snapshot(record.writeProxy);
 	record.disarmEmission = valtioSubscribe(
 		record.writeProxy,
 		() => {

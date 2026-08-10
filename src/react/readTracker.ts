@@ -1,5 +1,5 @@
 import { getVersion, unstable_getInternalStates } from "valtio/vanilla";
-import { getRegisteredReadProxyTarget, registerReadProxyTarget } from "./readProxyRegistry";
+import { getRegisteredReadProxyTarget, registerReadProxyTarget } from "../identity";
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
 
 const { refSet, proxyStateMap } = unstable_getInternalStates();
@@ -104,27 +104,6 @@ const getPrototypeMethod = (target: object, prop: string | symbol): Function | u
 	}
 
 	return undefined;
-};
-
-const readProxyBoundMethods = new WeakMap<object, WeakMap<Function, Function>>();
-
-const bindMethodToReadProxy = (readProxy: object, method: Function): Function => {
-	let methods = readProxyBoundMethods.get(readProxy);
-
-	if (methods === undefined) {
-		methods = new WeakMap();
-		readProxyBoundMethods.set(readProxy, methods);
-	}
-
-	const existing = methods.get(method);
-
-	if (existing !== undefined) return existing;
-
-	const bound = Function.prototype.bind.call(method, readProxy) as Function;
-
-	methods.set(method, bound);
-
-	return bound;
 };
 
 export const isReadProxy = (value: unknown): boolean =>
@@ -296,6 +275,19 @@ export function createReadTracker(): ReadTracker {
 		const target = getProxyTarget(writeProxy);
 
 		const readProxyBox: { current?: object } = {};
+		const boundMethods = new WeakMap<Function, Function>();
+
+		const bindMethodToReadProxy = (readProxy: object, method: Function): Function => {
+			const existing = boundMethods.get(method);
+
+			if (existing !== undefined) return existing;
+
+			const bound = Function.prototype.bind.call(method, readProxy) as Function;
+
+			boundMethods.set(method, bound);
+
+			return bound;
+		};
 
 		const handler: ProxyHandler<object> = {
 			get(_target, prop) {

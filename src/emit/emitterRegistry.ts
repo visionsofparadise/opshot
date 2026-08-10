@@ -1,5 +1,4 @@
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
-import { getOptions, type EmissionScheduler } from "../settings";
 import { resolveWriteProxy } from "./resolveWriteProxy";
 import type { Operation } from "../ops/operation";
 
@@ -41,7 +40,6 @@ export interface EmitterRecord {
 	lastReported: object;
 	disarmEmission?: () => void;
 	readonly writeProxy: object;
-	emitOn?: EmissionScheduler;
 	pending: boolean;
 	hasUnreported: boolean;
 	claimed: boolean;
@@ -51,6 +49,8 @@ const emitters = new WeakMap<object, EmitterRecord>();
 
 const { proxyStateMap } = unstable_getInternalStates();
 
+export const targetOf = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
+
 export function getEmitter(state: object): EmitterRecord | undefined {
 	return emitters.get(resolveWriteProxy(state));
 }
@@ -58,27 +58,27 @@ export function getEmitter(state: object): EmitterRecord | undefined {
 export const hasListeners = (record: EmitterRecord): boolean =>
 	record.listeners.size > 0 || (record.groupChain?.some((map) => map.size > 0) ?? false);
 
-export function getOrCreateEmitter(state: object, groupChain?: ReadonlyArray<GroupListeners>): EmitterRecord {
-	const resolved = resolveWriteProxy(state);
-	const existing = emitters.get(resolved);
+export function getOrCreateEmitter(
+	state: object,
+	groupChain?: ReadonlyArray<GroupListeners>,
+	resolved?: object,
+): EmitterRecord {
+	const writeProxy = resolved ?? resolveWriteProxy(state);
+	const existing = emitters.get(writeProxy);
 
 	if (existing !== undefined) return existing;
-
-	const target = proxyStateMap.get(resolved)?.[0] ?? resolved;
-	const emitOn = getOptions(target)?.emitOn;
 
 	const record: EmitterRecord = {
 		listeners: new Map(),
 		groupChain,
-		lastReported: snapshot(resolved),
-		writeProxy: resolved,
-		emitOn,
+		lastReported: snapshot(writeProxy),
+		writeProxy,
 		pending: false,
 		hasUnreported: false,
 		claimed: false,
 	};
 
-	emitters.set(resolved, record);
+	emitters.set(writeProxy, record);
 
 	return record;
 }
