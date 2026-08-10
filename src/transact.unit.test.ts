@@ -636,4 +636,135 @@ describe("transact", () => {
 		]);
 		expect(heard[0]!.meta).toBeUndefined();
 	});
+
+	it.each([
+		{
+			order: "unrollable first",
+			write: (
+				unrollable: { box: { n: number; self?: object } },
+				rollableA: { n: number },
+				rollableB: { n: number },
+			): void => {
+				unrollable.box.n = 99;
+				rollableA.n = 1;
+				rollableB.n = 1;
+			},
+		},
+		{
+			order: "rollable first",
+			write: (
+				unrollable: { box: { n: number; self?: object } },
+				rollableA: { n: number },
+				rollableB: { n: number },
+			): void => {
+				rollableA.n = 1;
+				rollableB.n = 1;
+				unrollable.box.n = 99;
+			},
+		},
+	])("unwinds every rollable claim when one claim cannot roll back ($order)", ({ write }) => {
+		const absorb = (_flush: () => void): void => undefined;
+		const rollableA = createMutableState({ n: 0 }, { emitOn: absorb });
+		const rollableB = createMutableState({ n: 0 }, { emitOn: absorb });
+		const unrollable = createMutableState<{ box: { n: number; self?: object } }>(
+			{ box: { n: 1 } },
+			{ emitOn: absorb },
+		);
+
+		unrollable.box.self = unrollable.box;
+
+		subscribe(rollableA, () => undefined);
+		subscribe(rollableB, () => undefined);
+		subscribe(unrollable, () => undefined);
+
+		const callbackError = new Error("abort");
+
+		expect(() =>
+			transact(rollableA, () => {
+				write(unrollable, rollableA, rollableB);
+
+				throw callbackError;
+			}),
+		).toThrow(callbackError);
+
+		expect(rollableA.n).toBe(0);
+		expect(rollableB.n).toBe(0);
+		expect(unrollable.box.n).toBe(99);
+	});
+
+	it("attaches a rollback failure as a non-enumerable cause on an Error with no cause", () => {
+		const absorb = (_flush: () => void): void => undefined;
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn: absorb });
+
+		state.box.self = state.box;
+
+		subscribe(state, () => undefined);
+
+		const callbackError = new Error("callback failed");
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.box.n = 99;
+
+				throw callbackError;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBe(callbackError);
+		expect(callbackError.cause).toBeInstanceOf(CyclicValueError);
+		expect(Object.getOwnPropertyDescriptor(callbackError, "cause")?.enumerable).toBe(false);
+	});
+
+	it("keeps an existing cause when rollback fails", () => {
+		const absorb = (_flush: () => void): void => undefined;
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn: absorb });
+
+		state.box.self = state.box;
+
+		subscribe(state, () => undefined);
+
+		const originalCause = new Error("root cause");
+		const callbackError = new Error("wrapper", { cause: originalCause });
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.box.n = 99;
+
+				throw callbackError;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBe(callbackError);
+		expect(callbackError.cause).toBe(originalCause);
+	});
+
+	it("rethrows a non-Error throw exactly and does not surface a rollback failure", () => {
+		const absorb = (_flush: () => void): void => undefined;
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn: absorb });
+
+		state.box.self = state.box;
+
+		subscribe(state, () => undefined);
+
+		const thrown = "primitive abort";
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.box.n = 99;
+
+				throw thrown;
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBe(thrown);
+	});
 });

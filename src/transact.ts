@@ -31,6 +31,17 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 	runTransaction(state, mutate, meta, undefined);
 }
 
+const attachRollbackCause = (error: unknown, rollbackError: unknown): void => {
+	if (!(error instanceof Error) || error.cause !== undefined) return;
+
+	Object.defineProperty(error, "cause", {
+		value: rollbackError,
+		writable: true,
+		enumerable: false,
+		configurable: true,
+	});
+};
+
 export function runTransaction(state: object, mutate: () => void, meta: unknown, channelId: object | undefined): void {
 	if (isTransactionOpen()) {
 		throw new Error(
@@ -63,9 +74,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 			try {
 				rollbackTransaction(transaction);
 			} catch (rollbackError) {
-				if (mutateError instanceof Error) {
-					mutateError.cause = rollbackError;
-				}
+				attachRollbackCause(mutateError, rollbackError);
 			}
 
 			releaseTransactionToWindows(transaction);
@@ -88,9 +97,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		try {
 			rollbackTransaction(transaction);
 		} catch (rollbackError) {
-			if (raised instanceof Error && raised.cause === undefined) {
-				raised.cause = rollbackError;
-			}
+			attachRollbackCause(raised, rollbackError);
 		}
 
 		restoreDirtyLedgers(transaction);

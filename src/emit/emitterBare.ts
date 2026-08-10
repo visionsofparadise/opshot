@@ -88,8 +88,6 @@ export const openTransaction = (): Transaction => {
 };
 
 export const closeTransaction = (transaction: Transaction): void => {
-	if (currentTransaction !== transaction) return;
-
 	currentTransaction = undefined;
 
 	for (const claim of transaction.claimed) claim.record.claimed = false;
@@ -235,26 +233,38 @@ export const releaseTransactionToWindows = (transaction: Transaction, exclude?: 
 };
 
 export const rollbackTransaction = (transaction: Transaction): void => {
+	const failures: Array<unknown> = [];
+
 	for (const claim of [...transaction.claimed]) {
 		if (claim.wasDirty) continue;
 
-		const { record, baseline } = claim;
-		const operations = diffObjects(
-			requireObjectSnapshot(snapshot(record.writeProxy)),
-			requireObjectSnapshot(baseline),
-		);
+		try {
+			const { record, baseline } = claim;
+			const operations = diffObjects(
+				requireObjectSnapshot(snapshot(record.writeProxy)),
+				requireObjectSnapshot(baseline),
+			);
 
-		if (operations.length === 0) {
+			if (operations.length === 0) {
+				record.lastReported = baseline;
+				record.hasUnreported = false;
+
+				continue;
+			}
+
+			applyMutations(record.writeProxy, operations, "do");
 			record.lastReported = baseline;
 			record.hasUnreported = false;
-
-			continue;
+		} catch (error) {
+			failures.push(error);
 		}
-
-		applyMutations(record.writeProxy, operations, "do");
-		record.lastReported = baseline;
-		record.hasUnreported = false;
 	}
+
+	if (failures.length === 0) return;
+
+	if (failures.length === 1) throw failures[0];
+
+	throw new AggregateError(failures, "opshot: failures during rollback");
 };
 
 export function emitBareFlush(state: object): void {
