@@ -309,7 +309,7 @@ describe("subscribe", () => {
 		expect(state.a.n).toBe(0);
 	});
 
-	it("keeps an applyOperations replay flag off the enclosing transaction it runs inside", () => {
+	it("throws when applyOperations runs inside a transact", () => {
 		const state = createMutableState({ a: { n: 0 }, top: 0 });
 		const recorded = new Array<Operation>();
 		const stopRecording = subscribe(state.a, (ops) => recorded.push(...ops));
@@ -319,23 +319,18 @@ describe("subscribe", () => {
 		});
 		stopRecording();
 
-		const rootHeard = new Array<unknown>();
-		const nodeHeard = new Array<unknown>();
-
-		subscribe(state, (_ops, meta) => rootHeard.push(meta));
-		subscribe(state.a, (_ops, meta) => nodeHeard.push(meta));
-
-		transact(
-			state,
-			() => {
-				applyOperations(state.a, recorded, "undo", { replay: true });
-				state.top = 1;
-			},
-			{ transactionKey: "user-drag" },
+		expect(() =>
+			transact(
+				state,
+				() => {
+					applyOperations(state.a, recorded, "undo", { replay: true });
+					state.top = 1;
+				},
+				{ transactionKey: "user-drag" },
+			),
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
 		);
-
-		expect(rootHeard).toEqual([{ transactionKey: "user-drag" }]);
-		expect(nodeHeard).toEqual([{ replay: true }]);
 	});
 
 	it("refuses applyOperations on the node an enclosing transact already holds", () => {
@@ -352,7 +347,9 @@ describe("subscribe", () => {
 			transact(state, () => {
 				applyOperations(state, recorded, "undo", { replay: true });
 			}),
-		).toThrow("opshot: nested transact on the same state");
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
 	});
 
 	it("bounds bare writes to one net diff per window under the default latch", async () => {

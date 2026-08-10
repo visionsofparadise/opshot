@@ -224,11 +224,8 @@ describe("emitterListeners", () => {
 		]);
 	});
 
-	it("throws on nested transact of the same state", () => {
+	it("throws on nested transact of an unsubscribed state", () => {
 		const state = createMutableState({ count: 0 });
-		const listener = (): undefined => undefined;
-
-		addStateListener(state, listener, undefined, listener);
 
 		expect(() =>
 			transact(state, () => {
@@ -236,7 +233,9 @@ describe("emitterListeners", () => {
 					state.count = 2;
 				});
 			}),
-		).toThrow("opshot: nested transact on the same state");
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
 	});
 
 	it("delivers a bare write pending at teardown before unsubscribe returns", () => {

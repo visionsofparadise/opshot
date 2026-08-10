@@ -31,12 +31,11 @@ export interface EmitterRecord {
 	groupChain?: ReadonlyArray<GroupListeners>;
 	lastReported: object;
 	disarmEmission?: () => void;
-	isMutating: boolean;
 	readonly writeProxy: object;
 	emitOn?: EmissionScheduler;
 	pending: boolean;
 	hasUnreported: boolean;
-	claimedBy: object | undefined;
+	claimed: boolean;
 }
 
 const emitters = new WeakMap<object, EmitterRecord>();
@@ -63,12 +62,11 @@ export function getOrCreateEmitter(state: object, groupChain?: ReadonlyArray<Gro
 		listeners: new Map(),
 		groupChain,
 		lastReported: snapshot(resolved),
-		isMutating: false,
 		writeProxy: resolved,
 		emitOn,
 		pending: false,
 		hasUnreported: false,
-		claimedBy: undefined,
+		claimed: false,
 	};
 
 	emitters.set(resolved, record);

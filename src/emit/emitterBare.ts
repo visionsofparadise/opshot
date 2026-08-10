@@ -16,7 +16,7 @@ interface Claim {
 	readonly wasDirty: boolean;
 }
 
-export interface TransactFrame {
+export interface Transaction {
 	readonly claimed: Array<Claim>;
 }
 
@@ -58,33 +58,31 @@ const scheduleFlush = (record: EmitterRecord): void => {
 	});
 };
 
-const frames: Array<TransactFrame> = [];
+let currentTransaction: Transaction | undefined;
 
-const claimFor = (frame: TransactFrame, record: EmitterRecord, wasDirty: boolean): void => {
-	if (record.claimedBy !== undefined) return;
+export const isTransactionOpen = (): boolean => currentTransaction !== undefined;
 
-	record.claimedBy = frame;
-	frame.claimed.push({ record, wasDirty });
+const claimFor = (transaction: Transaction, record: EmitterRecord, wasDirty: boolean): void => {
+	if (record.claimed) return;
+
+	record.claimed = true;
+	transaction.claimed.push({ record, wasDirty });
 };
 
-export const openFrame = (transacted: EmitterRecord | undefined): TransactFrame => {
-	const frame: TransactFrame = { claimed: [] };
+export const openTransaction = (): Transaction => {
+	const transaction: Transaction = { claimed: [] };
 
-	frames.push(frame);
+	currentTransaction = transaction;
 
-	if (transacted !== undefined) claimFor(frame, transacted, transacted.hasUnreported);
-
-	return frame;
+	return transaction;
 };
 
-export const closeFrame = (frame: TransactFrame): void => {
-	const index = frames.lastIndexOf(frame);
+export const closeTransaction = (transaction: Transaction): void => {
+	if (currentTransaction !== transaction) return;
 
-	if (index === -1) return;
+	currentTransaction = undefined;
 
-	frames.splice(index, 1);
-
-	for (const claim of frame.claimed) claim.record.claimedBy = undefined;
+	for (const claim of transaction.claimed) claim.record.claimed = false;
 };
 
 export const armEmitter = (record: EmitterRecord): void => {
@@ -98,15 +96,15 @@ export const armEmitter = (record: EmitterRecord): void => {
 
 			record.hasUnreported = true;
 
-			const outermost = frames[0];
+			const open = currentTransaction;
 
-			if (outermost === undefined) {
+			if (open === undefined) {
 				scheduleFlush(record);
 
 				return;
 			}
 
-			claimFor(outermost, record, wasDirty);
+			claimFor(open, record, wasDirty);
 		},
 		true,
 	);
@@ -145,9 +143,9 @@ const reportBareDiff = (record: EmitterRecord): void => {
 	}
 };
 
-export const reportFrame = (frame: TransactFrame, meta: unknown): void => {
+export const reportTransaction = (transaction: Transaction, meta: unknown): void => {
 	bracketDelivery((failures) => {
-		for (const claim of frame.claimed) {
+		for (const claim of transaction.claimed) {
 			try {
 				reportRecord(claim.record, claim.wasDirty ? undefined : meta);
 			} catch (error) {
@@ -157,8 +155,8 @@ export const reportFrame = (frame: TransactFrame, meta: unknown): void => {
 	});
 };
 
-export const releaseFrameToWindows = (frame: TransactFrame): void => {
-	for (const claim of frame.claimed) scheduleFlush(claim.record);
+export const releaseTransactionToWindows = (transaction: Transaction): void => {
+	for (const claim of transaction.claimed) scheduleFlush(claim.record);
 };
 
 export const settlePendingBare = (record: EmitterRecord): void => {

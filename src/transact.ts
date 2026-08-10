@@ -1,4 +1,11 @@
-import { closeFrame, openFrame, releaseFrameToWindows, reportFrame, settlePendingBare } from "./emit/emitterBare";
+import {
+	closeTransaction,
+	isTransactionOpen,
+	openTransaction,
+	releaseTransactionToWindows,
+	reportTransaction,
+	settlePendingBare,
+} from "./emit/emitterBare";
 import { getEmitter } from "./emit/emitterRegistry";
 
 /**
@@ -6,8 +13,8 @@ import { getEmitter } from "./emit/emitterRegistry";
  *
  * Every subscriber covering a written key hears it, at any depth above or below `state`.
  * Listeners run before this returns, and a throwing one never skips another. Called from inside a
- * listener, or from one running while a frame reports, it returns before its own listeners run.
- * Nesting a `transact` inside another delivers the inner one's `meta` only to its own node.
+ * listener, or from one running while a transaction reports, it returns before its own listeners run.
+ * Nesting a `transact` inside another throws.
  *
  * @param state - State to change.
  * @param mutate - Function that writes the state.
@@ -15,17 +22,19 @@ import { getEmitter } from "./emit/emitterRegistry";
  * @returns Nothing.
  */
 export function transact(state: object, mutate: () => void, meta?: unknown): void {
-	const record = getEmitter(state);
+	if (isTransactionOpen()) {
+		throw new Error(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
+	}
 
-	if (record?.isMutating === true) throw new Error("opshot: nested transact on the same state");
+	const record = getEmitter(state);
 
 	if (record !== undefined) {
 		settlePendingBare(record);
-
-		record.isMutating = true;
 	}
 
-	const frame = openFrame(record);
+	const transaction = openTransaction();
 
 	let completed = false;
 
@@ -33,12 +42,10 @@ export function transact(state: object, mutate: () => void, meta?: unknown): voi
 		mutate();
 		completed = true;
 	} finally {
-		if (record !== undefined) record.isMutating = false;
+		closeTransaction(transaction);
 
-		closeFrame(frame);
-
-		if (!completed) releaseFrameToWindows(frame);
+		if (!completed) releaseTransactionToWindows(transaction);
 	}
 
-	reportFrame(frame, meta);
+	reportTransaction(transaction, meta);
 }

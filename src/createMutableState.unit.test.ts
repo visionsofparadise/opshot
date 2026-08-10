@@ -131,7 +131,7 @@ describe("createMutableState", () => {
 		expect(emissions).toHaveLength(0);
 	});
 
-	it("throws on nested transact of the same state and recovers after a throw", () => {
+	it("throws on nested transact and recovers after a throw", () => {
 		const state = createCounter();
 
 		subscribe(state, () => undefined);
@@ -143,9 +143,9 @@ describe("createMutableState", () => {
 					state.count = 2;
 				});
 			}),
-		).toThrow("opshot: nested transact on the same state");
-
-		expect(state.count).toBe(1);
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
 
 		expect(() =>
 			transact(state, () => {
@@ -157,22 +157,20 @@ describe("createMutableState", () => {
 		expect(state.count).toBe(2);
 	});
 
-	it("lets a transact of a second state run inside a callback and emit independently", () => {
+	it("throws when a second state's transact runs inside another transaction", () => {
 		const first = createCounter();
 		const second = createCounter();
-		const firstEmissions = recordEmissions(first);
-		const secondEmissions = recordEmissions(second);
 
-		transact(first, () => {
-			first.count = 1;
-			transact(second, () => {
-				second.count = 7;
-			});
-		});
-
-		expect(firstEmissions).toHaveLength(1);
-		expect(secondEmissions).toHaveLength(1);
-		expect(second.count).toBe(7);
+		expect(() =>
+			transact(first, () => {
+				first.count = 1;
+				transact(second, () => {
+					second.count = 7;
+				});
+			}),
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
 	});
 
 	it("stops calling a listener after its remover runs", () => {
