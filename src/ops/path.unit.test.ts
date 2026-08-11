@@ -2,7 +2,7 @@ import { appendOperationPath, createOperationPath, formatOperationPath } from ".
 
 describe("operation paths", () => {
 	it("formats root, plain strings, and numbers without escaping", () => {
-		expect(formatOperationPath(createOperationPath([]))).toBe("");
+		expect(formatOperationPath(createOperationPath([]))).toBe("/");
 		expect(formatOperationPath(createOperationPath(["a/b", "c~d", 3, "3"]))).toBe("/a/b/c~d/3/3");
 	});
 

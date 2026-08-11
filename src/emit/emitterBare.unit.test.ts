@@ -77,18 +77,26 @@ describe("emitterBare", () => {
 		expect(diffObjects).not.toHaveBeenCalled();
 	});
 
-	it("augments a bare-flush cycle error naming transact as the catchable lane", async () => {
+	it("flushes a bare cyclic formation as ordinary ops", async () => {
 		const state = createMutableState<{ node: CyclicNode }>({ node: { n: 1 } });
+		const heard = new Array<ReadonlyArray<Operation>>();
 
 		state.node.self = state.node;
 
-		subscribe(state, () => undefined);
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
 
 		state.node.n = 2;
 
 		expect(() => {
 			emitBareFlush(state);
-		}).toThrow(/transact/);
+		}).not.toThrow();
+
+		expect(heard.length).toBeGreaterThan(0);
+		expect(heard[0]?.[0]?.do.verb).toBe("assign");
+		expect(state.node.self).toBe(state.node);
+		expect(state.node.n).toBe(2);
 
 		await Promise.resolve();
 		await Promise.resolve();
@@ -359,8 +367,9 @@ describe("emitOn window", () => {
 		]);
 	});
 
-	it("a cycle formed by a bare write under custom emitOn throws from the scheduler callback", async () => {
+	it("a cycle formed by a bare write under custom emitOn flushes ops from the scheduler callback", async () => {
 		const thrown = new Array<unknown>();
+		const heard = new Array<ReadonlyArray<Operation>>();
 		const emitOn = (flush: () => void): void => {
 			queueMicrotask(() => {
 				try {
@@ -372,7 +381,9 @@ describe("emitOn window", () => {
 		};
 		const state = createMutableState<{ node: CyclicNode }>({ node: { n: 1 } }, { emitOn });
 
-		subscribe(state, () => undefined);
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
 
 		state.node.self = state.node;
 		await Promise.resolve();
@@ -382,7 +393,44 @@ describe("emitOn window", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 
-		expect(thrown.length).toBeGreaterThan(0);
-		expect(String(thrown[0])).toMatch(/transact/);
+		expect(thrown).toHaveLength(0);
+		expect(heard.length).toBeGreaterThan(0);
+		expect(state.node.self).toBe(state.node);
+		expect(state.node.n).toBe(2);
+	});
+
+	it("delivers a bare shared write per-route in both states' streams", async () => {
+		const shared = { n: 1 };
+		const stateA = createMutableState({ box: shared });
+		const stateB = createMutableState({ box: shared });
+		const heardA = new Array<ReadonlyArray<Operation>>();
+		const heardB = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(stateA, (ops) => {
+			heardA.push([...ops]);
+		});
+		subscribe(stateB, (ops) => {
+			heardB.push([...ops]);
+		});
+
+		stateA.box.n = 5;
+
+		expect(heardA).toEqual([]);
+		expect(heardB).toEqual([]);
+		expect(stateB.box.n).toBe(5);
+
+		await Promise.resolve();
+
+		const expected = [
+			[
+				{
+					do: { verb: "assign", path: ["box", "n"], value: 5 },
+					undo: { verb: "assign", path: ["box", "n"], value: 1 },
+				},
+			],
+		];
+
+		expect(heardA.map(shapeOps)).toEqual(expected);
+		expect(heardB.map(shapeOps)).toEqual(expected);
 	});
 });

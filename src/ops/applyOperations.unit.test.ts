@@ -1,4 +1,4 @@
-import { getVersion } from "valtio/vanilla";
+import { getVersion, snapshot } from "valtio/vanilla";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
@@ -10,6 +10,7 @@ import { TrackedSet } from "../tracked/trackedSet";
 import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
 import { createAssignMutation, createDeleteMutation, type Operation, type Mutation } from "./operation";
+import { formatOperationPath } from "./path";
 
 const asPair = (half: Mutation): Operation => ({ do: half, undo: half });
 
@@ -117,7 +118,7 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(state.list.label).toBe("b");
 	});
 
-	it("rejects root and invalid terminal operations before that operation mutates", () => {
+	it("rejects invalid terminal operations before that operation mutates", () => {
 		const state = createMutableState({
 			count: 0,
 			list: [1],
@@ -126,7 +127,6 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 			date: new TrackedDate(0),
 		});
 
-		expect(() => applyOperations(state, [asPair(createAssignMutation([], {}))], "do")).toThrow("root operations");
 		expect(() => applyOperations(state, [asPair(createAssignMutation(["list", "0"], 2))], "do")).toThrow(
 			"does not resolve",
 		);
@@ -134,6 +134,81 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 			"does not resolve",
 		);
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
+	});
+
+	it("applies a root assign as content replacement without reassigning the root", () => {
+		const state = createMutableState({ kept: 1, removed: 2 } as {
+			kept: number;
+			removed?: number;
+			added?: number;
+		});
+		const rootBefore = state;
+
+		applyOperations(state, [asPair(createAssignMutation([], { kept: 9, added: 3 }))], "do");
+
+		expect(state).toBe(rootBefore);
+		expect(state).toEqual({ kept: 9, added: 3 });
+		expect(Object.hasOwn(state, "removed")).toBe(false);
+	});
+
+	it("restores a registered interior target through a root assign", () => {
+		const interior = { n: 1 };
+		const state = createMutableState({ held: interior, tag: "before" });
+		const recorded = snapshot(state);
+
+		transact(state, () => {
+			state.held = { n: 9 };
+			state.tag = "after";
+		});
+
+		expect(isSameIdentity(state.held, interior)).toBe(false);
+
+		applyOperations(state, [asPair(createAssignMutation([], recorded))], "do");
+
+		expect(isSameIdentity(state.held, interior)).toBe(true);
+		expect(state.held.n).toBe(1);
+		expect(state.tag).toBe("before");
+	});
+
+	it("round-trips a root assign whose undo half carries the previous full content", () => {
+		const state = createMutableState({ a: 1, b: 2 } as { a: number; b?: number; c?: number });
+		const before = snapshot(state);
+		const rootBefore = state;
+
+		transact(state, () => {
+			state.a = 10;
+			delete state.b;
+			state.c = 3;
+		});
+
+		const after = snapshot(state);
+		const op: Operation = {
+			do: createAssignMutation([], after),
+			undo: createAssignMutation([], before),
+		};
+
+		applyOperations(state, [op], "undo");
+		expect(state).toBe(rootBefore);
+		expect(state).toEqual({ a: 1, b: 2 });
+		expect(Object.hasOwn(state, "c")).toBe(false);
+
+		applyOperations(state, [op], "do");
+		expect(state).toBe(rootBefore);
+		expect(state).toEqual({ a: 10, c: 3 });
+		expect(Object.hasOwn(state, "b")).toBe(false);
+	});
+
+	it("throws a named error when a root delete is applied", () => {
+		const state = createMutableState({ count: 0 });
+
+		expect(() => applyOperations(state, [asPair(createDeleteMutation([]))], "do")).toThrow(
+			"opshot: the root cannot be deleted; a root operation replaces content",
+		);
+		expect(state.count).toBe(0);
+	});
+
+	it('formats the empty path as "/"', () => {
+		expect(formatOperationPath([])).toBe("/");
 	});
 
 	it("rejects inherited setters without invoking them", () => {

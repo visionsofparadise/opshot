@@ -15,4 +15,4 @@ export const appendOperationPath = (path: OperationPath, segment: string | numbe
 const formatSegment = (segment: string | number): string => String(segment);
 
 export const formatOperationPath = (path: OperationPath): string =>
-	path.length === 0 ? "" : `/${path.map(formatSegment).join("/")}`;
+	path.length === 0 ? "/" : `/${path.map(formatSegment).join("/")}`;

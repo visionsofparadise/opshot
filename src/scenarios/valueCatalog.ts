@@ -14,7 +14,6 @@ export const behaviorNames = [
 	"roundTripsFaithfully",
 	"methodsWork",
 	"methodInteriorWritesEmit",
-	"throwsOnCycleInTransact",
 ] as const;
 
 export const scopeBehaviorNames = ["rendersOnChange", "walkThrows"] as const;
@@ -116,7 +115,6 @@ const primitive = {
 	roundTripsFaithfully: true,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const trackedData = {
@@ -128,7 +126,6 @@ const trackedData = {
 	roundTripsFaithfully: true,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const trackedWithMutatingMethods = {
@@ -141,11 +138,10 @@ const cyclic = {
 	attachesByBareWrite: true,
 	readBackIsRawReference: false,
 	readBackResolvesToSameIdentity: true,
-	emitsOnInteriorMutation: false,
-	roundTripsFaithfully: false,
+	emitsOnInteriorMutation: true,
+	roundTripsFaithfully: true,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: true,
 } satisfies Record<BehaviorName, boolean>;
 
 const autoIgnoredFrozen = {
@@ -157,7 +153,6 @@ const autoIgnoredFrozen = {
 	roundTripsFaithfully: false,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const rejected = {
@@ -169,7 +164,6 @@ const rejected = {
 	roundTripsFaithfully: false,
 	methodsWork: false,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const rejectedEmptyMethods = {
@@ -186,7 +180,6 @@ const ignored = {
 	roundTripsFaithfully: true,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const leafFunction = {
@@ -198,7 +191,6 @@ const leafFunction = {
 	roundTripsFaithfully: true,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const leafFrozen = {
@@ -210,7 +202,6 @@ const leafFrozen = {
 	roundTripsFaithfully: false,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const unsafePrivate = {
@@ -222,7 +213,6 @@ const unsafePrivate = {
 	roundTripsFaithfully: true,
 	methodsWork: false,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: false,
 } satisfies Record<BehaviorName, boolean>;
 
 const unsafePrivateCycle = {
@@ -230,11 +220,10 @@ const unsafePrivateCycle = {
 	attachesByBareWrite: true,
 	readBackIsRawReference: false,
 	readBackResolvesToSameIdentity: true,
-	emitsOnInteriorMutation: false,
-	roundTripsFaithfully: false,
+	emitsOnInteriorMutation: true,
+	roundTripsFaithfully: true,
 	methodsWork: false,
 	methodInteriorWritesEmit: false,
-	throwsOnCycleInTransact: true,
 } satisfies Record<BehaviorName, boolean>;
 
 const scopeRenders = { rendersOnChange: true, walkThrows: false } satisfies Record<ScopeBehaviorName, boolean>;

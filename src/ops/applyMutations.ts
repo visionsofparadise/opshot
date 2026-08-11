@@ -146,8 +146,6 @@ const resolveTraversalSegment = (parent: unknown, segment: unknown, path: Operat
 };
 
 const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal => {
-	if (path.length === 0) throw new Error("opshot: root operations are not supported");
-
 	let parent: unknown = root;
 
 	for (let index = 0; index < path.length - 1; index++) parent = resolveTraversalSegment(parent, path[index], path);
@@ -155,6 +153,22 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 	if (!isObjectLike(parent)) throw unresolvedError(path);
 
 	return { parent, segment: path[path.length - 1] };
+};
+
+const applyRoot = (root: object, operation: Mutation): void => {
+	if (operation.verb === "delete") {
+		throw new Error("opshot: the root cannot be deleted; a root operation replaces content");
+	}
+
+	restoreValue(
+		getValuePayload(operation),
+		(value) => {
+			if (!isObjectLike(value)) throw unresolvedError(operation.path);
+
+			restoreRecordedContent(root, value, new WeakSet());
+		},
+		() => root,
+	);
 };
 
 const applyPlain = (parent: object, segment: unknown, operation: Mutation): void => {
@@ -205,14 +219,21 @@ const applyPlain = (parent: object, segment: unknown, operation: Mutation): void
 	);
 };
 
+const applyMutation = (root: object, operation: Mutation): void => {
+	if (operation.path.length === 0) {
+		applyRoot(root, operation);
+
+		return;
+	}
+
+	const terminal = resolveTerminal(root, operation.path);
+
+	applyPlain(terminal.parent, terminal.segment, operation);
+};
+
 export function applyMutations(root: object, operations: ReadonlyArray<Operation>, direction: ApplyDirection): void {
 	if (direction === "do") {
-		for (const operation of operations) {
-			const half = operation.do;
-			const terminal = resolveTerminal(root, half.path);
-
-			applyPlain(terminal.parent, terminal.segment, half);
-		}
+		for (const operation of operations) applyMutation(root, operation.do);
 
 		return;
 	}
@@ -222,9 +243,6 @@ export function applyMutations(root: object, operations: ReadonlyArray<Operation
 
 		if (operation === undefined) continue;
 
-		const half = operation.undo;
-		const terminal = resolveTerminal(root, half.path);
-
-		applyPlain(terminal.parent, terminal.segment, half);
+		applyMutation(root, operation.undo);
 	}
 }

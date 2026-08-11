@@ -23,10 +23,17 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
 };
 
 /**
- * Applies operation pairs to a state in the given direction.
+ * Applies operation pairs to a state in the given direction. Ops are idempotent: re-applying a
+ * delivered pair at a matching state is a no-op.
  *
  * `"do"` applies each pair's do half in delivery order. `"undo"` applies each pair's undo half in reverse delivery order.
  * Runs through `transact` and cannot run inside one — call at top level.
+ *
+ * The empty path (`"/"`) is the state's content: an assign at `[]` replaces content on the existing
+ * root; a delete at the root is refused. Cycles and aliases ride as closed ops — both halves carry
+ * what they need, including cyclic clones. A JSON round trip of a carried value keeps content;
+ * in-memory sharing inside that value is replay-side only and does not survive `JSON.stringify`.
+ * Never spread, JSON-round-trip, or `structuredClone` an op before applying it.
  *
  * @param state - State to change.
  * @param operations - Operation pairs to apply.

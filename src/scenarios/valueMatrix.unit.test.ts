@@ -3,7 +3,6 @@ import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
-import { getCyclicPath } from "../ops/cloneValue";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
@@ -130,22 +129,6 @@ const scenarios = {
 
 	emitsOnInteriorMutation: async (create) => {
 		try {
-			{
-				const gateState = createMutableState({ value: create() });
-
-				subscribe(gateState, () => undefined);
-
-				try {
-					transact(gateState, () => {
-						driveInterior(gateState);
-					});
-				} catch (error) {
-					if (getCyclicPath(error) !== undefined) return false;
-
-					throw error;
-				}
-			}
-
 			const state = createMutableState({ value: create() });
 			const heard = new Array<Operation>();
 
@@ -239,26 +222,6 @@ const scenarios = {
 				});
 
 				if (heard.length > 0) return true;
-			}
-
-			return false;
-		} catch {
-			return false;
-		}
-	},
-
-	throwsOnCycleInTransact: (create) => {
-		try {
-			const state = createMutableState({ value: create() });
-
-			subscribe(state, () => undefined);
-
-			try {
-				transact(state, () => {
-					driveInterior(state);
-				});
-			} catch (error) {
-				return getCyclicPath(error) !== undefined;
 			}
 
 			return false;

@@ -1,8 +1,6 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { applyMutations } from "../ops/applyMutations";
-import { getCyclicPath } from "../ops/cloneValue";
 import { diffObjects } from "../ops/diff";
-import { formatOperationPath } from "../ops/path";
 import { getOptions } from "../settings";
 import {
 	drainDeliveries,
@@ -29,16 +27,6 @@ interface Claim {
 export interface Transaction {
 	readonly claimed: Array<Claim>;
 }
-
-const augmentBareCycleError = (error: unknown): Error | undefined => {
-	const path = getCyclicPath(error);
-
-	if (path === undefined) return undefined;
-
-	return new Error(
-		`opshot: a bare write created a cyclic value at ${formatOperationPath(path)}. Cycles cannot be tracked. This surfaced asynchronously because the write was not inside transact. Use transact for catchable cycle errors, ignore() for back-linked structures, or ids.`,
-	);
-};
 
 const requireObjectSnapshot = (value: unknown): object => {
 	if (value !== null && (typeof value === "object" || typeof value === "function")) return value;
@@ -147,16 +135,12 @@ const reportRecord = (
 };
 
 export const reportBareDiff = (record: EmitterRecord): void => {
-	try {
-		const pending = reportRecord(record, undefined, undefined);
+	const pending = reportRecord(record, undefined, undefined);
 
-		if (pending === undefined) return;
+	if (pending === undefined) return;
 
-		enqueueDelivery(pending);
-		drainDeliveries();
-	} catch (error) {
-		throw augmentBareCycleError(error) ?? error;
-	}
+	enqueueDelivery(pending);
+	drainDeliveries();
 };
 
 interface RecordFailure {
@@ -192,16 +176,6 @@ export const prepareTransactionReport = (
 	}
 
 	return { prepared, failures };
-};
-
-export const cyclicFailureRecords = (report: TransactionReport): ReadonlySet<EmitterRecord> => {
-	const cyclic = new Set<EmitterRecord>();
-
-	for (const failure of report.failures) {
-		if (getCyclicPath(failure.error) !== undefined) cyclic.add(failure.record);
-	}
-
-	return cyclic;
 };
 
 export const failedRecords = (report: TransactionReport): ReadonlySet<EmitterRecord> =>

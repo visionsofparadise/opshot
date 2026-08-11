@@ -1,6 +1,7 @@
-import { isSameIdentity } from "../identity";
+import { getRegisteredTarget, isSameIdentity } from "../identity";
+import { parentsOf, reachesNode } from "../inEdges";
 import { carriedOwnKeysOf, walkDataEntries } from "../utils/dataEntries";
-import { cyclicError, isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
+import { isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, getValueOriginal, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
@@ -10,6 +11,25 @@ type RootKind = "plainObject" | "plainArray";
 type Ancestors = Map<object, Set<object>>;
 
 const UNCAPPED_WEIGHT = Number.MAX_SAFE_INTEGER;
+
+interface EscapeGroup {
+	readonly pair: Operation;
+	readonly parents: Set<object>;
+}
+
+interface DiffResult {
+	readonly weight: number;
+	readonly groups: Array<EscapeGroup>;
+}
+
+interface DiffContext {
+	readonly ops: Array<Operation>;
+	readonly ancestors: Ancestors;
+	readonly beforeRoot: object;
+	readonly afterRoot: object;
+	readonly diffRootLive: object;
+	readonly climbMemo: Map<object, Map<object, boolean>>;
+}
 
 class IncompatibleObjectRootsError extends Error {
 	constructor() {
@@ -35,19 +55,60 @@ const changePair = (path: OperationPath, before: unknown, after: unknown): Opera
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
 
-const assertAcyclic = (value: unknown, path: OperationPath, black: WeakSet<object>): void => {
-	if (!isCloneable(value)) return;
+const emptyResult = (): DiffResult => ({ weight: 0, groups: [] });
 
-	const grey = new WeakSet<object>();
+const mergeResults = (results: ReadonlyArray<DiffResult>): DiffResult => {
+	let weight = 0;
+	const groups = new Array<EscapeGroup>();
+
+	for (const result of results) {
+		weight += result.weight;
+		groups.push(...result.groups);
+	}
+
+	return { weight, groups };
+};
+
+const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
+
+const resolveLiveAtPath = (root: object, path: OperationPath): object | undefined => {
+	let current: unknown = root;
+
+	for (const segment of path) {
+		if (!isObjectLike(current)) return undefined;
+
+		current = Reflect.get(current, segment);
+	}
+
+	if (!isObjectLike(current)) return undefined;
+
+	return liveOf(current);
+};
+
+const edgeKeyEquals = (tableKey: string | number, pathSegment: unknown): boolean =>
+	tableKey === pathSegment || String(tableKey) === String(pathSegment);
+
+const collectEscapes = (
+	value: unknown,
+	opPath: OperationPath,
+	context: DiffContext,
+	excludeOwnAddress: boolean,
+): Set<object> => {
+	const escapes = new Set<object>();
+
+	if (!isCloneable(value)) return escapes;
+
+	const visited = new Set<object>();
+	const liveVisited = new Set<object>();
+	const carriedRootLive = liveOf(value);
 
 	const visit = (node: unknown): void => {
 		if (!isCloneable(node)) return;
 
-		if (black.has(node)) return;
+		if (visited.has(node)) return;
 
-		if (grey.has(node)) throw cyclicError(path);
-
-		grey.add(node);
+		visited.add(node);
+		liveVisited.add(liveOf(node));
 
 		for (const key of carriedOwnKeysOf(node)) {
 			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
@@ -56,27 +117,80 @@ const assertAcyclic = (value: unknown, path: OperationPath, black: WeakSet<objec
 
 			visit(descriptor.value);
 		}
-
-		grey.delete(node);
-		black.add(node);
 	};
 
 	visit(value);
+
+	const addressParent =
+		excludeOwnAddress && opPath.length > 0
+			? opPath.length === 1
+				? liveOf(context.afterRoot)
+				: resolveLiveAtPath(context.afterRoot, createOperationPath(opPath.slice(0, -1)))
+			: undefined;
+	const addressKey = excludeOwnAddress && opPath.length > 0 ? opPath[opPath.length - 1] : undefined;
+
+	const isOutsideCarried = (parent: object): boolean => {
+		if (liveVisited.has(parent)) return false;
+
+		if (reachesNode(parent, carriedRootLive, context.climbMemo)) return false;
+
+		return true;
+	};
+
+	for (const live of liveVisited) {
+		const parents = parentsOf(live);
+
+		if (parents === undefined) continue;
+
+		for (const [parent, keys] of parents) {
+			if (
+				addressParent !== undefined &&
+				addressKey !== undefined &&
+				live === carriedRootLive &&
+				parent === addressParent
+			) {
+				let remainingKeys = 0;
+
+				for (const key of keys) {
+					if (!edgeKeyEquals(key, addressKey)) remainingKeys += 1;
+				}
+
+				if (remainingKeys === 0) continue;
+			}
+
+			if (!isOutsideCarried(parent)) continue;
+
+			if (!reachesNode(parent, context.diffRootLive, context.climbMemo)) continue;
+
+			escapes.add(parent);
+		}
+	}
+
+	return escapes;
 };
 
 const commitOperation = (
-	ops: Array<Operation>,
+	context: DiffContext,
 	opsStart: number,
 	path: OperationPath,
 	pair: Operation,
 	weighHalf: (value: unknown) => number,
-	black: WeakSet<object>,
-): number => {
-	ops.splice(opsStart, ops.length - opsStart, pair);
+): DiffResult => {
+	context.ops.splice(opsStart, context.ops.length - opsStart, pair);
 
-	if ("value" in pair.do) assertAcyclic(getValueOriginal(pair.do), path, black);
+	const escapes = new Set<object>();
 
-	if (path.length === 1) return 0;
+	if ("value" in pair.do) {
+		for (const parent of collectEscapes(getValueOriginal(pair.do), path, context, true)) escapes.add(parent);
+	}
+
+	if ("value" in pair.undo) {
+		for (const parent of collectEscapes(getValueOriginal(pair.undo), path, context, true)) escapes.add(parent);
+	}
+
+	const groups = escapes.size > 0 ? [{ pair, parents: escapes } satisfies EscapeGroup] : new Array<EscapeGroup>();
+
+	if (path.length <= 1) return { weight: 0, groups };
 
 	let weight = OPERATION_WEIGHT;
 
@@ -84,39 +198,33 @@ const commitOperation = (
 
 	if ("value" in pair.undo) weight += weighHalf(getValueOriginal(pair.undo));
 
-	return weight;
+	return { weight, groups };
 };
 
-const pushAddition = (ops: Array<Operation>, path: OperationPath, after: unknown, black: WeakSet<object>): number =>
-	commitOperation(ops, ops.length, path, additionPair(path, after), weighCarried, black);
+const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult =>
+	commitOperation(context, context.ops.length, path, additionPair(path, after), weighCarried);
 
-const pushRemoval = (ops: Array<Operation>, path: OperationPath, before: unknown, black: WeakSet<object>): number =>
-	commitOperation(ops, ops.length, path, removalPair(path, before), weighCarried, black);
+const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult =>
+	commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
 
-const pushChange = (
-	ops: Array<Operation>,
-	path: OperationPath,
-	before: unknown,
-	after: unknown,
-	black: WeakSet<object>,
-): number => commitOperation(ops, ops.length, path, changePair(path, before, after), weighCarried, black);
+const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult =>
+	commitOperation(context, context.ops.length, path, changePair(path, before, after), weighCarried);
 
 const tryCollapse = (
+	context: DiffContext,
 	before: unknown,
 	after: unknown,
 	path: OperationPath,
-	ops: Array<Operation>,
 	opsStart: number,
-	atomicWeight: number,
-	black: WeakSet<object>,
-): number => {
-	if (atomicWeight === 0) return 0;
+	walked: DiffResult,
+): { readonly result: DiffResult; readonly collapsed: boolean } => {
+	if (walked.weight === 0) return { result: walked, collapsed: false };
 
-	const beforeWeight = weighValue(before, atomicWeight);
-	const afterWeight = weighValue(after, atomicWeight - beforeWeight);
+	const beforeWeight = weighValue(before, walked.weight);
+	const afterWeight = weighValue(after, walked.weight - beforeWeight);
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
-	if (collapsedWeight < atomicWeight) {
+	if (collapsedWeight < walked.weight) {
 		const decisionWeights = new Map<object, number>();
 
 		if (isObjectLike(before)) decisionWeights.set(before, beforeWeight);
@@ -133,10 +241,71 @@ const tryCollapse = (
 			return weighCarried(value);
 		};
 
-		return commitOperation(ops, opsStart, path, changePair(path, before, after), weighHalf, black);
+		return {
+			result: commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf),
+			collapsed: true,
+		};
 	}
 
-	return atomicWeight;
+	return { result: walked, collapsed: false };
+};
+
+const frameAddressParent = (context: DiffContext, path: OperationPath): object | undefined => {
+	if (path.length === 0) return undefined;
+
+	if (path.length === 1) return liveOf(context.afterRoot);
+
+	return resolveLiveAtPath(context.afterRoot, createOperationPath(path.slice(0, -1)));
+};
+
+const parentContainedByFrame = (
+	parent: object,
+	frameLive: object,
+	addressParent: object | undefined,
+	context: DiffContext,
+): boolean => {
+	if (parent === frameLive) return true;
+
+	if (addressParent !== undefined && parent === addressParent) return true;
+
+	return reachesNode(parent, frameLive, context.climbMemo);
+};
+
+const processFrameExit = (
+	context: DiffContext,
+	before: object,
+	after: object,
+	path: OperationPath,
+	opsStart: number,
+	walked: DiffResult,
+	collapsed: boolean,
+): DiffResult => {
+	if (collapsed) return walked;
+
+	const frameLive = liveOf(after);
+	const addressParent = frameAddressParent(context, path);
+	const openGroups = new Array<EscapeGroup>();
+	let forceWholesale = false;
+
+	for (const group of walked.groups) {
+		const remaining = new Set<object>();
+
+		for (const parent of group.parents) {
+			if (!parentContainedByFrame(parent, frameLive, addressParent, context)) remaining.add(parent);
+		}
+
+		if (remaining.size === 0) {
+			forceWholesale = true;
+
+			break;
+		}
+
+		openGroups.push({ pair: group.pair, parents: remaining });
+	}
+
+	if (!forceWholesale) return { weight: walked.weight, groups: openGroups };
+
+	return commitOperation(context, opsStart, path, changePair(path, before, after), weighCarried);
 };
 
 const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean =>
@@ -175,15 +344,13 @@ const dataEntryValuesOf = (value: object, ignoreArrayIndexes: boolean): Map<stri
 };
 
 const diffObjectProperties = (
+	context: DiffContext,
 	before: Record<string, unknown> | Array<unknown>,
 	after: Record<string, unknown> | Array<unknown>,
 	path: OperationPath,
-	ops: Array<Operation>,
-	ancestors: Ancestors,
 	ignoreArrayIndexes: boolean,
-	black: WeakSet<object>,
-): number => {
-	let weight = 0;
+): DiffResult => {
+	const results = new Array<DiffResult>();
 	const beforeEntries = dataEntryValuesOf(before, ignoreArrayIndexes);
 	const afterEntries = dataEntryValuesOf(after, ignoreArrayIndexes);
 	const keys = new Set<string>([...beforeEntries.keys(), ...afterEntries.keys()]);
@@ -194,27 +361,25 @@ const diffObjectProperties = (
 		const afterPresent = afterEntries.has(key);
 
 		if (beforePresent && afterPresent) {
-			weight += diffValue(beforeEntries.get(key), afterEntries.get(key), nextPath, ops, ancestors, black);
+			results.push(diffValue(context, beforeEntries.get(key), afterEntries.get(key), nextPath));
 		} else if (beforePresent && !Object.hasOwn(after, key)) {
-			weight += pushRemoval(ops, nextPath, beforeEntries.get(key), black);
+			results.push(pushRemoval(context, nextPath, beforeEntries.get(key)));
 		} else if (afterPresent && !Object.hasOwn(before, key)) {
-			weight += pushAddition(ops, nextPath, afterEntries.get(key), black);
+			results.push(pushAddition(context, nextPath, afterEntries.get(key)));
 		}
 	}
 
-	return weight;
+	return mergeResults(results);
 };
 
 const diffArray = (
+	context: DiffContext,
 	before: Array<unknown>,
 	after: Array<unknown>,
 	path: OperationPath,
-	ops: Array<Operation>,
-	ancestors: Ancestors,
-	black: WeakSet<object>,
-): number => {
+): DiffResult => {
+	const results = new Array<DiffResult>();
 	const overlap = Math.min(before.length, after.length);
-	let weight = 0;
 
 	for (let index = 0; index < overlap; index++) {
 		const beforePresent = Object.hasOwn(before, index);
@@ -224,88 +389,82 @@ const diffArray = (
 
 		const nextPath = appendOperationPath(path, index);
 
-		if (!beforePresent) weight += pushAddition(ops, nextPath, after[index], black);
-		else if (!afterPresent) weight += pushRemoval(ops, nextPath, before[index], black);
-		else weight += diffValue(before[index], after[index], nextPath, ops, ancestors, black);
+		if (!beforePresent) results.push(pushAddition(context, nextPath, after[index]));
+		else if (!afterPresent) results.push(pushRemoval(context, nextPath, before[index]));
+		else results.push(diffValue(context, before[index], after[index], nextPath));
 	}
 
 	if (after.length > before.length) {
-		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length, black);
+		results.push(pushChange(context, appendOperationPath(path, "length"), before.length, after.length));
 
 		for (let index = before.length; index < after.length; index++) {
 			if (Object.hasOwn(after, index))
-				weight += pushAddition(ops, appendOperationPath(path, index), after[index], black);
+				results.push(pushAddition(context, appendOperationPath(path, index), after[index]));
 		}
 	} else if (after.length < before.length) {
 		for (let index = after.length; index < before.length; index++) {
 			if (Object.hasOwn(before, index))
-				weight += pushRemoval(ops, appendOperationPath(path, index), before[index], black);
+				results.push(pushRemoval(context, appendOperationPath(path, index), before[index]));
 		}
 
-		weight += pushChange(ops, appendOperationPath(path, "length"), before.length, after.length, black);
+		results.push(pushChange(context, appendOperationPath(path, "length"), before.length, after.length));
 	}
 
-	weight += diffObjectProperties(before, after, path, ops, ancestors, true, black);
+	results.push(diffObjectProperties(context, before, after, path, true));
 
-	return weight;
+	return mergeResults(results);
 };
 
 const walkContainer = (
+	context: DiffContext,
 	before: object,
 	after: object,
 	path: OperationPath,
-	ops: Array<Operation>,
-	ancestors: Ancestors,
-	black: WeakSet<object>,
-	walk: () => number,
-): number => {
-	if (hasAncestorPair(ancestors, before, after)) throw cyclicError(path);
+	walk: () => DiffResult,
+): DiffResult => {
+	if (hasAncestorPair(context.ancestors, before, after)) return emptyResult();
 
-	enterAncestorPair(ancestors, before, after);
+	enterAncestorPair(context.ancestors, before, after);
 
 	try {
-		if (path.length === 0) {
-			walk();
+		const opsStart = context.ops.length;
+		const walked = walk();
 
-			return 0;
-		}
+		if (path.length === 0) return processFrameExit(context, before, after, path, opsStart, walked, false);
 
-		const opsStart = ops.length;
-		const atomicWeight = walk();
+		const { result: collapsed, collapsed: economicallyCollapsed } = tryCollapse(
+			context,
+			before,
+			after,
+			path,
+			opsStart,
+			walked,
+		);
 
-		return tryCollapse(before, after, path, ops, opsStart, atomicWeight, black);
+		return processFrameExit(context, before, after, path, opsStart, collapsed, economicallyCollapsed);
 	} finally {
-		exitAncestorPair(ancestors, before, after);
+		exitAncestorPair(context.ancestors, before, after);
 	}
 };
 
-const diffValue = (
-	before: unknown,
-	after: unknown,
-	path: OperationPath,
-	ops: Array<Operation>,
-	ancestors: Ancestors,
-	black: WeakSet<object>,
-): number => {
-	if (Object.is(before, after)) return 0;
+const diffValue = (context: DiffContext, before: unknown, after: unknown, path: OperationPath): DiffResult => {
+	if (Object.is(before, after)) return emptyResult();
 
 	if (path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after)) {
-		return pushChange(ops, path, before, after, black);
+		return pushChange(context, path, before, after);
 	}
 
 	if (isPlainArray(before) && isPlainArray(after)) {
-		return walkContainer(before, after, path, ops, ancestors, black, () =>
-			diffArray(before, after, path, ops, ancestors, black),
-		);
+		return walkContainer(context, before, after, path, () => diffArray(context, before, after, path));
 	}
 
 	if (isPlainObject(before) && isPlainObject(after)) {
-		return walkContainer(before, after, path, ops, ancestors, black, () =>
-			diffObjectProperties(before, after, path, ops, ancestors, false, black),
+		return walkContainer(context, before, after, path, () =>
+			diffObjectProperties(context, before, after, path, false),
 		);
 	}
 
-	return pushChange(ops, path, before, after, black);
+	return pushChange(context, path, before, after);
 };
 
 const getRootKind = (value: object): RootKind | undefined => {
@@ -320,6 +479,12 @@ const getRootKind = (value: object): RootKind | undefined => {
  * Produces invertible assign/delete pairs for the structural differences between two plain objects or arrays.
  * Neither argument need be a valtio snapshot.
  *
+ * Cycles and aliases are ordinary topology: pair re-entry is equality-in-progress, not an error.
+ * An interior change reachable by k routes mints k ops, one per simple route. When a carried value
+ * would hold an edge escaping the carried subtree, the mint surfaces to **closure** — the minimal
+ * ancestor that contains every such target — so both halves close. Groups still open after the
+ * root descent mint the root op (`assign` at `[]`, rendered as `"/"`). No cycle throws.
+ *
  * @param before - Earlier value.
  * @param after - Later value.
  * @returns Operations that take before to after.
@@ -331,8 +496,26 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 	if (beforeKind === undefined || beforeKind !== afterKind) throw new IncompatibleObjectRootsError();
 
 	const ops = new Array<Operation>();
+	const context: DiffContext = {
+		ops,
+		ancestors: new Map(),
+		beforeRoot: before,
+		afterRoot: after,
+		diffRootLive: liveOf(after),
+		climbMemo: new Map(),
+	};
 
-	diffValue(before, after, createOperationPath([]), ops, new Map(), new WeakSet());
+	const result = diffValue(context, before, after, createOperationPath([]));
+
+	if (result.groups.length > 0) {
+		commitOperation(
+			context,
+			0,
+			createOperationPath([]),
+			changePair(createOperationPath([]), before, after),
+			weighCarried,
+		);
+	}
 
 	return ops;
 }

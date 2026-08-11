@@ -138,6 +138,18 @@ Ops are the net diff over a window either way.
 
 Call `flush` exactly once. A pending flush pins its state until it runs — about 380 KB for a 200-row state — so a scheduler that discards the callback retains what it was given.
 
+## Closed graph
+
+A state is everything reachable from its root through tracked edges. Every tracked edge's target has a determined treatment — **tracked**, by shape or `unsafeTrack()`, or **endpoint**, by `ignore()`, freeze, or ride-along declaration — and an edge whose target has no determined treatment throws at its formation. The graph ends at its endpoints; beyond them the model is silent. Graphs of differing strictness refuse to join. Each state's op stream is self-contained and closure-surfaced within its own graph; identity across states is live-only, never carried.
+
+Declarations are **route-scoped**: a leaf's child separately admitted through a tracked edge tracks on that edge while the beyond-endpoint route stays unpromised. States may **overlap** — assigning another graph's node into this one extends this graph to include it — and a write through either is visible through both. What each op stream promises is scoped to its own graph.
+
+### Strictness
+
+Default creation is strict: reject-lane values throw. Pass `strict: false` to unsafely track values that would otherwise be rejected (state-scoped `unsafeTrack` for incoming values).
+
+A strict graph and a non-strict graph **cannot share a node**. Joining them throws at the assignment, naming the mismatch and three remedies: match the states' `strict` options, clone the value into the receiving state, or share it as `ignore()`. Strict+strict and loose+loose share freely. A value that has left its loose graph (detached, still carrying an `unsafeTrack` mark) may still enter a strict graph — that is mark travel, not a live join.
+
 ## Constraints
 
 opshot tracks plain data.
@@ -151,8 +163,6 @@ It can't track:
 And `this` for arrow methods on classes refers to the original and **not** the tracked state.
 
 Use `ignore` or `unsafeTrack` when dealing with these.
-
-You can set `strict: false` when creating state to admit to unsafely tracking everything.
 
 ## Tracked collections
 
@@ -193,9 +203,11 @@ transact(
 
 **A throwing `transact` rolls back** its tracked writes and emits nothing, except a record that already carried unflushed bare writes when the transaction first touched it: that record keeps all of its writes, this transaction's included, and reports them bare. Rollback covers only tracked state: a request fired in the callback, an `ignore()`d value, or a write below `unsafeTrack()` is not undone.
 
+**A state emits for every change in its reachable graph**, regardless of who wrote it. A node shared into two states emits per-route in both streams, and a write made through one is an ordinary emission of the other. Atomicity crosses with the claim: covering records in sibling states roll back together, so a clean subscribed sibling observes nothing across a rolled-back transaction.
+
 ## Subscribe
 
-`subscribe` hears every change to a state.
+`subscribe` hears every change to a state — every change in that state's reachable graph, including writes made through another state that shares a node.
 
 ```tsx
 import { useEffect } from "react";
@@ -290,9 +302,17 @@ const Counter = () => {
 
 Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception. The same bound applies to rollback: a throwing `transact` undoes only tracked state.
 
-Ops are **idempotent**.
+Ops are **idempotent**. Re-applying a delivered pair at a matching state is a no-op.
 
-If your state is JSON serializable, **then ops are too**. Project `verb` and `path` from a half; read `.value` explicitly on assign halves (it clones). Never spread, `JSON` round-trip, or `structuredClone` an op before applying it.
+If your state is JSON serializable, **then ops are too**. Project `verb` and `path` from a half; read `.value` explicitly on assign halves (it clones). Never spread, `JSON` round-trip, or `structuredClone` an op before applying it — those copies drop the brand and the carried value.
+
+### Cycles, aliases, and the root
+
+Cycles and aliasing are ordinary tracked topology. An interior change reachable by _k_ routes mints _k_ ops, one per simple route; any replica converges on content by applying all of them. When an op would carry a value that still points outside the carried subtree — alias formation, linking existing state into a cycle — the mint **surfaces to closure**: the minimal ancestor that contains every escaping edge's target, so both the do and undo halves close. Interior cycles ride as cyclic clones; no cycle throws at formation, mutation, repair, undo, rollback, or replay.
+
+The empty path is the state's content. A root op renders as `"/"` and replaces content on the existing root (identity stays put). Only closure mints the root path; a root delete is refused.
+
+A JSON round trip of a carried value keeps content; in-memory sharing inside that value is a replay-side promise and does not survive `JSON.stringify`.
 
 ## Groups
 

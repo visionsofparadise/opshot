@@ -1,10 +1,11 @@
 import { createMutableState } from "./createMutableState";
 import { ignore } from "./ignore";
-import { CyclicValueError } from "./ops/cloneValue";
-import { diffObjects } from "./ops/diff";
+import { applyOperations } from "./ops/applyOperations";
+import * as diffModule from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
+import { TrackedMap } from "./tracked/trackedMap";
 import { transact } from "./transact";
 
 describe("transact", () => {
@@ -261,35 +262,33 @@ describe("transact", () => {
 		expect(bag.x).toBe(99);
 	});
 
-	it("rolls back every claim without delivering when a multi-claim report hits a cycle", async () => {
+	it("delivers every claim when a multi-claim transaction forms a cycle", async () => {
 		const clean = createMutableState({ n: 0 });
 		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
-		const heard = new Array<unknown>();
+		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(clean, (ops, meta) => heard.push({ side: "clean", ops: [...ops], meta }));
 		subscribe(cyclic, (ops, meta) => heard.push({ side: "cyclic", ops: [...ops], meta }));
 
-		expect(() =>
-			transact(
-				clean,
-				() => {
-					clean.n = 1;
-					cyclic.box.self = cyclic.box;
-				},
-				{ tag: "lost" },
-			),
-		).toThrow(CyclicValueError);
+		transact(
+			clean,
+			() => {
+				clean.n = 1;
+				cyclic.box.self = cyclic.box;
+			},
+			{ tag: "kept" },
+		);
 
-		expect(clean.n).toBe(0);
-		expect(cyclic.box.self).toBeUndefined();
-		expect(heard).toEqual([]);
+		expect(clean.n).toBe(1);
+		expect(cyclic.box.self).toBe(cyclic.box);
+		expect(heard.map((entry) => entry.side).sort()).toEqual(["clean", "cyclic"]);
 
 		await Promise.resolve();
 
-		expect(heard).toEqual([]);
+		expect(heard).toHaveLength(2);
 	});
 
-	it("still bare-reports a dirty co-claim when a multi-claim report hits a cycle", async () => {
+	it("still bare-reports a dirty co-claim when a multi-claim transaction also forms a cycle", async () => {
 		const dirty = createMutableState({ n: 0 });
 		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
 		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
@@ -299,35 +298,22 @@ describe("transact", () => {
 
 		dirty.n = 1;
 
-		expect(() =>
-			transact(
-				cyclic,
-				() => {
-					dirty.n = 2;
-					cyclic.box.self = cyclic.box;
-				},
-				{ tag: "lost" },
-			),
-		).toThrow(CyclicValueError);
+		transact(
+			cyclic,
+			() => {
+				dirty.n = 2;
+				cyclic.box.self = cyclic.box;
+			},
+			{ tag: "kept" },
+		);
 
 		expect(dirty.n).toBe(2);
-		expect(cyclic.box.self).toBeUndefined();
-		expect(heard).toEqual([]);
+		expect(cyclic.box.self).toBe(cyclic.box);
 
 		await Promise.resolve();
 
-		expect(heard.map((entry) => ({ side: entry.side, ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
-			{
-				side: "dirty",
-				ops: [
-					{
-						do: { verb: "assign", path: ["n"], value: 2 },
-						undo: { verb: "assign", path: ["n"], value: 0 },
-					},
-				],
-				meta: undefined,
-			},
-		]);
+		expect(heard.some((entry) => entry.side === "cyclic")).toBe(true);
+		expect(heard.some((entry) => entry.side === "dirty")).toBe(true);
 	});
 
 	it("never flushes a claimed record bare when a listener transacts it", () => {
@@ -474,38 +460,27 @@ describe("transact", () => {
 		expect([...heard].sort()).toEqual(["a", "deep", "root"]);
 	});
 
-	it("leaves delivered writes standing when a listener throws CyclicValueError", () => {
+	it("leaves delivered writes standing when a listener throws", () => {
 		const state = createMutableState({ n: 0 });
-		const cyclic: { self?: object } = {};
-
-		cyclic.self = cyclic;
 
 		subscribe(state, () => {
-			// Cycle on the after side so assertAcyclic on the do-half throws CyclicValueError.
-			diffObjects({ box: {} }, { box: cyclic });
+			throw new Error("listener failed");
 		});
 
 		expect(() =>
 			transact(state, () => {
 				state.n = 42;
 			}),
-		).toThrow(CyclicValueError);
+		).toThrow("listener failed");
 
 		expect(state.n).toBe(42);
 	});
 
-	it("leaves delivered writes standing when a listener throws AggregateError containing CyclicValueError", () => {
+	it("leaves delivered writes standing when a listener throws AggregateError", () => {
 		const state = createMutableState({ n: 0 });
-		const cyclic: { self?: object } = {};
-
-		cyclic.self = cyclic;
 
 		subscribe(state, () => {
-			try {
-				diffObjects({ box: {} }, { box: cyclic });
-			} catch (error) {
-				throw new AggregateError([error], "listener aggregate");
-			}
+			throw new AggregateError([new Error("inner")], "listener aggregate");
 		});
 
 		expect(() =>
@@ -517,27 +492,25 @@ describe("transact", () => {
 		expect(state.n).toBe(42);
 	});
 
-	it("rolls back a cycle formed in the transaction, emits nothing, and raises synchronously", () => {
+	it("delivers a cycle formed in the transaction without rolling back", () => {
 		const state = createMutableState<{ box: { self?: object } }>({ box: {} });
 		const heard = new Array<unknown>();
 
 		subscribe(state, (_ops, meta) => heard.push(meta));
 
-		expect(() =>
-			transact(
-				state,
-				() => {
-					state.box.self = state.box;
-				},
-				{ tag: "lost" },
-			),
-		).toThrow(CyclicValueError);
+		transact(
+			state,
+			() => {
+				state.box.self = state.box;
+			},
+			{ tag: "kept" },
+		);
 
-		expect(state.box.self).toBeUndefined();
-		expect(heard).toEqual([]);
+		expect(state.box.self).toBe(state.box);
+		expect(heard).toEqual([{ tag: "kept" }]);
 	});
 
-	it("still bare-delivers a dirty co-claim after a cyclic abort", async () => {
+	it("still bare-delivers a dirty co-claim after a cyclic formation in the same transaction", async () => {
 		const dirty = createMutableState({ n: 0 });
 		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
 		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
@@ -547,40 +520,26 @@ describe("transact", () => {
 
 		dirty.n = 1;
 
-		expect(() =>
-			transact(
-				cyclic,
-				() => {
-					dirty.n = 2;
-					cyclic.box.self = cyclic.box;
-				},
-				{ tag: "lost" },
-			),
-		).toThrow(CyclicValueError);
+		transact(
+			cyclic,
+			() => {
+				dirty.n = 2;
+				cyclic.box.self = cyclic.box;
+			},
+			{ tag: "kept" },
+		);
 
 		expect(dirty.n).toBe(2);
-		expect(cyclic.box.self).toBeUndefined();
-		expect(heard).toEqual([]);
+		expect(cyclic.box.self).toBe(cyclic.box);
 
 		await Promise.resolve();
 
-		expect(heard.map((entry) => ({ side: entry.side, ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
-			{
-				side: "dirty",
-				ops: [
-					{
-						do: { verb: "assign", path: ["n"], value: 2 },
-						undo: { verb: "assign", path: ["n"], value: 0 },
-					},
-				],
-				meta: undefined,
-			},
-		]);
+		expect(heard.some((entry) => entry.side === "dirty")).toBe(true);
+		expect(heard.some((entry) => entry.side === "cyclic")).toBe(true);
 	});
 
-	it("never arms a dirty cyclic record and leaves its baseline acyclic", async () => {
+	it("delivers through a dirty record that already holds a cycle", async () => {
 		const scheduled = new Array<() => void>();
-		// Transact a separate root so entry reportBareDiff does not settle this record's bare window.
 		const other = createMutableState({ x: 0 });
 		const state = createMutableState<{ n: number; box: { self?: object } }>(
 			{ n: 0, box: {} },
@@ -602,87 +561,57 @@ describe("transact", () => {
 
 		expect(scheduledAfterBare).toBe(1);
 
-		expect(() =>
-			transact(other, () => {
-				state.n = 2;
-				state.box.self = state.box;
-			}),
-		).toThrow(CyclicValueError);
+		transact(other, () => {
+			state.n = 2;
+			state.box.self = state.box;
+		});
 
 		expect(state.n).toBe(2);
 		expect(state.box.self).toBe(state.box);
 
-		// restoreDirtyLedgers clears pending so a missing exclude would re-arm via scheduleFlush.
-		// Drain microtasks: release must not have called emitOn again.
 		await Promise.resolve();
 		await Promise.resolve();
-
-		expect(scheduled.length).toBe(scheduledAfterBare);
-
-		// Repair the cycle the dirty claim kept, then run the pre-existing window flush.
-		// A poisoned (cyclic) lastReported would refuse this diff; an acyclic baseline succeeds.
-		delete state.box.self;
 
 		expect(() => {
 			for (const flush of scheduled.splice(0)) flush();
 		}).not.toThrow();
 
 		expect(state.n).toBe(2);
-		expect(heard).toHaveLength(1);
-		expect(shapeOps(heard[0]!.ops)).toEqual([
-			{
-				do: { verb: "assign", path: ["n"], value: 2 },
-				undo: { verb: "assign", path: ["n"], value: 0 },
-			},
-		]);
-		expect(heard[0]!.meta).toBeUndefined();
+		expect(heard.length).toBeGreaterThan(0);
 	});
 
 	it.each([
 		{
-			order: "unrollable first",
-			write: (
-				unrollable: { box: { n: number; self?: object } },
-				rollableA: { n: number },
-				rollableB: { n: number },
-			): void => {
-				unrollable.box.n = 99;
-				rollableA.n = 1;
-				rollableB.n = 1;
+			order: "first claim first",
+			write: (first: { n: number }, second: { n: number }, third: { n: number }): void => {
+				first.n = 99;
+				second.n = 1;
+				third.n = 1;
 			},
 		},
 		{
 			order: "rollable first",
-			write: (
-				unrollable: { box: { n: number; self?: object } },
-				rollableA: { n: number },
-				rollableB: { n: number },
-			): void => {
-				rollableA.n = 1;
-				rollableB.n = 1;
-				unrollable.box.n = 99;
+			write: (first: { n: number }, second: { n: number }, third: { n: number }): void => {
+				second.n = 1;
+				third.n = 1;
+				first.n = 99;
 			},
 		},
-	])("unwinds every rollable claim when one claim cannot roll back ($order)", ({ write }) => {
+	])("unwinds every rollable claim when the callback aborts ($order)", ({ write }) => {
 		const absorb = (_flush: () => void): void => undefined;
 		const rollableA = createMutableState({ n: 0 }, { emitOn: absorb });
 		const rollableB = createMutableState({ n: 0 }, { emitOn: absorb });
-		const unrollable = createMutableState<{ box: { n: number; self?: object } }>(
-			{ box: { n: 1 } },
-			{ emitOn: absorb },
-		);
-
-		unrollable.box.self = unrollable.box;
+		const alsoRollable = createMutableState({ n: 0 }, { emitOn: absorb });
 
 		subscribe(rollableA, () => undefined);
 		subscribe(rollableB, () => undefined);
-		subscribe(unrollable, () => undefined);
+		subscribe(alsoRollable, () => undefined);
 
 		const callbackError = new Error("abort");
 
 		expect(() =>
 			transact(rollableA, () => {
-				write(unrollable, rollableA, rollableB);
+				write(alsoRollable, rollableA, rollableB);
 
 				throw callbackError;
 			}),
@@ -690,55 +619,96 @@ describe("transact", () => {
 
 		expect(rollableA.n).toBe(0);
 		expect(rollableB.n).toBe(0);
-		expect(unrollable.box.n).toBe(99);
+		expect(alsoRollable.n).toBe(0);
 	});
 
-	it("attaches a rollback failure as a non-enumerable cause on an Error with no cause", () => {
+	it("attaches a prepare failure as a non-enumerable cause when rollback also fails", () => {
 		const absorb = (_flush: () => void): void => undefined;
-		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn: absorb });
-
-		state.box.self = state.box;
+		const state = createMutableState({ n: 0 }, { emitOn: absorb });
 
 		subscribe(state, () => undefined);
 
-		const callbackError = new Error("callback failed");
+		const prepareError = new Error("prepare failed");
+		const rollbackError = new Error("rollback failed");
+		let diffCalls = 0;
+		const spy = vi.spyOn(diffModule, "diffObjects").mockImplementation(() => {
+			diffCalls += 1;
+
+			throw diffCalls === 1 ? prepareError : rollbackError;
+		});
+
 		let caught: unknown;
 
 		try {
 			transact(state, () => {
-				state.box.n = 99;
+				state.n = 1;
+			});
+		} catch (error) {
+			caught = error;
+		} finally {
+			spy.mockRestore();
+		}
+
+		expect(caught).toBe(prepareError);
+		expect(prepareError.cause).toBe(rollbackError);
+		expect(Object.getOwnPropertyDescriptor(prepareError, "cause")?.enumerable).toBe(false);
+	});
+
+	it("attaches a rollback failure as a non-enumerable cause on a callback Error with no cause", () => {
+		const absorb = (_flush: () => void): void => undefined;
+		const state = createMutableState({ n: 0 }, { emitOn: absorb });
+
+		subscribe(state, () => undefined);
+
+		const callbackError = new Error("callback failed");
+		const rollbackError = new Error("rollback failed");
+		const spy = vi.spyOn(diffModule, "diffObjects").mockImplementation(() => {
+			throw rollbackError;
+		});
+
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.n = 99;
 
 				throw callbackError;
 			});
 		} catch (error) {
 			caught = error;
+		} finally {
+			spy.mockRestore();
 		}
 
 		expect(caught).toBe(callbackError);
-		expect(callbackError.cause).toBeInstanceOf(CyclicValueError);
+		expect(callbackError.cause).toBe(rollbackError);
 		expect(Object.getOwnPropertyDescriptor(callbackError, "cause")?.enumerable).toBe(false);
 	});
 
 	it("keeps an existing cause when rollback fails", () => {
 		const absorb = (_flush: () => void): void => undefined;
-		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn: absorb });
-
-		state.box.self = state.box;
+		const state = createMutableState({ n: 0 }, { emitOn: absorb });
 
 		subscribe(state, () => undefined);
 
 		const originalCause = new Error("root cause");
 		const callbackError = new Error("wrapper", { cause: originalCause });
+		const spy = vi.spyOn(diffModule, "diffObjects").mockImplementation(() => {
+			throw new Error("rollback failed");
+		});
+
 		let caught: unknown;
 
 		try {
 			transact(state, () => {
-				state.box.n = 99;
+				state.n = 99;
 
 				throw callbackError;
 			});
 		} catch (error) {
 			caught = error;
+		} finally {
+			spy.mockRestore();
 		}
 
 		expect(caught).toBe(callbackError);
@@ -747,25 +717,224 @@ describe("transact", () => {
 
 	it("rethrows a non-Error throw exactly and does not surface a rollback failure", () => {
 		const absorb = (_flush: () => void): void => undefined;
-		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } }, { emitOn: absorb });
-
-		state.box.self = state.box;
+		const state = createMutableState({ n: 0 }, { emitOn: absorb });
 
 		subscribe(state, () => undefined);
 
 		const thrown = "primitive abort";
+		const spy = vi.spyOn(diffModule, "diffObjects").mockImplementation(() => {
+			throw new Error("rollback failed");
+		});
+
 		let caught: unknown;
 
 		try {
 			transact(state, () => {
-				state.box.n = 99;
+				state.n = 99;
 
 				throw thrown;
 			});
 		} catch (error) {
 			caught = error;
+		} finally {
+			spy.mockRestore();
 		}
 
 		expect(caught).toBe(thrown);
+	});
+
+	it("shares one proxy across two states and makes a write through either visible through both", () => {
+		const shared: { n: number } = { n: 1 };
+		const stateA = createMutableState({ map: new TrackedMap<string, { n: number }>() });
+		const stateB = createMutableState({ map: new TrackedMap<string, { n: number }>() });
+
+		transact(stateA, () => {
+			stateA.map.set("k", shared);
+		});
+		transact(stateB, () => {
+			stateB.map.set("k", shared);
+		});
+
+		expect(stateA.map.get("k")).toBe(stateB.map.get("k"));
+
+		transact(stateA, () => {
+			const held = stateA.map.get("k");
+
+			if (held) held.n = 5;
+		});
+
+		expect(stateB.map.get("k")?.n).toBe(5);
+
+		transact(stateB, () => {
+			const held = stateB.map.get("k");
+
+			if (held) held.n = 9;
+		});
+
+		expect(stateA.map.get("k")?.n).toBe(9);
+	});
+
+	it("delivers a shared write per-route in both states' streams", () => {
+		const shared: { n: number } = { n: 1 };
+		const stateA = createMutableState({ map: new TrackedMap<string, { n: number }>() });
+		const stateB = createMutableState({ map: new TrackedMap<string, { n: number }>() });
+		const heardA = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const heardB = new Array<{ ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(stateA, (ops, meta) => heardA.push({ ops: [...ops], meta }));
+		subscribe(stateB, (ops, meta) => heardB.push({ ops: [...ops], meta }));
+
+		transact(stateA, () => {
+			stateA.map.set("k", shared);
+		});
+		transact(stateB, () => {
+			stateB.map.set("k", shared);
+		});
+
+		heardA.length = 0;
+		heardB.length = 0;
+
+		transact(
+			stateA,
+			() => {
+				const held = stateA.map.get("k");
+
+				if (held) held.n = 5;
+			},
+			{ tag: "shared" },
+		);
+
+		const expected = [
+			{
+				ops: [
+					{
+						do: { verb: "assign", path: ["map", "slots", 0, 1, "n"], value: 5 },
+						undo: { verb: "assign", path: ["map", "slots", 0, 1, "n"], value: 1 },
+					},
+				],
+				meta: { tag: "shared" },
+			},
+		];
+
+		expect(heardA.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(expected);
+		expect(heardB.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(expected);
+		expect(stateB.map.get("k")?.n).toBe(5);
+	});
+
+	it("mints a closure op in one state that ignores the other graph's in-edges and applies onto that state's replica alone", () => {
+		const shared = { n: 1 };
+		const stateA = createMutableState<{ a: { b: { n: number } }; b?: { n: number } }>({
+			a: { b: shared },
+			b: shared,
+		});
+		const stateB = createMutableState({ held: shared });
+		const heardA = new Array<Array<Operation>>();
+
+		subscribe(stateA, (ops) => heardA.push([...ops]));
+		subscribe(stateB, () => undefined);
+
+		transact(stateA, () => {
+			delete stateA.b;
+		});
+
+		expect(shapeOps(heardA[0] ?? [])).toEqual([
+			{
+				do: { verb: "assign", path: [], value: { a: { b: { n: 1 } } } },
+				undo: { verb: "assign", path: [], value: { a: { b: { n: 1 } }, b: { n: 1 } } },
+			},
+		]);
+		expect(stateA.b).toBeUndefined();
+		expect(stateA.a.b.n).toBe(1);
+		expect(stateB.held.n).toBe(1);
+
+		const replicaShared = { n: 1 };
+		const replica = createMutableState<{ a: { b: { n: number } }; b?: { n: number } }>({
+			a: { b: replicaShared },
+			b: replicaShared,
+		});
+
+		expect(() => applyOperations(replica, heardA[0] ?? [], "do")).not.toThrow();
+		expect(replica.b).toBeUndefined();
+		expect(replica.a.b.n).toBe(1);
+	});
+
+	it("lets a clean subscribed sibling sharing a region observe nothing across a rolled-back transaction", async () => {
+		const shared = { n: 1 };
+		const stateA = createMutableState({ box: shared });
+		const stateB = createMutableState({ box: shared });
+		const heardA = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const heardB = new Array<{ ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(stateA, (ops, meta) => heardA.push({ ops: [...ops], meta }));
+		subscribe(stateB, (ops, meta) => heardB.push({ ops: [...ops], meta }));
+
+		expect(() =>
+			transact(
+				stateA,
+				() => {
+					stateA.box.n = 9;
+
+					throw new Error("abort");
+				},
+				{ tag: "lost" },
+			),
+		).toThrow("abort");
+
+		expect(stateA.box.n).toBe(1);
+		expect(stateB.box.n).toBe(1);
+		expect(heardA).toEqual([]);
+		expect(heardB).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heardA).toEqual([]);
+		expect(heardB).toEqual([]);
+	});
+
+	it("bare-reports a dirty sibling co-claim across a rolled-back shared write and leaves the dirty residue standing", async () => {
+		const shared = { n: 1 };
+		const stateA = createMutableState({ box: shared });
+		const stateB = createMutableState({ box: shared, bare: 0 });
+		const heardA = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const heardB = new Array<{ ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(stateA, (ops, meta) => heardA.push({ ops: [...ops], meta }));
+		subscribe(stateB, (ops, meta) => heardB.push({ ops: [...ops], meta }));
+
+		stateB.bare = 1;
+
+		expect(() =>
+			transact(
+				stateA,
+				() => {
+					stateA.box.n = 9;
+					stateB.bare = 2;
+
+					throw new Error("abort");
+				},
+				{ tag: "lost" },
+			),
+		).toThrow("abort");
+
+		expect(stateA.box.n).toBe(1);
+		expect(stateB.box.n).toBe(1);
+		expect(stateB.bare).toBe(2);
+		expect(heardA).toEqual([]);
+		expect(heardB).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heardA).toEqual([]);
+		expect(heardB.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [
+					{
+						do: { verb: "assign", path: ["bare"], value: 2 },
+						undo: { verb: "assign", path: ["bare"], value: 0 },
+					},
+				],
+				meta: undefined,
+			},
+		]);
 	});
 });

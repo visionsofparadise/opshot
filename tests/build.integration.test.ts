@@ -58,6 +58,54 @@ describe("package build", () => {
 				/\/\*\*[\s\S]*?\*\/\s*readonly\s+emitOn\s*\?/.test(declaration),
 				"emitOn must be preceded by a /** */ block",
 			).toBe(true);
+
+			const createMutableStateBlock = declaration.match(
+				/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+createMutableState\b/,
+			)?.[0];
+			expect(createMutableStateBlock, "createMutableState jsdoc block present").toBeDefined();
+			expect(
+				createMutableStateBlock,
+				"closed-graph definition: reachable from its root through tracked edges",
+			).toMatch(/reachable from its root through tracked edges/);
+			expect(createMutableStateBlock, "endpoint vocabulary").toMatch(/endpoint/);
+			expect(createMutableStateBlock, "strictness join refusal").toMatch(/differing strictness refuse to join/);
+			expect(createMutableStateBlock, "cycle retirement").toMatch(/no cycle throws/);
+
+			const applyOperationsBlock = declaration.match(
+				/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+applyOperations\b/,
+			)?.[0];
+			expect(applyOperationsBlock, "applyOperations jsdoc block present").toBeDefined();
+			expect(applyOperationsBlock, "idempotence guarantee").toMatch(/idempotent/i);
+			expect(applyOperationsBlock, "root path /").toMatch(/"\/"/);
+			expect(applyOperationsBlock, "JSON residue for carried sharing").toMatch(
+				/in-memory sharing[\s\S]*replay-side/i,
+			);
+
+			const diffObjectsBlock = declaration.match(/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+diffObjects\b/)?.[0];
+			expect(diffObjectsBlock, "diffObjects jsdoc block present").toBeDefined();
+			expect(diffObjectsBlock, "carriage closure").toMatch(/closure/);
+			expect(diffObjectsBlock, "per-route minting").toMatch(/k routes mints k ops/);
+
+			const stateSubscribeBlock = declaration.match(
+				/\/\*\*[\s\S]*?delivered before unsubscribe returns[\s\S]*?\*\/\s*declare\s+function\s+subscribe\s*\(\s*state:/,
+			)?.[0];
+			expect(stateSubscribeBlock, "subscribe state-overload delivery contract").toBeDefined();
+			expect(stateSubscribeBlock, "reachable-graph emission doctrine").toMatch(
+				/every change in its reachable graph/,
+			);
+
+			const groupSubscribeBlock = declaration.match(
+				/\/\*\*[\s\S]*?best-effort at the group edge[\s\S]*?\*\/\s*declare\s+function\s+subscribe\s*\(\s*group:/,
+			)?.[0];
+			expect(groupSubscribeBlock, "subscribe group-overload best-effort line").toBeDefined();
+
+			const ignoreBlock = declaration.match(/\/\*\*[\s\S]*?\*\/\s*declare\s+const\s+ignore\b/)?.[0];
+			expect(ignoreBlock, "ignore jsdoc block present").toBeDefined();
+			expect(ignoreBlock, "ignore as endpoint").toMatch(/endpoint/);
+
+			const strictBlock = declaration.match(/\/\*\*[\s\S]*?\*\/\s*readonly\s+strict\s*\?/)?.[0];
+			expect(strictBlock, "strict option jsdoc present").toBeDefined();
+			expect(strictBlock, "strictness-join remedies").toMatch(/refuse to join/);
 		} finally {
 			await rm(outDir, { recursive: true, force: true });
 		}

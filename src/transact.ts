@@ -1,6 +1,5 @@
 import {
 	closeTransaction,
-	cyclicFailureRecords,
 	deliverPreparedReport,
 	failedRecords,
 	isTransactionOpen,
@@ -16,13 +15,19 @@ import { getEmitter } from "./emit/emitterRegistry";
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
  *
- * Every subscriber covering a written key hears it, at any depth above or below `state`.
+ * A state emits for every change in its reachable graph, regardless of who wrote it. Every
+ * subscriber covering a written key hears it, at any depth above or below `state`. A node shared
+ * into two states emits per-route in both streams. Atomicity crosses states with the claim:
+ * covering records in sibling states roll back together, so a clean subscribed sibling observes
+ * nothing across a rolled-back transaction.
+ *
  * Listeners run before this returns, and a throwing one never skips another. Called from inside a
  * listener, or from one running while a transaction reports, it returns before its own listeners run.
  * Nesting a `transact` inside another throws. A throwing callback rolls back tracked writes and emits
  * nothing, except a record that already carried unflushed bare writes when the transaction first
  * touched it — that record keeps all of its writes, this transaction's included, and reports them
- * bare. Effects outside tracked state are not undone.
+ * bare. Effects outside tracked state are not undone. Cycles formed or repaired in the callback
+ * deliver and roll back like any other tracked write.
  *
  * @param state - State to change.
  * @param mutate - Function that writes the state.
@@ -84,9 +89,8 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 	}
 
 	const report = prepareTransactionReport(transaction, meta, channelId);
-	const cyclicRecords = cyclicFailureRecords(report);
 
-	if (cyclicRecords.size > 0) {
+	if (report.failures.length > 0) {
 		const [soleFailure, ...otherFailures] = report.failures;
 		const raised: unknown =
 			soleFailure !== undefined && otherFailures.length === 0

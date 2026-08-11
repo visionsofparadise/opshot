@@ -9,7 +9,6 @@ import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { transact } from "../transact";
 import { applyOperations } from "./applyOperations";
-import { CyclicValueError, getCyclicPath } from "./cloneValue";
 import { diffObjects } from "./diff";
 import { type Operation, type Mutation } from "./operation";
 import { shapeHalf, shapeOps } from "./operationShape";
@@ -654,8 +653,8 @@ describe("diffObjects: container collapse", () => {
 
 interface Formation {
 	readonly name: string;
-	readonly path: ReadonlyArray<string>;
-	readonly start: () => { readonly state: object; readonly form: () => void };
+	readonly expectedDo: { readonly verb: string; readonly path: ReadonlyArray<string | number> };
+	readonly start: () => { readonly state: object; readonly form: () => void; readonly assertFormed: () => void };
 }
 
 const rideAlongBackEdges: ReadonlyArray<readonly [string, () => object]> = [
@@ -689,11 +688,14 @@ const buildAliasedDiamond = (levels: number): object => {
 	return node;
 };
 
+const pathOf = (ops: ReadonlyArray<Operation> | undefined): Array<ReadonlyArray<string | number>> =>
+	(ops ?? []).map((pair) => [...pair.do.path]);
+
 describe("diffObjects: cyclic values", () => {
 	const formations: ReadonlyArray<Formation> = [
 		{
 			name: "a child self-cycle",
-			path: ["box", "self"],
+			expectedDo: { verb: "assign", path: ["box"] },
 			start: () => {
 				const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
@@ -702,12 +704,15 @@ describe("diffObjects: cyclic values", () => {
 					form: () => {
 						state.box.self = state.box;
 					},
+					assertFormed: () => {
+						expect(state.box.self).toBe(state.box);
+					},
 				};
 			},
 		},
 		{
 			name: "a root self-cycle",
-			path: ["self"],
+			expectedDo: { verb: "assign", path: ["self"] },
 			start: () => {
 				const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
 
@@ -716,12 +721,15 @@ describe("diffObjects: cyclic values", () => {
 					form: () => {
 						state.self = state;
 					},
+					assertFormed: () => {
+						expect(state.self).toBe(state);
+					},
 				};
 			},
 		},
 		{
 			name: "a back-link to the root",
-			path: ["child", "back"],
+			expectedDo: { verb: "assign", path: ["child", "back"] },
 			start: () => {
 				const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
 
@@ -730,14 +738,17 @@ describe("diffObjects: cyclic values", () => {
 					form: () => {
 						state.child.back = state;
 					},
+					assertFormed: () => {
+						expect(state.child.back).toBe(state);
+					},
 				};
 			},
 		},
 		{
 			name: "a wholesale cyclic object",
-			path: ["node"],
+			expectedDo: { verb: "assign", path: ["node"] },
 			start: () => {
-				const state = createMutableState<{ n: number; node?: object }>({ n: 1 });
+				const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
 				return {
 					state,
@@ -747,12 +758,15 @@ describe("diffObjects: cyclic values", () => {
 						node.self = node;
 						state.node = node;
 					},
+					assertFormed: () => {
+						expect(state.node?.self).toBe(state.node);
+					},
 				};
 			},
 		},
 		{
 			name: "a two-node cycle",
-			path: ["a", "peer"],
+			expectedDo: { verb: "assign", path: [] },
 			start: () => {
 				const state = createMutableState<{ a: { n: number; peer?: object }; b: { n: number; peer?: object } }>({
 					a: { n: 1 },
@@ -765,30 +779,47 @@ describe("diffObjects: cyclic values", () => {
 						state.a.peer = state.b;
 						state.b.peer = state.a;
 					},
+					assertFormed: () => {
+						expect(state.a.peer).toBe(state.b);
+						expect(state.b.peer).toBe(state.a);
+					},
 				};
 			},
 		},
 	];
 
 	it.each(formations.map((formation) => [formation.name, formation] as const))(
-		"throws at the transact forming %s, naming the path and delivering no op",
+		"delivers a closed op forming %s and round-trips undo/do with carriable values",
 		(_name, formation) => {
-			const { state, form } = formation.start();
+			const { state, form, assertFormed } = formation.start();
 			const heard = record(state);
-			let caught: unknown;
 
-			try {
-				transact(state, form);
-			} catch (error) {
-				caught = error;
-			}
+			transact(state, form);
 
-			expect(getCyclicPath(caught)).toEqual(formation.path);
-			expect(heard).toHaveLength(0);
+			expect(heard).toHaveLength(1);
+			expect(heard[0]).toHaveLength(1);
+			expect(heard[0]?.[0]?.do).toMatchObject(formation.expectedDo);
+			assertFormed();
+
+			const delivered = heard[0] ?? [];
+			const undo = delivered[0]?.undo;
+			const doHalf = delivered[0]?.do;
+
+			expect(undo).toBeDefined();
+			expect(() => readValue(undo ?? { verb: "delete", path: [] })).not.toThrow();
+			expect(() => readValue(doHalf ?? { verb: "delete", path: [] })).not.toThrow();
+
+			const replicaSession = formation.start();
+
+			expect(() => applyOperations(replicaSession.state, delivered, "do")).not.toThrow();
+
+			replayUndo(state, delivered);
+			replayDo(state, delivered);
+			assertFormed();
 		},
 	);
 
-	it("routes a bare forming write to the flush with the transact message and delivers no op", async () => {
+	it("delivers a bare cyclic formation without throwing", async () => {
 		const thrown = new Array<unknown>();
 		const emitOn = (flush: () => void): void => {
 			try {
@@ -805,16 +836,15 @@ describe("diffObjects: cyclic values", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 
-		expect(thrown).toHaveLength(1);
-		expect(thrown[0]).toBeInstanceOf(Error);
-		expect((thrown[0] as Error).message).toMatch(/bare write created a cyclic value at \/box\/self/);
-		expect((thrown[0] as Error).message).toMatch(/Use transact for catchable cycle errors/);
-		expect(heard).toHaveLength(0);
+		expect(thrown).toHaveLength(0);
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(state.box.self).toBe(state.box);
 	});
 
-	it("throws at a collapse carrying a cycle formed while nothing was subscribed", () => {
+	it("diffs a latent cycle under an unrelated mass edit without throwing", () => {
 		interface Holder {
-			readonly holder: {
+			holder: {
 				cycle: { n: number; self?: object };
 				a: number;
 				b: number;
@@ -829,22 +859,19 @@ describe("diffObjects: cyclic values", () => {
 		state.holder.cycle.self = state.holder.cycle;
 
 		const heard = record(state);
-		let caught: unknown;
 
-		try {
-			transact(state, () => {
-				state.holder.a = 10;
-				state.holder.b = 20;
-				state.holder.c = 30;
-				state.holder.d = 40;
-				state.holder.e = 50;
-			});
-		} catch (error) {
-			caught = error;
-		}
+		transact(state, () => {
+			state.holder.a = 10;
+			state.holder.b = 20;
+			state.holder.c = 30;
+			state.holder.d = 40;
+			state.holder.e = 50;
+		});
 
-		expect(getCyclicPath(caught)).toEqual(["holder"]);
-		expect(heard).toHaveLength(0);
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["holder"] });
+		expect(state.holder.a).toBe(10);
+		expect(state.holder.cycle.self).toBe(state.holder.cycle);
 	});
 
 	const startRepair = (
@@ -862,7 +889,7 @@ describe("diffObjects: cyclic values", () => {
 		};
 	};
 
-	it("delivers a removal for the documented repair breaking the cycle by reference", () => {
+	it("repairs a cycle with a closed op whose undo restores the cycle by identity", () => {
 		const { state, repair } = startRepair();
 		const heard = record(state);
 
@@ -870,11 +897,21 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["box", "self"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(state.box.self).toBeUndefined();
+
+		const delivered = heard[0] ?? [];
+
+		expect(() => readValue(delivered[0]?.undo ?? { verb: "delete", path: [] })).not.toThrow();
+
+		replayUndo(state, delivered);
+		expect(state.box.self).toBe(state.box);
+
+		replayDo(state, delivered);
 		expect(state.box.self).toBeUndefined();
 	});
 
-	it("delivers the same repair on the bare lane, raising nothing at the flush", async () => {
+	it("repairs a cycle on the bare lane without throwing", async () => {
 		const thrown = new Array<unknown>();
 		const emitOn = (flush: () => void): void => {
 			try {
@@ -893,33 +930,10 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(thrown).toHaveLength(0);
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["box", "self"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
 	});
 
-	it("carries an undo on the repair that throws when its value is read and when it is applied", () => {
-		const { state, repair } = startRepair();
-		const heard = record(state);
-
-		transact(state, repair);
-
-		const delivered = heard[0] ?? [];
-		const undo = delivered[0]?.undo;
-
-		expect(undo?.verb).toBe("assign");
-		expect(() => readValue(undo ?? { verb: "delete", path: [] })).toThrow(/cyclic value at \/box\/self/);
-
-		const before = heard.length;
-
-		expect(() => {
-			replayUndo(state, delivered);
-		}).toThrow(/cyclic value at \/box\/self/);
-
-		expect(state.box.self).not.toBe(state.box);
-		expect(state.box.self).toBeUndefined();
-		expect(heard).toHaveLength(before);
-	});
-
-	it("surfaces the callback error with a CyclicValueError cause when the baseline is cyclic", async () => {
+	it("rolls back a throwing callback over a cyclic baseline with no cause and restores the cycle", async () => {
 		const thrown = new Array<unknown>();
 		const emitOn = (flush: () => void): void => {
 			try {
@@ -948,15 +962,17 @@ describe("diffObjects: cyclic values", () => {
 		}
 
 		expect(caught).toBe(callbackError);
-		expect((caught as Error).cause).toBeInstanceOf(CyclicValueError);
+		expect((caught as Error).cause).toBeUndefined();
+		expect(state.box.n).toBe(1);
+		expect(state.box.self).toBe(state.box);
 
 		await Promise.resolve();
 		await Promise.resolve();
 
-		expect(thrown.length).toBeGreaterThan(0);
+		expect(thrown).toHaveLength(0);
 	});
 
-	it("surfaces the callback error with a CyclicValueError cause when rolling back a cycle repair", async () => {
+	it("rolls back a throwing cycle-repairing transaction and restores the cycle", async () => {
 		const thrown = new Array<unknown>();
 		const emitOn = (flush: () => void): void => {
 			try {
@@ -985,7 +1001,8 @@ describe("diffObjects: cyclic values", () => {
 		}
 
 		expect(caught).toBe(callbackError);
-		expect((caught as Error).cause).toBeInstanceOf(CyclicValueError);
+		expect((caught as Error).cause).toBeUndefined();
+		expect(state.box.self).toBe(state.box);
 
 		await Promise.resolve();
 		await Promise.resolve();
@@ -1029,25 +1046,213 @@ describe("diffObjects: cyclic values", () => {
 		expect(heard).toHaveLength(0);
 	});
 
-	it.each(rideAlongBackEdges)(
-		"refuses %s, which the clone carries and the enumerable walk misses",
-		(_name, create) => {
-			const state = createMutableState<{ n: number; node?: object }>({ n: 1 });
-			const heard = record(state);
-			let caught: unknown;
+	it.each(rideAlongBackEdges)("carries %s at the assign path without throwing", (_name, create) => {
+		const state = createMutableState<{ n: number; node?: object }>({ n: 1 });
+		const heard = record(state);
 
-			try {
-				transact(state, () => {
-					state.node = create();
-				});
-			} catch (error) {
-				caught = error;
-			}
+		transact(state, () => {
+			state.node = create();
+		});
 
-			expect(getCyclicPath(caught)).toEqual(["node"]);
-			expect(heard).toHaveLength(0);
-		},
-	);
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["node"] });
+		expect(() => readValue(heard[0]?.[0]?.do ?? { verb: "delete", path: [] })).not.toThrow();
+	});
+
+	it("mints one op per route for a k=2 aliased interior change", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a: { b: { n: number } }; b: { n: number } }>({
+			a: { b: shared },
+			b: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.a.b.n = 5;
+		});
+
+		expect(pathOf(heard[0])).toEqual([
+			["a", "b", "n"],
+			["b", "n"],
+		]);
+		expect(state.a.b).toBe(state.b);
+		expect(state.a.b.n).toBe(5);
+	});
+
+	it("mints one op per route for a k=3 aliased interior change", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a: { b: { n: number } }; b: { n: number }; c: { n: number } }>({
+			a: { b: shared },
+			b: shared,
+			c: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.a.b.n = 7;
+		});
+
+		expect(pathOf(heard[0])).toEqual([
+			["a", "b", "n"],
+			["b", "n"],
+			["c", "n"],
+		]);
+		expect(state.a.b.n).toBe(7);
+		expect(state.b.n).toBe(7);
+		expect(state.c.n).toBe(7);
+	});
+
+	it("surfaces alias formation so a replica preserves sharing", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a: { b: { n: number } }; b: { n: number }; b2?: { n: number } }>({
+			a: { b: shared },
+			b: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.b2 = state.a.b;
+		});
+
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: [] });
+		expect(state.b2).toBe(state.a.b);
+
+		const replicaShared = { n: 1 };
+		const replica = createMutableState<{ a: { b: { n: number } }; b: { n: number }; b2?: { n: number } }>({
+			a: { b: replicaShared },
+			b: replicaShared,
+		});
+
+		applyOperations(replica, heard[0] ?? [], "do");
+		expect(replica.b2).toBe(replica.a.b);
+		expect(replica.b2).toBe(replica.b);
+	});
+
+	it("restores an interior cycle with internal identity on a replica", () => {
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.box.self = state.box;
+		});
+
+		const replica = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
+
+		applyOperations(replica, heard[0] ?? [], "do");
+		expect(replica.box.self).toBe(replica.box);
+	});
+
+	it("surfaces a delete of one route to a still-referenced node as a closed assign", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a: { b: { n: number } }; b?: { n: number } }>({
+			a: { b: shared },
+			b: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.b;
+		});
+
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: [] });
+		expect(state.b).toBeUndefined();
+		expect(state.a.b.n).toBe(1);
+
+		replayUndo(state, heard[0] ?? []);
+		expect(state.b).toBe(state.a.b);
+	});
+
+	it("surfaces a nested multi-route delete at the minimal common ancestor", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{
+			outer: { a: { x: { n: number } }; b: { y?: { n: number } } };
+		}>({
+			outer: { a: { x: shared }, b: { y: shared } },
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.outer.b.y;
+		});
+
+		expect(pathOf(heard[0])).toEqual([["outer"]]);
+		expect(state.outer.b.y).toBeUndefined();
+		expect(state.outer.a.x.n).toBe(1);
+
+		replayUndo(state, heard[0] ?? []);
+		expect(state.outer.b.y).toBe(state.outer.a.x);
+	});
+
+	it("mints tree-shaped atomic ops for a tree-shaped state", () => {
+		const state = createMutableState({ a: { b: { c: 1 } }, d: 2 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.a.b.c = 9;
+			state.d = 3;
+		});
+
+		expect(pathOf(heard[0])).toEqual([["a", "b", "c"], ["d"]]);
+	});
+
+	it("surfaces two independent sibling escapes each at their own containing frame", () => {
+		const state = createMutableState<{
+			left: { n: number; self?: object };
+			right: { n: number; self?: object };
+		}>({ left: { n: 1 }, right: { n: 2 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.left.self = state.left;
+			state.right.self = state.right;
+		});
+
+		expect(pathOf(heard[0])).toEqual([["left"], ["right"]]);
+		expect(state.left.self).toBe(state.left);
+		expect(state.right.self).toBe(state.right);
+	});
+
+	it("surfaces an escape reached only through a symbol-keyed carried ride-along", () => {
+		const external = { marker: 1 };
+		const state = createMutableState<{
+			held: { marker: number };
+			carrier?: { [key: symbol]: object };
+		}>({ held: external });
+		const symbolKey = Symbol("ride");
+		const heard = record(state);
+
+		transact(state, () => {
+			const carrier: { [key: symbol]: object } = {};
+
+			carrier[symbolKey] = state.held;
+			state.carrier = carrier;
+		});
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do.verb).toBe("assign");
+		expect(state.carrier?.[symbolKey]).toBe(state.held);
+	});
+
+	it("accepts identity-rewiring of bisimilar self-cycles as a closed identity discontinuity", () => {
+		const state = createMutableState<{ a: { self?: object } }>({ a: {} });
+
+		state.a.self = state.a;
+
+		const heard = record(state);
+
+		transact(state, () => {
+			const copy: { self?: object } = {};
+
+			copy.self = copy;
+			state.a.self = copy;
+		});
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do.verb).toBe("assign");
+		expect(() => readValue(heard[0]?.[0]?.do ?? { verb: "delete", path: [] })).not.toThrow();
+		expect(state.a.self).toBeDefined();
+		expect((state.a.self as { self?: object }).self).toBe(state.a.self);
+	});
 
 	it("diffs a deeply aliased diamond, walking each shared subgraph once", () => {
 		const state = createMutableState<{ n: number; diamond?: object }>({ n: 1 });

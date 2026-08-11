@@ -70,6 +70,11 @@ export const snapshotDonationError = (key: string | symbol): Error =>
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
 	);
 
+export const strictnessJoinError = (key: string | symbol): Error =>
+	new Error(
+		`opshot: cannot join a strict and a non-strict graph at "${String(key)}" (a non-strict graph can admit values the strict promise excludes). Options:\n- match the states' strict options\n- clone the value into the receiving state\n- share it as ignore()`,
+	);
+
 export const ownProtoKeyError = (): Error =>
 	new Error(
 		"opshot: own __proto__ key is not supported on tracked state; do not place an own __proto__ key in state (an own __proto__ key resolves to an inherited accessor, and prototype mutation is not tracked data)",
