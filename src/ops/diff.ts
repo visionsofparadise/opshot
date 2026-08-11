@@ -590,7 +590,11 @@ const routeDisturbedAfter = (context: DiffContext, index: number, route: Operati
 const rewriteSurvivingUndos = (context: DiffContext): void => {
 	if (!context.linksEnabled) return;
 
-	const lives = new Set<object>(context.removalLives);
+	const lives = new Set<object>();
+
+	for (const live of context.removalLives) {
+		if (!context.candidateRoutes.has(live)) lives.add(live);
+	}
 
 	for (const pair of context.ops) {
 		if (pair.undo.verb !== "assign") continue;
