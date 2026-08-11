@@ -1000,11 +1000,20 @@ describe("applyOperations: link halves", () => {
 	it("resolves a ref read-only to the live object at that path", () => {
 		const state = createMutableState({ shared: { n: 1 }, nested: { deep: { n: 2 } } });
 
-		expect(resolveRefValue(state, ["shared"])).toBe(state.shared);
-		expect(resolveRefValue(state, ["nested", "deep"])).toBe(state.nested.deep);
-		expect(resolveRefValue(state, [])).toBe(state);
-		expect(() => resolveRefValue(state, ["missing"])).toThrow("does not resolve");
-		expect(() => resolveRefValue(state, ["shared", "n"])).toThrow("resolves to a non-object");
+		const link = ["alias"];
+
+		expect(resolveRefValue(state, ["shared"], link)).toBe(state.shared);
+		expect(resolveRefValue(state, ["nested", "deep"], link)).toBe(state.nested.deep);
+		expect(() => resolveRefValue(state, ["missing"], link)).toThrow("does not resolve");
+		expect(() => resolveRefValue(state, ["shared", "n"], link)).toThrow("resolves to a non-object");
+	});
+
+	it("refuses a root-addressing empty ref, naming both paths", () => {
+		const state = createMutableState({ shared: { n: 1 } });
+
+		expect(() => resolveRefValue(state, [], ["alias"])).toThrow(
+			"opshot: link at /alias with ref / does not address a supported operation target",
+		);
 	});
 
 	it("establishes sharing on a plain target", () => {

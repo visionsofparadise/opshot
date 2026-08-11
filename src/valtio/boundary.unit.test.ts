@@ -1571,3 +1571,70 @@ describe("boundary: route-scoped declarations", () => {
 		expect(emissions).toEqual([]);
 	});
 });
+
+describe("boundary: bare references and the formation ledger", () => {
+	it("admits an ignored state root under both strictness settings", () => {
+		const foreign = createMutableState({ q: 1 });
+
+		expect(() => createMutableState({ held: ignore(foreign) })).not.toThrow();
+		expect(() => createMutableState({ held: ignore(foreign) }, { strict: false })).not.toThrow();
+	});
+
+	it("still rejects an unignored state root under both strictness settings", () => {
+		const foreign = createMutableState({ q: 1 });
+
+		expect(() => createMutableState({ held: foreign })).toThrow("a state root");
+		expect(() => createMutableState({ held: foreign }, { strict: false })).toThrow("a state root");
+	});
+
+	it("admits an ignored state root assigned at the set trap", () => {
+		const foreign = createMutableState({ q: 1 });
+		const state = createMutableState<{ held?: unknown }>({});
+
+		expect(() => {
+			state.held = ignore(foreign);
+		}).not.toThrow();
+	});
+
+	it("leaves no formation candidate behind when a write is refused", () => {
+		const source: { hub: { n: number }; slot?: unknown } = { hub: { n: 1 } };
+
+		Object.defineProperty(source, "slot", { value: undefined, writable: false, enumerable: true });
+
+		const state = createMutableState(source);
+		const heard = recordEmissions(state);
+
+		expect(() => {
+			state.slot = state.hub;
+		}).toThrow("trap returned falsish");
+
+		expect(state.slot).toBeUndefined();
+
+		transact(state, () => {
+			state.hub.n = 2;
+		});
+
+		for (const emission of heard) {
+			for (const pair of shapeOps(emission.ops)) expect(pair.do.verb).not.toBe("link");
+		}
+	});
+
+	it("leaves no formation candidate behind when the strictness join throws", () => {
+		const loose = createMutableState({ node: { n: 1 } }, { strict: false });
+		const strict = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } });
+
+		expect(() => {
+			strict.slot = loose.node;
+		}).toThrow("strict");
+
+		const heard = recordEmissions(strict);
+
+		transact(strict, () => {
+			strict.hub.n = 2;
+		});
+
+		for (const emission of heard) {
+			for (const pair of shapeOps(emission.ops)) expect(pair.do.verb).not.toBe("link");
+		}
+	});
+});

@@ -1,13 +1,18 @@
 import { getRegisteredTarget, isSameIdentity } from "../identity";
 import { walkDataEntries } from "../utils/dataEntries";
 import { isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
-import { externalRoutesOf, resolveCandidates, takeFormationCandidates } from "./commitWalk";
+import {
+	canonicalRouteOf,
+	externalRoutesOf,
+	resolveCandidates,
+	routeUnderPath,
+	takeFormationCandidates,
+} from "./commitWalk";
 import {
 	createAssignMutation,
 	createDeleteMutation,
 	createLinkMutation,
 	getValueOriginal,
-	type Mutation,
 	type Operation,
 } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
@@ -28,6 +33,9 @@ interface DiffContext {
 	readonly ancestors: Ancestors;
 	readonly ancestorPaths: Map<object, OperationPath>;
 	readonly liveRoot: object;
+	readonly beforeRoot: object;
+	readonly afterRoot: object;
+	readonly linksEnabled: boolean;
 	candidateRoutes: Map<object, ReadonlyArray<OperationPath>>;
 	readonly removalLives: Set<object>;
 }
@@ -71,26 +79,49 @@ const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
 const routesOf = (context: DiffContext, live: object): ReadonlyArray<OperationPath> =>
 	context.candidateRoutes.get(live) ?? [];
 
-const undoForReplaced = (context: DiffContext, path: OperationPath, before: unknown): Mutation => {
-	if (!isObjectLike(before)) return createAssignMutation(path, before);
+const routeResolvesIn = (root: object, route: OperationPath, live: object): boolean => {
+	let current: unknown = root;
 
-	const live = liveOf(before);
-	const external = externalRoutesOf(routesOf(context, live), path);
+	for (const segment of route) {
+		if (!isObjectLike(current)) return false;
 
-	if (external[0] !== undefined) return createLinkMutation(path, external[0]);
+		const container = current as Record<string | number, unknown>;
 
-	return createAssignMutation(path, before);
+		if (!Object.hasOwn(container, segment)) return false;
+
+		current = container[segment];
+	}
+
+	return isObjectLike(current) && liveOf(current) === live;
+};
+
+const refForMint = (context: DiffContext, live: object, container: OperationPath): OperationPath | undefined => {
+	const routes = routesOf(context, live);
+	const external = externalRoutesOf(routes, container).filter((route) =>
+		routeResolvesIn(context.afterRoot, route, live),
+	);
+
+	if (external.length === 0) return undefined;
+
+	const predating = external.find((route) => routeResolvesIn(context.beforeRoot, route, live));
+
+	if (predating !== undefined) return predating;
+
+	const canonical = canonicalRouteOf(routes);
+
+	if (canonical !== undefined && routeUnderPath(canonical, container)) return undefined;
+
+	return external[0];
 };
 
 const linkOperation = (
-	context: DiffContext,
 	path: OperationPath,
 	ref: OperationPath,
 	before: unknown,
 	beforePresent: boolean,
 ): Operation => ({
 	do: createLinkMutation(path, ref),
-	undo: beforePresent ? undoForReplaced(context, path, before) : createDeleteMutation(path),
+	undo: beforePresent ? createAssignMutation(path, before) : createDeleteMutation(path),
 });
 
 const harvestInteriorCandidates = (context: DiffContext, value: object): void => {
@@ -146,7 +177,7 @@ const valueHasEmbeddedEscapes = (context: DiffContext, value: unknown, formation
 
 		const routes = context.candidateRoutes.get(live);
 
-		if (routes !== undefined && externalRoutesOf(routes, formation).length > 0) return true;
+		if (routes !== undefined && refForMint(context, live, formation) !== undefined) return true;
 
 		if (!isCloneable(node)) return false;
 
@@ -201,22 +232,12 @@ const commitLink = (
 	before: unknown,
 	beforePresent: boolean,
 ): DiffResult =>
-	commitOperation(
-		context,
-		context.ops.length,
-		path,
-		linkOperation(context, path, ref, before, beforePresent),
-		weighCarried,
-	);
+	commitOperation(context, context.ops.length, path, linkOperation(path, ref, before, beforePresent), weighCarried);
 
 const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : {});
 
-const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): DiffResult => {
+const mintDecomposedContents = (context: DiffContext, path: OperationPath, after: object): DiffResult => {
 	const results = new Array<DiffResult>();
-
-	results.push(
-		commitOperation(context, context.ops.length, path, additionPair(path, emptyContainerOf(after)), weighCarried),
-	);
 
 	if (isPlainArray(after)) {
 		if (after.length > 0)
@@ -246,6 +267,24 @@ const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after
 	return mergeResults(results);
 };
 
+const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): DiffResult =>
+	mergeResults([
+		commitOperation(context, context.ops.length, path, additionPair(path, emptyContainerOf(after)), weighCarried),
+		mintDecomposedContents(context, path, after),
+	]);
+
+const mintDecomposedChange = (context: DiffContext, path: OperationPath, before: unknown, after: object): DiffResult =>
+	mergeResults([
+		commitOperation(
+			context,
+			context.ops.length,
+			path,
+			changePair(path, before, emptyContainerOf(after)),
+			weighCarried,
+		),
+		mintDecomposedContents(context, path, after),
+	]);
+
 const mintAssignment = (
 	context: DiffContext,
 	path: OperationPath,
@@ -253,15 +292,16 @@ const mintAssignment = (
 	after: unknown,
 	beforePresent: boolean,
 ): DiffResult => {
-	if (isObjectLike(after)) {
+	if (isObjectLike(after) && context.linksEnabled) {
 		const live = liveOf(after);
 		const ancestorPath = context.ancestorPaths.get(live);
 
-		if (ancestorPath !== undefined) return commitLink(context, path, ancestorPath, before, beforePresent);
+		if (ancestorPath !== undefined && ancestorPath.length > 0)
+			return commitLink(context, path, ancestorPath, before, beforePresent);
 
-		const external = externalRoutesOf(routesOf(context, live), path);
+		const ref = refForMint(context, live, path);
 
-		if (external[0] !== undefined) return commitLink(context, path, external[0], before, beforePresent);
+		if (ref !== undefined) return commitLink(context, path, ref, before, beforePresent);
 
 		if (isPlainObject(after) || isPlainArray(after)) {
 			if (context.candidateRoutes.has(live)) harvestInteriorCandidates(context, after);
@@ -269,30 +309,7 @@ const mintAssignment = (
 			if (valueHasEmbeddedEscapes(context, after, path)) {
 				if (!beforePresent) return mintDecomposedAddition(context, path, after);
 
-				const results = new Array<DiffResult>();
-				const opsStart = context.ops.length;
-
-				results.push(
-					commitOperation(
-						context,
-						opsStart,
-						path,
-						changePair(path, before, emptyContainerOf(after)),
-						weighCarried,
-					),
-				);
-
-				if (isPlainArray(after) && isPlainArray(before)) {
-					results.push(diffArray(context, before, after, path));
-				} else if (isPlainObject(after) && isPlainObject(before)) {
-					results.push(diffObjectProperties(context, before, after, path, false));
-				} else {
-					for (const entry of walkDataEntries(after)) {
-						results.push(pushAddition(context, appendOperationPath(path, entry.key), entry.value));
-					}
-				}
-
-				return mergeResults(results);
+				return mintDecomposedChange(context, path, before, after);
 			}
 		}
 	}
@@ -316,6 +333,40 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult =>
 	mintAssignment(context, path, before, after, true);
 
+const resolveRemovalRoutes = (context: DiffContext): void => {
+	const missing = new Set<object>();
+
+	for (const live of context.removalLives) {
+		if (!context.candidateRoutes.has(live)) missing.add(live);
+	}
+
+	if (missing.size === 0) return;
+
+	const resolved = resolveCandidates(context.liveRoot, missing);
+
+	for (const live of missing) context.candidateRoutes.set(live, resolved.get(live) ?? []);
+};
+
+const collapseHidesSurvivingRemoval = (context: DiffContext, opsStart: number): boolean => {
+	const removals = new Array<{ readonly path: OperationPath; readonly live: object }>();
+
+	for (let index = opsStart; index < context.ops.length; index++) {
+		const pair = context.ops[index];
+
+		if (pair?.do.verb !== "delete" || pair.undo.verb !== "assign") continue;
+
+		const original = getValueOriginal(pair.undo);
+
+		if (isObjectLike(original)) removals.push({ path: pair.do.path, live: liveOf(original) });
+	}
+
+	if (removals.length === 0) return false;
+
+	resolveRemovalRoutes(context);
+
+	return removals.some((removal) => externalRoutesOf(routesOf(context, removal.live), removal.path).length > 0);
+};
+
 const tryCollapse = (
 	context: DiffContext,
 	before: unknown,
@@ -329,6 +380,8 @@ const tryCollapse = (
 	if (valueHasEmbeddedEscapes(context, after, path) || valueHasEmbeddedEscapes(context, before, path)) {
 		return walked;
 	}
+
+	if (context.linksEnabled && collapseHidesSurvivingRemoval(context, opsStart)) return walked;
 
 	const beforeWeight = weighValue(before, walked.weight);
 	const afterWeight = weighValue(after, walked.weight - beforeWeight);
@@ -522,7 +575,21 @@ const getRootKind = (value: object): RootKind | undefined => {
 	return undefined;
 };
 
+const routeDisturbedAfter = (context: DiffContext, index: number, route: OperationPath): boolean => {
+	for (let later = index + 1; later < context.ops.length; later++) {
+		const pair = context.ops[later];
+
+		if (pair === undefined) continue;
+
+		if (routeUnderPath(route, pair.do.path)) return true;
+	}
+
+	return false;
+};
+
 const rewriteSurvivingUndos = (context: DiffContext): void => {
+	if (!context.linksEnabled) return;
+
 	const lives = new Set<object>(context.removalLives);
 
 	for (const pair of context.ops) {
@@ -556,7 +623,7 @@ const rewriteSurvivingUndos = (context: DiffContext): void => {
 
 		const live = liveOf(original);
 		const external = externalRoutesOf(context.candidateRoutes.get(live) ?? [], pair.do.path);
-		const surviving = external[0];
+		const surviving = external.find((route) => !routeDisturbedAfter(context, index, route));
 
 		if (surviving === undefined) continue;
 
@@ -587,7 +654,8 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 
 	const ops = new Array<Operation>();
 	const liveRoot = liveOf(after);
-	const candidates = new Set<object>(takeFormationCandidates(liveRoot));
+	const linksEnabled = getRegisteredTarget(after) !== undefined;
+	const candidates = new Set<object>(linksEnabled ? takeFormationCandidates(liveRoot) : []);
 	const candidateRoutes = new Map(resolveCandidates(liveRoot, candidates));
 
 	const context: DiffContext = {
@@ -595,6 +663,9 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 		ancestors: new Map(),
 		ancestorPaths: new Map(),
 		liveRoot,
+		beforeRoot: before,
+		afterRoot: after,
+		linksEnabled,
 		candidateRoutes,
 		removalLives: new Set(),
 	};

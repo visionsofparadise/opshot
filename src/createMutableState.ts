@@ -8,7 +8,7 @@ import { assertInitializerStrictnessJoins, assertSafeDataPaths, installBoundary 
 import { frozenRootError, rejectionError, stateRootValueError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
 
-const { proxyStateMap } = unstable_getInternalStates();
+const { proxyStateMap, refSet } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
@@ -61,6 +61,8 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 			if (typeof value !== "object" || value === null || visits.has(value)) return;
 
 			visits.add(value);
+
+			if (refSet.has(value)) return;
 
 			if (isStateRoot(rawTargetOf(value))) throw stateRootValueError(path);
 

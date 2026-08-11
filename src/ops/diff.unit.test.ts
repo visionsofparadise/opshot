@@ -1523,3 +1523,177 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.map.has("k")).toBe(false);
 	});
 });
+
+describe("diffObjects: link batch construction", () => {
+	it("carries the value at the canonical route and links the rest when both routes are new", () => {
+		const state = createMutableState<{ late?: { n: number }; early?: { n: number } }>({});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.late = { n: 1 };
+			state.early = state.late;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered).toHaveLength(2);
+		expect(shapeOps(delivered)[0]?.do).toMatchObject({ verb: "assign", path: ["late"] });
+		expect(shapeOps(delivered)[1]?.do).toEqual({ verb: "link", path: ["early"], ref: ["late"] });
+
+		const replica = createMutableState<{ late?: { n: number }; early?: { n: number } }>({});
+
+		applyOperations(replica, projectTransport(delivered), "do");
+
+		expect(replica.late).toEqual({ n: 1 });
+		expect(replica.early).toBe(replica.late);
+	});
+
+	it("prefers a route that predates the batch over a route the batch mints", () => {
+		const state = createMutableState<{ hub: { n: number }; a?: object; b?: object }>({ hub: { n: 1 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.a = state.hub;
+			state.b = state.hub;
+		});
+
+		for (const pair of shapeOps(heard[0] ?? [])) expect(pair.do).toMatchObject({ verb: "link", ref: ["hub"] });
+	});
+
+	it("keeps a value undo when the surviving route is torn down earlier in the undo direction", () => {
+		const state = createMutableState<{ a?: { n: number }; b?: { n: number } }>({ a: { n: 1 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			const node = state.a;
+
+			delete state.a;
+			state.b = node;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		applyOperations(state, delivered, "undo");
+
+		expect(state.a).toEqual({ n: 1 });
+		expect(state).not.toHaveProperty("b");
+	});
+
+	it("restores the baseline when a transaction forming a move throws", () => {
+		const state = createMutableState<{ from?: { deep: { n: number } }; to?: { deep: { n: number } } }>({
+			from: { deep: { n: 1 } },
+		});
+
+		record(state);
+
+		expect(() =>
+			transact(state, () => {
+				state.to = state.from;
+
+				delete state.from;
+
+				throw new Error("boom");
+			}),
+		).toThrow("boom");
+
+		expect(state.from).toEqual({ deep: { n: 1 } });
+		expect(state).not.toHaveProperty("to");
+	});
+
+	it("mints a numeric ref segment through an array index and resolves it on a replica", () => {
+		const state = createMutableState<{ list: Array<{ n: number }>; slot?: { n: number } }>({ list: [{ n: 1 }] });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.slot = state.list[0];
+		});
+
+		const delivered = heard[0] ?? [];
+		const half = delivered[0]?.do;
+
+		if (half?.verb !== "link") throw new Error("expected a link half");
+
+		expect([...half.path]).toEqual(["slot"]);
+		expect([...half.ref]).toEqual(["list", 0]);
+		expect(typeof half.ref[1]).toBe("number");
+
+		const replica = createMutableState<{ list: Array<{ n: number }>; slot?: { n: number } }>({ list: [{ n: 1 }] });
+
+		applyOperations(replica, projectTransport(delivered), "do");
+
+		expect(replica.slot).toBe(replica.list[0]);
+	});
+
+	it("re-mints every key of a decomposed replace, including keys the old value shared", () => {
+		const state = createMutableState<{ hub: { n: number }; box: Record<string, unknown> }>({
+			hub: { n: 1 },
+			box: { keep: "KEEP", other: 2 },
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.box = { keep: "KEEP", inner: { alias: state.hub } };
+		});
+
+		const delivered = heard[0] ?? [];
+		const replica = createMutableState<{ hub: { n: number }; box: Record<string, unknown> }>({
+			hub: { n: 1 },
+			box: { keep: "KEEP", other: 2 },
+		});
+
+		applyOperations(replica, projectTransport(delivered), "do");
+
+		expect(replica.box.keep).toBe("KEEP");
+		expect(replica.box).not.toHaveProperty("other");
+		expect((replica.box.inner as { alias: unknown }).alias).toBe(replica.hub);
+	});
+
+	it("declines collapse when a collapsing container loses one route to a surviving node", () => {
+		const start = (): { keep: { n: number }; bag: Record<string, unknown> } => ({
+			keep: { n: 1 },
+			bag: { x: 1, y: 2 },
+		});
+
+		const state = createMutableState(start());
+
+		state.bag.slot = state.keep;
+
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.bag.slot;
+			delete state.bag.x;
+			delete state.bag.y;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(shapeOps(delivered).some((pair) => pair.undo.verb === "link")).toBe(true);
+
+		const replica = createMutableState(start());
+
+		replica.bag.slot = replica.keep;
+
+		const projected = projectTransport(delivered);
+
+		applyOperations(replica, projected, "do");
+		applyOperations(replica, projected, "undo");
+
+		expect(replica.bag.slot).toBe(replica.keep);
+	});
+
+	it("mints no links from the public plain-object surface", () => {
+		const shared = { n: 1 };
+		const cyclic: Record<string, unknown> = { x: 1 };
+
+		cyclic.self = cyclic;
+
+		const removal = diffObjects({ a: shared, b: shared }, { b: shared });
+		const cycle = diffObjects({ x: 1 }, cyclic);
+
+		for (const pair of [...removal, ...cycle]) {
+			expect(pair.do.verb).not.toBe("link");
+			expect(pair.undo.verb).not.toBe("link");
+		}
+	});
+});

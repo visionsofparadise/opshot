@@ -1,7 +1,9 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { isStateRoot } from "../stateRoots";
 import { walkDataEntries } from "../utils/dataEntries";
+import { isPlainArray } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
+import { isCanonicalArrayIndexString } from "./predicates";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -92,10 +94,13 @@ export const clearFormationCandidates = (): void => {
 	formationPulse = new Set();
 };
 
+const segmentFor = (parent: object, key: string): string | number =>
+	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
+
 const segmentEquals = (left: string | number, right: string | number): boolean =>
 	left === right || String(left) === String(right);
 
-const pathUnderFormation = (route: OperationPath, formation: OperationPath): boolean => {
+export const routeUnderPath = (route: OperationPath, formation: OperationPath): boolean => {
 	if (route.length < formation.length) return false;
 
 	for (let index = 0; index < formation.length; index++) {
@@ -113,7 +118,9 @@ const pathUnderFormation = (route: OperationPath, formation: OperationPath): boo
 export const externalRoutesOf = (
 	routes: ReadonlyArray<OperationPath>,
 	formation: OperationPath,
-): ReadonlyArray<OperationPath> => routes.filter((route) => !pathUnderFormation(route, formation));
+): ReadonlyArray<OperationPath> => routes.filter((route) => !routeUnderPath(route, formation));
+
+export const canonicalRouteOf = (routes: ReadonlyArray<OperationPath>): OperationPath | undefined => routes[0];
 
 export const resolveCandidates = (
 	root: object,
@@ -147,7 +154,7 @@ export const resolveCandidates = (
 
 			if (typeof child !== "object" || child === null) continue;
 
-			visit(child, createOperationPath([...path, entry.key]));
+			visit(child, createOperationPath([...path, segmentFor(node, entry.key)]));
 		}
 	};
 

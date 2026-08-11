@@ -107,9 +107,10 @@ describe("package build", () => {
 			expect(applyOperationsProse, "link verb in algebra").toMatch(/\blink\b/);
 			expect(applyOperationsProse, "target-path ordering rule").toMatch(/target-path/i);
 			expect(applyOperationsProse, "batch-scoped ref resolvability").toMatch(/batch-scoped/i);
-			expect(applyOperationsProse, "scoped JSON: link-carried sharing survives").toMatch(
-				/Link-carried sharing survives serialization/i,
+			expect(applyOperationsProse, "scoped JSON: sharing survives as addressing").toMatch(
+				/sharing survives serialization as addressing/i,
 			);
+			expect(applyOperationsProse, "transport re-mints branded halves").toMatch(/re-minting those halves/i);
 			expect(applyOperationsProse, "projection recipe includes ref").toMatch(/\.ref/);
 
 			const diffObjectsBlock = jsdocBefore(declaration, /declare\s+function\s+diffObjects\b/);

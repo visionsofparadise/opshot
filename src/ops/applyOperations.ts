@@ -52,8 +52,10 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
  * ref resolvability is batch-scoped: a ref is defined by earlier ops in the stream and is not
  * preflighted. A well-formed link half applies without the brand; assign and delete still require it.
  * Never spread, JSON-round-trip, or `structuredClone` a value-bearing half before applying it.
- * Link-carried sharing survives serialization when halves are projected (`verb`/`path`/`ref`/`.value`);
- * value carriage of unfound candidates and fresh-subtree internal aliasing keep in-memory residue only.
+ * A link half's `ref` is plain data, so sharing survives serialization as addressing rather than as
+ * in-memory identity — but a batch is only appliable where every value-bearing and delete half still
+ * carries its brand, so transport means re-minting those halves rather than applying copies. Value
+ * carriage of unfound candidates and fresh-subtree internal aliasing keep in-memory residue only.
  *
  * @param state - State to change.
  * @param operations - Operation pairs to apply.

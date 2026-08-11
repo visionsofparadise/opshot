@@ -311,7 +311,7 @@ For transport, project `verb` and `path` from a half; read `.value` on assign ha
 
 Cycles and aliasing are ordinary tracked topology. An interior change reachable by _k_ routes mints _k_ ops, one per simple route; any replica converges on content by applying all of them. When a write forms an escaping edge — alias formation, a cycle back-edge, embedding a tracked node in a fresh subtree — the mint emits a **link** whose `ref` addresses a surviving route in this graph. At apply, `ref` resolves to that node and links it in at `path`. Root operations are not supported; a state root is not a tracked value. No cycle throws at formation, mutation, repair, undo, rollback, or replay.
 
-**Link-carried sharing survives serialization**: a JSON round trip of a formation batch preserves sharing on the replica when ops are rebuilt from projected `verb`/`path`/`ref`/`.value`. In-memory residue remains only where links do not cover — value carriage of unfound candidates (detached or cross-graph), and internal aliasing inside a fresh subtree carried by value.
+**Link-carried sharing is addressed, not identified**: a link's `ref` is plain data, so the sharing a link carries survives a JSON round trip in a way an in-memory alias never did. Reconstructing an appliable batch on the far side still means re-minting its value-bearing and delete halves, which keep their brand; only link halves apply from a bare projection. In-memory residue remains where links do not reach — value carriage of unfound candidates (detached or cross-graph), and internal aliasing inside a fresh subtree carried by value.
 
 ## Groups
 

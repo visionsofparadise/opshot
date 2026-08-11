@@ -112,6 +112,8 @@ export const assertInitializerStrictnessJoins = (value: unknown, receiverStrict:
 
 		visits.add(current);
 
+		if (refSet.has(current)) return;
+
 		if (proxyStateMap.has(current)) {
 			assertStrictnessJoin(current, receiverStrict, path[path.length - 1] ?? "");
 
@@ -226,12 +228,11 @@ export function installBoundary(): void {
 					const receiverOptions = getOptions(target);
 					const strict = receiverOptions?.strict !== false;
 
-					if (typeof resolved === "object" && resolved !== null) {
-						if (isStateRoot(rawTargetOf(resolved)) && !refSet.has(resolved))
+					if (typeof resolved === "object" && resolved !== null && !refSet.has(resolved)) {
+						if (isStateRoot(rawTargetOf(resolved)))
 							throw stateRootValueError(isInitializing() ? undefined : location);
 
 						if (proxyStateMap.has(resolved)) {
-							flagFormationCandidate(resolved, target);
 							assertStrictnessJoin(resolved, strict, prop);
 						} else {
 							const decision = admissionDecision(resolved);
@@ -251,6 +252,14 @@ export function installBoundary(): void {
 					}
 
 					if (refusesWrite(target, prop, resolved)) return false;
+
+					if (
+						typeof resolved === "object" &&
+						resolved !== null &&
+						!refSet.has(resolved) &&
+						proxyStateMap.has(resolved)
+					)
+						flagFormationCandidate(resolved, target);
 
 					setDepth += 1;
 					formationSetDepth += 1;

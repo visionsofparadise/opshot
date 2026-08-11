@@ -160,26 +160,22 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 	return { parent, segment: path[path.length - 1] };
 };
 
-export const resolveRefValue = (root: object, ref: OperationPath, linkPath?: OperationPath): object => {
+export const resolveRefValue = (root: object, ref: OperationPath, linkPath: OperationPath): object => {
+	if (ref.length === 0) throw linkError(linkPath, ref, "does not address a supported operation target");
+
 	let current: unknown = root;
 
 	for (let index = 0; index < ref.length; index++) {
-		if (!isObjectLike(current)) {
-			throw linkPath === undefined ? unresolvedError(ref) : linkError(linkPath, ref, "does not resolve");
-		}
+		if (!isObjectLike(current)) throw linkError(linkPath, ref, "does not resolve");
 
 		try {
 			current = requirePlainProperty(current, ref[index], ref);
 		} catch {
-			throw linkPath === undefined ? unresolvedError(ref) : linkError(linkPath, ref, "does not resolve");
+			throw linkError(linkPath, ref, "does not resolve");
 		}
 	}
 
-	if (!isObjectLike(current)) {
-		throw linkPath === undefined
-			? new Error(`opshot: ${formatOperationPath(ref)} resolves to a non-object`)
-			: linkError(linkPath, ref, "resolves to a non-object");
-	}
+	if (!isObjectLike(current)) throw linkError(linkPath, ref, "resolves to a non-object");
 
 	return current;
 };
