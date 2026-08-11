@@ -140,15 +140,15 @@ Call `flush` exactly once. A pending flush pins its state until it runs — abou
 
 ## Closed graph
 
-A state is everything reachable from its root through tracked edges. Every tracked edge's target has a determined treatment — **tracked**, by shape or `unsafeTrack()`, or **endpoint**, by `ignore()`, freeze, or ride-along declaration — and an edge whose target has no determined treatment throws at its formation. The graph ends at its endpoints; beyond them the model is silent. Graphs of differing strictness refuse to join. Each state's op stream is self-contained and closure-surfaced within its own graph; identity across states is live-only, never carried.
+A state is everything reachable from its root through tracked edges. Every tracked edge's target has a determined treatment — **tracked**, by shape or `unsafeTrack()`, or **endpoint**, by `ignore()`, freeze, or ride-along declaration — and an edge whose target has no determined treatment throws at its formation. The graph ends at its endpoints; beyond them the model is silent. Graphs of differing strictness refuse to join. Each state's op stream is faithful to its own graph, sharing within the graph carried by **link** ops addressing it, and the self-contained unit is the transaction **batch**; identity across states is live-only, never carried.
 
-Declarations are **route-scoped**: a leaf's child separately admitted through a tracked edge tracks on that edge while the beyond-endpoint route stays unpromised. States may **overlap** — assigning another graph's node into this one extends this graph to include it — and a write through either is visible through both. What each op stream promises is scoped to its own graph.
+Declarations are **route-scoped**: a leaf's child separately admitted through a tracked edge tracks on that edge while the beyond-endpoint route stays unpromised. States may **overlap on subtrees** — assigning another graph's node into this one extends this graph to include it — never on roots — and a write through either is visible through both. What each op stream promises is scoped to its own graph.
 
 ### Strictness
 
 Default creation is strict: reject-lane values throw. Pass `strict: false` to unsafely track values that would otherwise be rejected (state-scoped `unsafeTrack` for incoming values).
 
-A strict graph and a non-strict graph **cannot share a node**. Joining them throws at the assignment, naming the mismatch and three remedies: match the states' `strict` options, clone the value into the receiving state, or share it as `ignore()`. Strict+strict and loose+loose share freely. A value that has left its loose graph (detached, still carrying an `unsafeTrack` mark) may still enter a strict graph — that is mark travel, not a live join.
+A strict graph and a non-strict graph **refuse an unmarked join**. Joining throws at the assignment, naming the mismatch and the remedies: mark the value with `unsafeTrack`, or re-create it as plain data. Strict+strict and loose+loose share freely. An `unsafeTrack`-marked value may enter a graph of differing strictness whether live or detached — the mark is the declaration boundary.
 
 ## Constraints
 
@@ -244,7 +244,7 @@ Do not mutate the subscribed state inside the listener — that re-enters the li
 
 ## Ops
 
-An op is an opaque invertible pair. The public type is `Operation`; each half uses one of two verbs:
+An op is an opaque invertible pair. The public type is `Operation`; each half uses one of three verbs:
 
 ```ts
 type OperationPath = ReadonlyArray<string | number>;
@@ -252,7 +252,8 @@ type OperationPath = ReadonlyArray<string | number>;
 // Halves are structural; prefer treating Operation as opaque.
 type Mutation =
 	| { readonly verb: "assign"; readonly path: OperationPath; readonly value: unknown }
-	| { readonly verb: "delete"; readonly path: OperationPath };
+	| { readonly verb: "delete"; readonly path: OperationPath }
+	| { readonly verb: "link"; readonly path: OperationPath; readonly ref: OperationPath };
 
 interface Operation {
 	readonly do: Mutation;
@@ -302,17 +303,15 @@ const Counter = () => {
 
 Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception. The same bound applies to rollback: a throwing `transact` undoes only tracked state.
 
-Ops are **idempotent**. Re-applying a delivered pair at a matching state is a no-op.
+A delivered **batch** is the self-contained unit. Re-applying it at a matching state is a no-op for all three verbs, but a link's referent is defined by its position in the stream, so an op is not meaningful in isolation. The library owns batch construction and the **target-path** rule: in either direction, a link applies only after the ops that establish its ref target's path in that direction.
 
-If your state is JSON serializable, **then ops are too**. Project `verb` and `path` from a half; read `.value` explicitly on assign halves (it clones). Never spread, `JSON` round-trip, or `structuredClone` an op before applying it — those copies drop the brand and the carried value.
+For transport, project `verb` and `path` from a half; read `.value` on assign halves (it clones), and `.ref` on link halves. Never spread, `JSON` round-trip, or `structuredClone` a value-bearing half before applying it — those copies drop the brand and the carried value. A well-formed link half (`verb`, `path`, `ref`) applies without the brand because links carry no value.
 
-### Cycles, aliases, and the root
+### Links, aliases, and cycles
 
-Cycles and aliasing are ordinary tracked topology. An interior change reachable by _k_ routes mints _k_ ops, one per simple route; any replica converges on content by applying all of them. When an op would carry a value that still points outside the carried subtree — alias formation, linking existing state into a cycle — the mint **surfaces to closure**: the minimal ancestor that contains every escaping edge's target, so both the do and undo halves close. Interior cycles ride as cyclic clones; no cycle throws at formation, mutation, repair, undo, rollback, or replay.
+Cycles and aliasing are ordinary tracked topology. An interior change reachable by _k_ routes mints _k_ ops, one per simple route; any replica converges on content by applying all of them. When a write forms an escaping edge — alias formation, a cycle back-edge, embedding a tracked node in a fresh subtree — the mint emits a **link** whose `ref` addresses a surviving route in this graph. At apply, `ref` resolves to that node and links it in at `path`. Root operations are not supported; a state root is not a tracked value. No cycle throws at formation, mutation, repair, undo, rollback, or replay.
 
-The empty path is the state's content. A root op renders as `"/"` and replaces content on the existing root (identity stays put). Only closure mints the root path; a root delete is refused.
-
-A JSON round trip of a carried value keeps content; in-memory sharing inside that value is a replay-side promise and does not survive `JSON.stringify`.
+**Link-carried sharing survives serialization**: a JSON round trip of a formation batch preserves sharing on the replica when ops are rebuilt from projected `verb`/`path`/`ref`/`.value`. In-memory residue remains only where links do not cover — value carriage of unfound candidates (detached or cross-graph), and internal aliasing inside a fresh subtree carried by value.
 
 ## Groups
 

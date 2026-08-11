@@ -43,12 +43,35 @@ export interface DeleteMutation {
 }
 
 /**
- * One half of an invertible pair: either an assign or a delete at a path.
+ * Links the node at `ref` into `path`.
+ *
+ * @example
+ * { verb: "link", path: ["alias"], ref: ["shared"] }
+ */
+export interface LinkMutation {
+	/**
+	 * `"link"`.
+	 */
+	readonly verb: "link";
+
+	/**
+	 * Path to place the linked node.
+	 */
+	readonly path: OperationPath;
+
+	/**
+	 * Path of the node to link.
+	 */
+	readonly ref: OperationPath;
+}
+
+/**
+ * One half of an invertible pair: an assign, a delete, or a link at a path.
  *
  * @example
  * { verb: "assign", path: ["profile"], value: { name: "Ada" } }
  */
-export type Mutation = AssignMutation | DeleteMutation;
+export type Mutation = AssignMutation | DeleteMutation | LinkMutation;
 
 /**
  * A change with do and undo halves.
@@ -101,6 +124,16 @@ class DeleteHalf extends OperationHalf {
 	readonly verb = "delete";
 }
 
+class LinkHalf extends OperationHalf {
+	readonly verb = "link";
+	readonly ref: OperationPath;
+
+	constructor(path: OperationPath, ref: OperationPath) {
+		super(path);
+		this.ref = createOperationPath(ref);
+	}
+}
+
 export const isMutation = (value: unknown): value is Mutation =>
 	typeof value === "object" && value !== null && operationBrand in value;
 
@@ -110,3 +143,5 @@ export const createAssignMutation = (path: OperationPath, value: unknown): Assig
 	new AssignHalf(path, value);
 
 export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);
+
+export const createLinkMutation = (path: OperationPath, ref: OperationPath): LinkMutation => new LinkHalf(path, ref);

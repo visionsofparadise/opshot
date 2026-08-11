@@ -4,7 +4,16 @@ import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { isCloneable } from "./cloneValue";
-import { createAssignMutation, createDeleteMutation, getValueOriginal, isMutation, type Mutation } from "./operation";
+import {
+	createAssignMutation,
+	createDeleteMutation,
+	createLinkMutation,
+	getValueOriginal,
+	isMutation,
+	type LinkMutation,
+	type Mutation,
+} from "./operation";
+import { shapeHalf } from "./operationShape";
 
 const readValue = (half: Mutation): unknown => ("value" in half ? half.value : undefined);
 
@@ -31,7 +40,11 @@ describe("operation", () => {
 
 	it("stores a frozen copied path on every half", () => {
 		const source = ["document", 1];
-		const halves = [createAssignMutation(source, 1), createDeleteMutation(source)];
+		const halves = [
+			createAssignMutation(source, 1),
+			createDeleteMutation(source),
+			createLinkMutation(source, ["shared"]),
+		];
 
 		source[0] = "changed";
 
@@ -39,6 +52,34 @@ describe("operation", () => {
 			expect(half.path).toEqual(["document", 1]);
 			expect(Object.isFrozen(half.path)).toBe(true);
 		}
+	});
+
+	it("stores a frozen copied ref on a link half", () => {
+		const path = ["alias"];
+		const ref = ["shared", 0];
+		const half = createLinkMutation(path, ref);
+
+		path[0] = "changed";
+		ref[0] = "changed";
+		ref[1] = 9;
+
+		expect(half.path).toEqual(["alias"]);
+		expect(half.ref).toEqual(["shared", 0]);
+		expect(Object.isFrozen(half.path)).toBe(true);
+		expect(Object.isFrozen(half.ref)).toBe(true);
+	});
+
+	it("carries verb, path, and ref complete through spread and JSON copies of a link half", () => {
+		const half = createLinkMutation(["alias"], ["shared"]);
+		const spread = { ...half };
+		const json = JSON.parse(JSON.stringify(half)) as LinkMutation;
+
+		expect(spread).toEqual({ verb: "link", path: ["alias"], ref: ["shared"] });
+		expect(json).toEqual({ verb: "link", path: ["alias"], ref: ["shared"] });
+		expect(isMutation(half)).toBe(true);
+		expect(isMutation(spread)).toBe(false);
+		expect(isMutation(json)).toBe(false);
+		expect(shapeHalf(half)).toEqual({ verb: "link", path: ["alias"], ref: ["shared"] });
 	});
 
 	it("keeps originals registered while public clone reads are independent", () => {

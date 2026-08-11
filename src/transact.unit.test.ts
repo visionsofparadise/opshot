@@ -821,7 +821,7 @@ describe("transact", () => {
 		expect(stateB.map.get("k")?.n).toBe(5);
 	});
 
-	it("mints a closure op in one state that ignores the other graph's in-edges and applies onto that state's replica alone", () => {
+	it("mints a link-undo removal in one state that ignores the other graph's routes and applies onto that state's replica alone", () => {
 		const shared = { n: 1 };
 		const stateA = createMutableState<{ a: { b: { n: number } }; b?: { n: number } }>({
 			a: { b: shared },
@@ -839,8 +839,8 @@ describe("transact", () => {
 
 		expect(shapeOps(heardA[0] ?? [])).toEqual([
 			{
-				do: { verb: "assign", path: [], value: { a: { b: { n: 1 } } } },
-				undo: { verb: "assign", path: [], value: { a: { b: { n: 1 } }, b: { n: 1 } } },
+				do: { verb: "delete", path: ["b"] },
+				undo: { verb: "link", path: ["b"], ref: ["a", "b"] },
 			},
 		]);
 		expect(stateA.b).toBeUndefined();

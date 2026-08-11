@@ -495,15 +495,12 @@ describe("useMutableState", () => {
 		expect(controlSaves).toEqual(["hello"]);
 	});
 
-	it("resolves a readProxy assigned into another state to its writeProxy", () => {
+	it("rejects assigning a state-root readProxy into another state", () => {
 		interface Held {
 			nested: { n: number };
 		}
 
 		const holder = createMutableState<{ current?: Held }>({});
-		const heard = new Array<Array<string>>();
-
-		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
 
 		let readProxy: Held | undefined;
 
@@ -525,6 +522,47 @@ describe("useMutableState", () => {
 
 		const assigned = readProxy;
 
+		expect(() => {
+			act(() => {
+				transact(holder, () => {
+					holder.current = assigned;
+				});
+			});
+		}).toThrow("a state root");
+
+		expect(holder).not.toHaveProperty("current");
+	});
+
+	it("resolves a nested readProxy assigned into another state to its writeProxy", () => {
+		interface Held {
+			nested: { n: number };
+		}
+
+		const holder = createMutableState<{ current?: { n: number } }>({});
+		const heard = new Array<Array<string>>();
+
+		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
+
+		let nestedRead: { n: number } | undefined;
+
+		const Child = scope<{ state: Held }>(({ state }) => {
+			nestedRead = state.nested;
+
+			return <span>{state.nested.n}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState<Held>(() => ({ nested: { n: 0 } }));
+
+			return <Child state={state} />;
+		};
+
+		render(<Parent />);
+
+		if (nestedRead === undefined) throw new Error("missing nested readProxy");
+
+		const assigned = nestedRead;
+
 		act(() => {
 			transact(holder, () => {
 				holder.current = assigned;
@@ -537,28 +575,28 @@ describe("useMutableState", () => {
 
 		act(() => {
 			transact(holder, () => {
-				assigned.nested.n = 5;
+				assigned.n = 5;
 			});
 		});
 
-		expect(heard).toEqual([["current"], ["current/nested/n"]]);
-		expect(holder.current?.nested.n).toBe(5);
+		expect(heard).toEqual([["current"], ["current/n"]]);
+		expect(holder.current?.n).toBe(5);
 	});
 
-	it("assigns a readProxy carrying an array into another state", () => {
+	it("assigns a nested readProxy carrying an array into another state", () => {
 		interface Held {
 			items: Array<number>;
 		}
 
-		const holder = createMutableState<{ current?: Held }>({});
+		const holder = createMutableState<{ current?: Array<number> }>({});
 		const heard = new Array<Array<string>>();
 
 		subscribe(holder, (ops) => heard.push(ops.map((op) => op.do.path.join("/"))));
 
-		let readProxy: Held | undefined;
+		let itemsRead: Array<number> | undefined;
 
 		const Child = scope<{ state: Held }>(({ state }) => {
-			readProxy = state;
+			itemsRead = state.items;
 
 			return <span>{state.items.length}</span>;
 		});
@@ -571,9 +609,9 @@ describe("useMutableState", () => {
 
 		render(<Parent />);
 
-		if (readProxy === undefined) throw new Error("missing readProxy");
+		if (itemsRead === undefined) throw new Error("missing items readProxy");
 
-		const assigned = readProxy;
+		const assigned = itemsRead;
 
 		act(() => {
 			transact(holder, () => {
@@ -582,15 +620,15 @@ describe("useMutableState", () => {
 		});
 
 		expect(heard).toEqual([["current"]]);
-		expect(Array.isArray(holder.current?.items)).toBe(true);
+		expect(Array.isArray(holder.current)).toBe(true);
 
 		act(() => {
 			transact(holder, () => {
-				assigned.items.push(4);
+				assigned.push(4);
 			});
 		});
 
-		expect(holder.current?.items).toEqual([1, 2, 3, 4]);
+		expect(holder.current).toEqual([1, 2, 3, 4]);
 		expect(heard).toHaveLength(2);
 	});
 });

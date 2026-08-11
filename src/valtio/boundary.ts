@@ -1,10 +1,11 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { liveRootsOf, registerInEdge, unregisterInEdge } from "../inEdges";
+import { clearFormationPulse, flagFormationCandidate } from "../ops/commitWalk";
 import { peelReadProxy } from "../peelReadProxy";
-import { getOptions, inheritOptions, restampOptions, type MutableNodeOptions } from "../settings";
-import { unsafeTrack } from "../unsafeTrack";
+import { getOptions, inheritOptions } from "../settings";
+import { isStateRoot } from "../stateRoots";
+import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
 import {
 	definePropertyError,
@@ -14,74 +15,15 @@ import {
 	rejectionError,
 	setPrototypeOfError,
 	snapshotDonationError,
+	stateRootValueError,
 	strictnessJoinError,
 } from "./boundaryErrors";
 import { admissionDecision, admissionLane, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
-const { proxyStateMap } = unstable_getInternalStates();
+const { proxyStateMap, refSet } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
-
-const ownDataValue = (target: object, property: string | symbol): unknown => {
-	const descriptor = Reflect.getOwnPropertyDescriptor(target, property);
-
-	if (descriptor === undefined || !("value" in descriptor)) return undefined;
-
-	return descriptor.value;
-};
-
-const isTrackedProxy = (value: unknown): value is object =>
-	typeof value === "object" && value !== null && proxyStateMap.has(value);
-
-const maintainInEdgeOnSet = (
-	target: object,
-	property: string | symbol,
-	previous: unknown,
-	truncatedFrom?: number,
-	truncatedValues: ReadonlyArray<unknown> = [],
-): void => {
-	if (typeof property !== "string") return;
-
-	if (isTrackedProxy(previous)) unregisterInEdge(rawTargetOf(previous), target, property);
-
-	if (truncatedFrom !== undefined) {
-		for (let offset = 0; offset < truncatedValues.length; offset += 1) {
-			const removed = truncatedValues[offset];
-
-			if (isTrackedProxy(removed)) unregisterInEdge(rawTargetOf(removed), target, String(truncatedFrom + offset));
-		}
-	}
-
-	const next = ownDataValue(target, property);
-
-	if (isTrackedProxy(next)) registerInEdge(rawTargetOf(next), target, property);
-};
-
-const arrayLengthTruncation = (
-	target: object,
-	previousLength: unknown,
-	nextLength: unknown,
-): { from: number; values: Array<unknown> } | undefined => {
-	if (!Array.isArray(target) || typeof previousLength !== "number" || typeof nextLength !== "number") return undefined;
-
-	const end = Math.min(Math.trunc(previousLength), 2 ** 32 - 1);
-	const from = Math.min(Math.max(0, Math.trunc(nextLength)), end);
-
-	if (from >= end) return undefined;
-
-	const values: Array<unknown> = [];
-
-	for (let index = from; index < end; index += 1) values.push(ownDataValue(target, String(index)));
-
-	return { from, values };
-};
-
-const maintainInEdgeOnDelete = (target: object, property: string | symbol, previous: unknown): void => {
-	if (typeof property !== "string") return;
-
-	if (isTrackedProxy(previous)) unregisterInEdge(rawTargetOf(previous), target, property);
-};
 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>): AdmissionLane => {
 	const decision = admissionDecision(value);
@@ -106,12 +48,14 @@ const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 	return current;
 };
 
-const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>): void => {
+const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>, host: object | undefined): void => {
 	if (typeof value !== "object" || value === null) return;
 
 	if (visits.has(value)) return;
 
 	visits.add(value);
+
+	if (isStateRoot(rawTargetOf(value)) && !refSet.has(value)) throw stateRootValueError(path);
 
 	for (const entry of walkDataEntries(value)) {
 		const child: unknown = entry.value;
@@ -126,66 +70,39 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>)
 			throw nonWritablePropertyError(child, childPath);
 		}
 
-		if (!proxyStateMap.has(child) && certifyAdmission(child, childPath) === "track")
-			walkDataPaths(child, childPath, visits);
-	}
-};
+		if (refSet.has(child)) continue;
 
-export const assertSafeDataPaths = (value: unknown, path: Array<string>, visits: Set<object>): void => {
-	walkDataPaths(value, path, visits);
-};
+		if (proxyStateMap.has(child)) {
+			if (isStateRoot(rawTargetOf(child))) throw stateRootValueError(childPath);
 
-const effectiveStrictOf = (target: object): boolean => getOptions(target)?.strict !== false;
+			if (host !== undefined) flagFormationCandidate(child, host);
 
-const proxiedChildTargetsOf = (nodeTarget: object): Array<object> => {
-	const children = new Array<object>();
-
-	for (const entry of walkDataEntries(nodeTarget)) {
-		const child: unknown = entry.value;
-
-		if (typeof child === "object" && child !== null && proxyStateMap.has(child)) children.push(rawTargetOf(child));
-	}
-
-	return children;
-};
-
-const assertStrictnessJoinOrRestamp = (
-	resolved: object,
-	receiverStrict: boolean,
-	receiverOptions: MutableNodeOptions | undefined,
-	key: string | symbol,
-): void => {
-	const incomingTarget = rawTargetOf(resolved);
-	const visits = new Set<object>();
-	const queue = [incomingTarget];
-	let hasLiveRoot = false;
-
-	while (queue.length > 0) {
-		const nodeTarget = queue.pop();
-
-		if (nodeTarget === undefined || visits.has(nodeTarget)) continue;
-
-		visits.add(nodeTarget);
-
-		for (const root of liveRootsOf(nodeTarget)) {
-			hasLiveRoot = true;
-
-			if (effectiveStrictOf(root) !== receiverStrict) throw strictnessJoinError(key);
+			continue;
 		}
 
-		for (const childTarget of proxiedChildTargetsOf(nodeTarget)) queue.push(childTarget);
+		if (certifyAdmission(child, childPath) === "track") walkDataPaths(child, childPath, visits, host);
 	}
-
-	if (hasLiveRoot) return;
-
-	for (const nodeTarget of visits) restampOptions(nodeTarget, receiverOptions);
 };
 
-export const assertInitializerStrictnessJoins = (
-	value: unknown,
-	receiverStrict: boolean,
-	receiverOptions: MutableNodeOptions | undefined,
-): void => {
+export const assertSafeDataPaths = (value: unknown, path: Array<string>, visits: Set<object>, host?: object): void => {
+	walkDataPaths(value, path, visits, host);
+};
+
+const stampedStrictOf = (target: object): boolean => getOptions(target)?.strict !== false;
+
+const isMarkedUnsafe = (value: object): boolean => isUnsafeTracked(value) || isUnsafeTracked(rawTargetOf(value));
+
+const assertStrictnessJoin = (resolved: object, receiverStrict: boolean, key: string | symbol): void => {
+	const incomingTarget = rawTargetOf(resolved);
+
+	if (stampedStrictOf(incomingTarget) === receiverStrict) return;
+
+	if (isMarkedUnsafe(resolved)) return;
+
+	throw strictnessJoinError(key);
+};
+
+export const assertInitializerStrictnessJoins = (value: unknown, receiverStrict: boolean): void => {
 	const visits = new Set<object>();
 
 	const walk = (current: unknown, path: Array<string>): void => {
@@ -196,7 +113,7 @@ export const assertInitializerStrictnessJoins = (
 		visits.add(current);
 
 		if (proxyStateMap.has(current)) {
-			assertStrictnessJoinOrRestamp(current, receiverStrict, receiverOptions, path[path.length - 1] ?? "");
+			assertStrictnessJoin(current, receiverStrict, path[path.length - 1] ?? "");
 
 			return;
 		}
@@ -269,6 +186,8 @@ const refusesWrite = (target: object, property: string | symbol, value: unknown)
 
 let installed = false;
 
+let formationSetDepth = 0;
+
 export function installBoundary(): void {
 	if (installed) return;
 
@@ -308,13 +227,17 @@ export function installBoundary(): void {
 					const strict = receiverOptions?.strict !== false;
 
 					if (typeof resolved === "object" && resolved !== null) {
+						if (isStateRoot(rawTargetOf(resolved)) && !refSet.has(resolved))
+							throw stateRootValueError(isInitializing() ? undefined : location);
+
 						if (proxyStateMap.has(resolved)) {
-							assertStrictnessJoinOrRestamp(resolved, strict, receiverOptions, prop);
+							flagFormationCandidate(resolved, target);
+							assertStrictnessJoin(resolved, strict, prop);
 						} else {
 							const decision = admissionDecision(resolved);
 
 							if (strict && !isInitializing() && decision.lane === "track")
-								assertSafeDataPaths(resolved, location, new Set());
+								assertSafeDataPaths(resolved, location, new Set(), target);
 
 							if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
@@ -329,28 +252,20 @@ export function installBoundary(): void {
 
 					if (refusesWrite(target, prop, resolved)) return false;
 
-					const previous = ownDataValue(target, prop);
-					const truncation = prop === "length" ? arrayLengthTruncation(target, previous, resolved) : undefined;
-
 					setDepth += 1;
+					formationSetDepth += 1;
 
 					try {
-						const succeeded = defaultSet(target, prop, resolved, receiver);
-
-						if (succeeded) maintainInEdgeOnSet(target, prop, previous, truncation?.from, truncation?.values);
-
-						return succeeded;
+						return defaultSet(target, prop, resolved, receiver);
 					} finally {
 						setDepth -= 1;
+						formationSetDepth -= 1;
+
+						if (formationSetDepth === 0) clearFormationPulse();
 					}
 				},
 				deleteProperty(target, prop) {
-					const previous = ownDataValue(target, prop);
-					const succeeded = defaultDelete(target, prop);
-
-					if (succeeded) maintainInEdgeOnDelete(target, prop, previous);
-
-					return succeeded;
+					return defaultDelete(target, prop);
 				},
 				defineProperty(target, prop, descriptor) {
 					if (setDepth > 0 || isInitializing()) return Reflect.defineProperty(target, prop, descriptor);

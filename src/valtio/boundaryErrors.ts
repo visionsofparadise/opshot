@@ -70,9 +70,14 @@ export const snapshotDonationError = (key: string | symbol): Error =>
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
 	);
 
+export const stateRootValueError = (path?: ReadonlyArray<string>): Error =>
+	new Error(
+		`opshot: a state root${locationClause(path)} cannot be a tracked value (a root is a handle, not data; carrying it loses its state-ness, options, and stream). Options:\n- createGroup for composition across states\n- point one level down for a parent pointer (e.g. state.doc.sections[i].parent = state.doc)\n- ignore(value) for a bare reference`,
+	);
+
 export const strictnessJoinError = (key: string | symbol): Error =>
 	new Error(
-		`opshot: cannot join a strict and a non-strict graph at "${String(key)}" (a non-strict graph can admit values the strict promise excludes). Options:\n- match the states' strict options\n- clone the value into the receiving state\n- share it as ignore()`,
+		`opshot: cannot join a strict and a non-strict graph at "${String(key)}" (admission stamps disagree and the value is not marked unsafeTrack). Options:\n- unsafeTrack(value) to declare the caveat lane\n- re-create the value as plain data in the receiving state`,
 	);
 
 export const ownProtoKeyError = (): Error =>

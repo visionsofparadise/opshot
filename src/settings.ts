@@ -30,8 +30,8 @@ export interface MutableNodeOptions {
 
 	/**
 	 * When false, tracks values that would otherwise be rejected. Defaults to true.
-	 * Graphs of differing strictness refuse to join: match this option on both sides, clone the
-	 * value into the receiving state, or share it as `ignore()`.
+	 * Graphs of differing strictness refuse to join: match this option on both sides, mark the
+	 * value with `unsafeTrack`, or re-create it as plain data in the receiving state.
 	 */
 	readonly strict?: boolean;
 }
@@ -65,14 +65,4 @@ export function inheritOptions(parentTarget: object, childTarget: object): void 
 	if (proxyStateMap.has(childTarget)) return;
 
 	optionsByTarget.set(childTarget, parent);
-}
-
-export function restampOptions(target: object, options: MutableNodeOptions | undefined): void {
-	if (options === undefined) {
-		optionsByTarget.delete(target);
-
-		return;
-	}
-
-	optionsByTarget.set(target, options);
 }

@@ -2,6 +2,22 @@ import { resolveWriteProxy } from "../emit/resolveWriteProxy";
 import { runTransaction } from "../transact";
 import { applyMutations, type ApplyDirection } from "./applyMutations";
 import { isMutation, type Operation } from "./operation";
+import type { OperationPath } from "./path";
+
+const isFrozenCopyablePath = (value: unknown): value is OperationPath =>
+	Array.isArray(value) && value.every((segment) => typeof segment === "string" || typeof segment === "number");
+
+const isWellFormedLinkHalf = (value: unknown): boolean =>
+	typeof value === "object" &&
+	value !== null &&
+	"verb" in value &&
+	value.verb === "link" &&
+	"path" in value &&
+	"ref" in value &&
+	isFrozenCopyablePath(value.path) &&
+	isFrozenCopyablePath(value.ref);
+
+const isApplicableHalf = (value: unknown): boolean => isMutation(value) || isWellFormedLinkHalf(value);
 
 const assertApplicable: (operation: unknown) => asserts operation is Operation = (operation) => {
 	if (isMutation(operation)) {
@@ -13,8 +29,8 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
 		operation === null ||
 		!("do" in operation) ||
 		!("undo" in operation) ||
-		!isMutation(operation.do) ||
-		!isMutation(operation.undo)
+		!isApplicableHalf(operation.do) ||
+		!isApplicableHalf(operation.undo)
 	) {
 		throw new Error(
 			"opshot: this op is a copy (spread, JSON, or structuredClone) and has lost its value. Apply the op objects the listener delivered; never copy them.",
@@ -23,17 +39,21 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
 };
 
 /**
- * Applies operation pairs to a state in the given direction. Ops are idempotent: re-applying a
- * delivered pair at a matching state is a no-op.
+ * Applies operation pairs to a state in the given direction. A delivered batch is the
+ * self-contained unit: re-applying it at a matching state is a no-op for all three verbs, but a
+ * link's referent is defined by its stream position, so an op is not meaningful in isolation.
  *
- * `"do"` applies each pair's do half in delivery order. `"undo"` applies each pair's undo half in reverse delivery order.
- * Runs through `transact` and cannot run inside one — call at top level.
+ * `"do"` applies each pair's do half in delivery order. `"undo"` applies each pair's undo half in
+ * reverse delivery order. The library owns that ordering and the target-path rule: a link applies
+ * only after the ops that establish its ref target's path in that direction. Runs through `transact`
+ * and cannot run inside one — call at top level.
  *
- * The empty path (`"/"`) is the state's content: an assign at `[]` replaces content on the existing
- * root; a delete at the root is refused. Cycles and aliases ride as closed ops — both halves carry
- * what they need, including cyclic clones. A JSON round trip of a carried value keeps content;
- * in-memory sharing inside that value is replay-side only and does not survive `JSON.stringify`.
- * Never spread, JSON-round-trip, or `structuredClone` an op before applying it.
+ * Halves are assign, delete, or link (`verb`, `path`, and on assign `.value`, on link `.ref`). Link
+ * ref resolvability is batch-scoped: a ref is defined by earlier ops in the stream and is not
+ * preflighted. A well-formed link half applies without the brand; assign and delete still require it.
+ * Never spread, JSON-round-trip, or `structuredClone` a value-bearing half before applying it.
+ * Link-carried sharing survives serialization when halves are projected (`verb`/`path`/`ref`/`.value`);
+ * value carriage of unfound candidates and fresh-subtree internal aliasing keep in-memory residue only.
  *
  * @param state - State to change.
  * @param operations - Operation pairs to apply.

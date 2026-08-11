@@ -14,6 +14,32 @@ interface PackageManifest {
 
 const bareSpecifier = /(?:from|import|require)\s*\(?\s*['"](?:valtio|proxy-compare)(?:\/[^'"]*)?['"]/;
 
+// Immediately preceding block comment for a declaration match, or undefined.
+const jsdocBefore = (source: string, declaration: RegExp): string | undefined => {
+	const match = source.match(declaration);
+
+	if (match?.index === undefined) return undefined;
+
+	const prefix = source.slice(0, match.index);
+	const blocks = prefix.match(/\/\*\*[\s\S]*?\*\//g);
+
+	if (blocks === null) return undefined;
+
+	const last = blocks.at(-1);
+
+	if (last === undefined) return undefined;
+
+	const lastIndex = prefix.lastIndexOf(last);
+	const between = prefix.slice(lastIndex + last.length);
+
+	if (between.trim() !== "") return undefined;
+
+	return last;
+};
+
+// Flatten jsdoc line-prefix stars so multi-line phrases match as prose.
+const jsdocProse = (block: string): string => block.replace(/\n\s*\*\s?/g, "\n").replace(/\n+/g, " ");
+
 describe("package build", () => {
 	it("emits one entry matching exports['.'] with no bare valtio or proxy-compare specifier", async () => {
 		const outDir = await mkdtemp(join(tmpdir(), "opshot-build-"));
@@ -50,62 +76,72 @@ describe("package build", () => {
 			const declaration = await readFile(join(outDir, "index.d.ts"), "utf8");
 
 			expect(
-				/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+createMutableState\b/.test(declaration),
+				jsdocBefore(declaration, /declare\s+function\s+createMutableState\b/) !== undefined,
 				"createMutableState must be preceded by a /** */ block",
 			).toBe(true);
 
 			expect(
-				/\/\*\*[\s\S]*?\*\/\s*readonly\s+emitOn\s*\?/.test(declaration),
+				jsdocBefore(declaration, /readonly\s+emitOn\s*\?/) !== undefined,
 				"emitOn must be preceded by a /** */ block",
 			).toBe(true);
 
-			const createMutableStateBlock = declaration.match(
-				/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+createMutableState\b/,
-			)?.[0];
+			const createMutableStateBlock = jsdocBefore(declaration, /declare\s+function\s+createMutableState\b/);
 			expect(createMutableStateBlock, "createMutableState jsdoc block present").toBeDefined();
+			const createMutableStateProse = jsdocProse(createMutableStateBlock!);
 			expect(
-				createMutableStateBlock,
+				createMutableStateProse,
 				"closed-graph definition: reachable from its root through tracked edges",
 			).toMatch(/reachable from its root through tracked edges/);
-			expect(createMutableStateBlock, "endpoint vocabulary").toMatch(/endpoint/);
-			expect(createMutableStateBlock, "strictness join refusal").toMatch(/differing strictness refuse to join/);
-			expect(createMutableStateBlock, "cycle retirement").toMatch(/no cycle throws/);
-
-			const applyOperationsBlock = declaration.match(
-				/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+applyOperations\b/,
-			)?.[0];
-			expect(applyOperationsBlock, "applyOperations jsdoc block present").toBeDefined();
-			expect(applyOperationsBlock, "idempotence guarantee").toMatch(/idempotent/i);
-			expect(applyOperationsBlock, "root path /").toMatch(/"\/"/);
-			expect(applyOperationsBlock, "JSON residue for carried sharing").toMatch(
-				/in-memory sharing[\s\S]*replay-side/i,
+			expect(createMutableStateProse, "endpoint vocabulary").toMatch(/endpoint/);
+			expect(createMutableStateProse, "strictness join refusal").toMatch(/differing strictness refuse to join/);
+			expect(createMutableStateProse, "cycle retirement").toMatch(/no cycle throws/);
+			expect(createMutableStateProse, "batch-scoped stream contract").toMatch(
+				/self-contained unit is the transaction batch/,
 			);
+			expect(createMutableStateProse, "link-carried sharing in stream clause").toMatch(/link ops/);
 
-			const diffObjectsBlock = declaration.match(/\/\*\*[\s\S]*?\*\/\s*declare\s+function\s+diffObjects\b/)?.[0];
+			const applyOperationsBlock = jsdocBefore(declaration, /declare\s+function\s+applyOperations\b/);
+			expect(applyOperationsBlock, "applyOperations jsdoc block present").toBeDefined();
+			const applyOperationsProse = jsdocProse(applyOperationsBlock!);
+			expect(applyOperationsProse, "batch is the self-contained unit").toMatch(/self-contained unit/i);
+			expect(applyOperationsProse, "link verb in algebra").toMatch(/\blink\b/);
+			expect(applyOperationsProse, "target-path ordering rule").toMatch(/target-path/i);
+			expect(applyOperationsProse, "batch-scoped ref resolvability").toMatch(/batch-scoped/i);
+			expect(applyOperationsProse, "scoped JSON: link-carried sharing survives").toMatch(
+				/Link-carried sharing survives serialization/i,
+			);
+			expect(applyOperationsProse, "projection recipe includes ref").toMatch(/\.ref/);
+
+			const diffObjectsBlock = jsdocBefore(declaration, /declare\s+function\s+diffObjects\b/);
 			expect(diffObjectsBlock, "diffObjects jsdoc block present").toBeDefined();
-			expect(diffObjectsBlock, "carriage closure").toMatch(/closure/);
-			expect(diffObjectsBlock, "per-route minting").toMatch(/k routes mints k ops/);
+			const diffObjectsProse = jsdocProse(diffObjectsBlock!);
+			expect(diffObjectsProse, "plain-object value diffing with severance").toMatch(/severance/i);
+			expect(diffObjectsProse, "no links on public plain diff").toMatch(/mints no links/);
 
-			const stateSubscribeBlock = declaration.match(
-				/\/\*\*[\s\S]*?delivered before unsubscribe returns[\s\S]*?\*\/\s*declare\s+function\s+subscribe\s*\(\s*state:/,
-			)?.[0];
-			expect(stateSubscribeBlock, "subscribe state-overload delivery contract").toBeDefined();
-			expect(stateSubscribeBlock, "reachable-graph emission doctrine").toMatch(
+			const stateSubscribeBlock = jsdocBefore(declaration, /declare\s+function\s+subscribe\s*\(\s*state:/);
+			expect(stateSubscribeBlock, "subscribe state-overload jsdoc block present").toBeDefined();
+			const stateSubscribeProse = jsdocProse(stateSubscribeBlock!);
+			expect(stateSubscribeProse, "reachable-graph emission doctrine").toMatch(
 				/every change in its reachable graph/,
 			);
+			expect(stateSubscribeProse, "delivery-before-unsubscribe contract").toMatch(
+				/delivered before unsubscribe returns/,
+			);
 
-			const groupSubscribeBlock = declaration.match(
-				/\/\*\*[\s\S]*?best-effort at the group edge[\s\S]*?\*\/\s*declare\s+function\s+subscribe\s*\(\s*group:/,
-			)?.[0];
-			expect(groupSubscribeBlock, "subscribe group-overload best-effort line").toBeDefined();
+			const groupSubscribeBlock = jsdocBefore(declaration, /declare\s+function\s+subscribe\s*\(\s*group:/);
+			expect(groupSubscribeBlock, "subscribe group-overload jsdoc block present").toBeDefined();
+			const groupSubscribeProse = jsdocProse(groupSubscribeBlock!);
+			expect(groupSubscribeProse, "subscribe group-overload best-effort line").toMatch(
+				/best-effort at the group edge/,
+			);
 
-			const ignoreBlock = declaration.match(/\/\*\*[\s\S]*?\*\/\s*declare\s+const\s+ignore\b/)?.[0];
+			const ignoreBlock = jsdocBefore(declaration, /declare\s+const\s+ignore\b/);
 			expect(ignoreBlock, "ignore jsdoc block present").toBeDefined();
-			expect(ignoreBlock, "ignore as endpoint").toMatch(/endpoint/);
+			expect(jsdocProse(ignoreBlock!), "ignore as endpoint").toMatch(/endpoint/);
 
-			const strictBlock = declaration.match(/\/\*\*[\s\S]*?\*\/\s*readonly\s+strict\s*\?/)?.[0];
+			const strictBlock = jsdocBefore(declaration, /readonly\s+strict\s*\?/);
 			expect(strictBlock, "strict option jsdoc present").toBeDefined();
-			expect(strictBlock, "strictness-join remedies").toMatch(/refuse to join/);
+			expect(jsdocProse(strictBlock!), "strictness-join remedies").toMatch(/refuse to join/);
 		} finally {
 			await rm(outDir, { recursive: true, force: true });
 		}

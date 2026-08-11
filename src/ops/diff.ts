@@ -1,8 +1,15 @@
 import { getRegisteredTarget, isSameIdentity } from "../identity";
-import { parentsOf, reachesNode } from "../inEdges";
-import { carriedOwnKeysOf, walkDataEntries } from "../utils/dataEntries";
+import { walkDataEntries } from "../utils/dataEntries";
 import { isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
-import { createAssignMutation, createDeleteMutation, getValueOriginal, type Operation } from "./operation";
+import { externalRoutesOf, resolveCandidates, takeFormationCandidates } from "./commitWalk";
+import {
+	createAssignMutation,
+	createDeleteMutation,
+	createLinkMutation,
+	getValueOriginal,
+	type Mutation,
+	type Operation,
+} from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
@@ -12,23 +19,17 @@ type Ancestors = Map<object, Set<object>>;
 
 const UNCAPPED_WEIGHT = Number.MAX_SAFE_INTEGER;
 
-interface EscapeGroup {
-	readonly pair: Operation;
-	readonly parents: Set<object>;
-}
-
 interface DiffResult {
 	readonly weight: number;
-	readonly groups: Array<EscapeGroup>;
 }
 
 interface DiffContext {
 	readonly ops: Array<Operation>;
 	readonly ancestors: Ancestors;
-	readonly beforeRoot: object;
-	readonly afterRoot: object;
-	readonly diffRootLive: object;
-	readonly climbMemo: Map<object, Map<object, boolean>>;
+	readonly ancestorPaths: Map<object, OperationPath>;
+	readonly liveRoot: object;
+	candidateRoutes: Map<object, ReadonlyArray<OperationPath>>;
+	readonly removalLives: Set<object>;
 }
 
 class IncompatibleObjectRootsError extends Error {
@@ -55,118 +56,120 @@ const changePair = (path: OperationPath, before: unknown, after: unknown): Opera
 
 const weighCarried = (value: unknown): number => weighValue(value, UNCAPPED_WEIGHT);
 
-const emptyResult = (): DiffResult => ({ weight: 0, groups: [] });
+const emptyResult = (): DiffResult => ({ weight: 0 });
 
 const mergeResults = (results: ReadonlyArray<DiffResult>): DiffResult => {
 	let weight = 0;
-	const groups = new Array<EscapeGroup>();
 
-	for (const result of results) {
-		weight += result.weight;
-		groups.push(...result.groups);
-	}
+	for (const result of results) weight += result.weight;
 
-	return { weight, groups };
+	return { weight };
 };
 
 const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
 
-const resolveLiveAtPath = (root: object, path: OperationPath): object | undefined => {
-	let current: unknown = root;
+const routesOf = (context: DiffContext, live: object): ReadonlyArray<OperationPath> =>
+	context.candidateRoutes.get(live) ?? [];
 
-	for (const segment of path) {
-		if (!isObjectLike(current)) return undefined;
+const undoForReplaced = (context: DiffContext, path: OperationPath, before: unknown): Mutation => {
+	if (!isObjectLike(before)) return createAssignMutation(path, before);
 
-		current = Reflect.get(current, segment);
-	}
+	const live = liveOf(before);
+	const external = externalRoutesOf(routesOf(context, live), path);
 
-	if (!isObjectLike(current)) return undefined;
+	if (external[0] !== undefined) return createLinkMutation(path, external[0]);
 
-	return liveOf(current);
+	return createAssignMutation(path, before);
 };
 
-const edgeKeyEquals = (tableKey: string | number, pathSegment: unknown): boolean =>
-	tableKey === pathSegment || String(tableKey) === String(pathSegment);
-
-const collectEscapes = (
-	value: unknown,
-	opPath: OperationPath,
+const linkOperation = (
 	context: DiffContext,
-	excludeOwnAddress: boolean,
-): Set<object> => {
-	const escapes = new Set<object>();
+	path: OperationPath,
+	ref: OperationPath,
+	before: unknown,
+	beforePresent: boolean,
+): Operation => ({
+	do: createLinkMutation(path, ref),
+	undo: beforePresent ? undoForReplaced(context, path, before) : createDeleteMutation(path),
+});
 
-	if (!isCloneable(value)) return escapes;
-
+const harvestInteriorCandidates = (context: DiffContext, value: object): void => {
+	const lives = new Set<object>();
 	const visited = new Set<object>();
-	const liveVisited = new Set<object>();
-	const carriedRootLive = liveOf(value);
 
-	const visit = (node: unknown): void => {
+	const visit = (node: object): void => {
+		const live = liveOf(node);
+
+		if (visited.has(live)) return;
+
+		visited.add(live);
+
+		if (getRegisteredTarget(node) !== undefined) lives.add(live);
+
 		if (!isCloneable(node)) return;
 
-		if (visited.has(node)) return;
+		for (const entry of walkDataEntries(node)) {
+			const child: unknown = entry.value;
 
-		visited.add(node);
-		liveVisited.add(liveOf(node));
+			if (!isObjectLike(child)) continue;
 
-		for (const key of carriedOwnKeysOf(node)) {
-			const descriptor = Reflect.getOwnPropertyDescriptor(node, key);
-
-			if (!descriptor || !("value" in descriptor)) continue;
-
-			visit(descriptor.value);
+			visit(child);
 		}
 	};
 
 	visit(value);
 
-	const addressParent =
-		excludeOwnAddress && opPath.length > 0
-			? opPath.length === 1
-				? liveOf(context.afterRoot)
-				: resolveLiveAtPath(context.afterRoot, createOperationPath(opPath.slice(0, -1)))
-			: undefined;
-	const addressKey = excludeOwnAddress && opPath.length > 0 ? opPath[opPath.length - 1] : undefined;
+	const missing = new Set<object>();
 
-	const isOutsideCarried = (parent: object): boolean => {
-		if (liveVisited.has(parent)) return false;
-
-		if (reachesNode(parent, carriedRootLive, context.climbMemo)) return false;
-
-		return true;
-	};
-
-	for (const live of liveVisited) {
-		const parents = parentsOf(live);
-
-		if (parents === undefined) continue;
-
-		for (const [parent, keys] of parents) {
-			if (
-				addressParent !== undefined &&
-				addressKey !== undefined &&
-				live === carriedRootLive &&
-				parent === addressParent
-			) {
-				let remainingKeys = 0;
-
-				for (const key of keys) {
-					if (!edgeKeyEquals(key, addressKey)) remainingKeys += 1;
-				}
-
-				if (remainingKeys === 0) continue;
-			}
-
-			if (!isOutsideCarried(parent)) continue;
-
-			if (!reachesNode(parent, context.diffRootLive, context.climbMemo)) continue;
-
-			escapes.add(parent);
-		}
+	for (const live of lives) {
+		if (!context.candidateRoutes.has(live)) missing.add(live);
 	}
 
-	return escapes;
+	if (missing.size === 0) return;
+
+	for (const [live, routes] of resolveCandidates(context.liveRoot, missing)) {
+		context.candidateRoutes.set(live, routes);
+	}
+};
+
+const valueHasEmbeddedEscapes = (context: DiffContext, value: unknown, formation: OperationPath): boolean => {
+	if (!isObjectLike(value) || !isCloneable(value) || context.candidateRoutes.size === 0) return false;
+
+	const visited = new Set<object>([liveOf(value)]);
+
+	const visit = (node: object): boolean => {
+		const live = liveOf(node);
+
+		if (visited.has(live)) return false;
+
+		visited.add(live);
+
+		const routes = context.candidateRoutes.get(live);
+
+		if (routes !== undefined && externalRoutesOf(routes, formation).length > 0) return true;
+
+		if (!isCloneable(node)) return false;
+
+		for (const entry of walkDataEntries(node)) {
+			const child: unknown = entry.value;
+
+			if (!isObjectLike(child)) continue;
+
+			if (visit(child)) return true;
+		}
+
+		return false;
+	};
+
+	for (const entry of walkDataEntries(value)) {
+		const child: unknown = entry.value;
+
+		if (!isObjectLike(child)) continue;
+
+		if (visit(child)) return true;
+	}
+
+	return false;
 };
 
 const commitOperation = (
@@ -178,19 +181,9 @@ const commitOperation = (
 ): DiffResult => {
 	context.ops.splice(opsStart, context.ops.length - opsStart, pair);
 
-	const escapes = new Set<object>();
+	if (path.length <= 1) return { weight: 0 };
 
-	if ("value" in pair.do) {
-		for (const parent of collectEscapes(getValueOriginal(pair.do), path, context, true)) escapes.add(parent);
-	}
-
-	if ("value" in pair.undo) {
-		for (const parent of collectEscapes(getValueOriginal(pair.undo), path, context, true)) escapes.add(parent);
-	}
-
-	const groups = escapes.size > 0 ? [{ pair, parents: escapes } satisfies EscapeGroup] : new Array<EscapeGroup>();
-
-	if (path.length <= 1) return { weight: 0, groups };
+	if (pair.do.verb === "link") return { weight: OPERATION_WEIGHT };
 
 	let weight = OPERATION_WEIGHT;
 
@@ -198,17 +191,130 @@ const commitOperation = (
 
 	if ("value" in pair.undo) weight += weighHalf(getValueOriginal(pair.undo));
 
-	return { weight, groups };
+	return { weight };
+};
+
+const commitLink = (
+	context: DiffContext,
+	path: OperationPath,
+	ref: OperationPath,
+	before: unknown,
+	beforePresent: boolean,
+): DiffResult =>
+	commitOperation(
+		context,
+		context.ops.length,
+		path,
+		linkOperation(context, path, ref, before, beforePresent),
+		weighCarried,
+	);
+
+const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : {});
+
+const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): DiffResult => {
+	const results = new Array<DiffResult>();
+
+	results.push(
+		commitOperation(context, context.ops.length, path, additionPair(path, emptyContainerOf(after)), weighCarried),
+	);
+
+	if (isPlainArray(after)) {
+		if (after.length > 0)
+			results.push(
+				commitOperation(
+					context,
+					context.ops.length,
+					appendOperationPath(path, "length"),
+					changePair(appendOperationPath(path, "length"), 0, after.length),
+					weighCarried,
+				),
+			);
+
+		for (let index = 0; index < after.length; index++) {
+			if (!Object.hasOwn(after, index)) continue;
+
+			results.push(pushAddition(context, appendOperationPath(path, index), after[index]));
+		}
+
+		results.push(diffObjectProperties(context, [], after, path, true));
+	} else {
+		for (const entry of walkDataEntries(after)) {
+			results.push(pushAddition(context, appendOperationPath(path, entry.key), entry.value));
+		}
+	}
+
+	return mergeResults(results);
+};
+
+const mintAssignment = (
+	context: DiffContext,
+	path: OperationPath,
+	before: unknown,
+	after: unknown,
+	beforePresent: boolean,
+): DiffResult => {
+	if (isObjectLike(after)) {
+		const live = liveOf(after);
+		const ancestorPath = context.ancestorPaths.get(live);
+
+		if (ancestorPath !== undefined) return commitLink(context, path, ancestorPath, before, beforePresent);
+
+		const external = externalRoutesOf(routesOf(context, live), path);
+
+		if (external[0] !== undefined) return commitLink(context, path, external[0], before, beforePresent);
+
+		if (isPlainObject(after) || isPlainArray(after)) {
+			if (context.candidateRoutes.has(live)) harvestInteriorCandidates(context, after);
+
+			if (valueHasEmbeddedEscapes(context, after, path)) {
+				if (!beforePresent) return mintDecomposedAddition(context, path, after);
+
+				const results = new Array<DiffResult>();
+				const opsStart = context.ops.length;
+
+				results.push(
+					commitOperation(
+						context,
+						opsStart,
+						path,
+						changePair(path, before, emptyContainerOf(after)),
+						weighCarried,
+					),
+				);
+
+				if (isPlainArray(after) && isPlainArray(before)) {
+					results.push(diffArray(context, before, after, path));
+				} else if (isPlainObject(after) && isPlainObject(before)) {
+					results.push(diffObjectProperties(context, before, after, path, false));
+				} else {
+					for (const entry of walkDataEntries(after)) {
+						results.push(pushAddition(context, appendOperationPath(path, entry.key), entry.value));
+					}
+				}
+
+				return mergeResults(results);
+			}
+		}
+	}
+
+	if (beforePresent) {
+		return commitOperation(context, context.ops.length, path, changePair(path, before, after), weighCarried);
+	}
+
+	return commitOperation(context, context.ops.length, path, additionPair(path, after), weighCarried);
 };
 
 const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult =>
-	commitOperation(context, context.ops.length, path, additionPair(path, after), weighCarried);
+	mintAssignment(context, path, undefined, after, false);
 
-const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult =>
-	commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
+const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult => {
+	if (isObjectLike(before)) context.removalLives.add(liveOf(before));
+
+	return commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
+};
 
 const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult =>
-	commitOperation(context, context.ops.length, path, changePair(path, before, after), weighCarried);
+	mintAssignment(context, path, before, after, true);
 
 const tryCollapse = (
 	context: DiffContext,
@@ -217,8 +323,12 @@ const tryCollapse = (
 	path: OperationPath,
 	opsStart: number,
 	walked: DiffResult,
-): { readonly result: DiffResult; readonly collapsed: boolean } => {
-	if (walked.weight === 0) return { result: walked, collapsed: false };
+): DiffResult => {
+	if (walked.weight === 0) return walked;
+
+	if (valueHasEmbeddedEscapes(context, after, path) || valueHasEmbeddedEscapes(context, before, path)) {
+		return walked;
+	}
 
 	const beforeWeight = weighValue(before, walked.weight);
 	const afterWeight = weighValue(after, walked.weight - beforeWeight);
@@ -241,71 +351,10 @@ const tryCollapse = (
 			return weighCarried(value);
 		};
 
-		return {
-			result: commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf),
-			collapsed: true,
-		};
+		return commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf);
 	}
 
-	return { result: walked, collapsed: false };
-};
-
-const frameAddressParent = (context: DiffContext, path: OperationPath): object | undefined => {
-	if (path.length === 0) return undefined;
-
-	if (path.length === 1) return liveOf(context.afterRoot);
-
-	return resolveLiveAtPath(context.afterRoot, createOperationPath(path.slice(0, -1)));
-};
-
-const parentContainedByFrame = (
-	parent: object,
-	frameLive: object,
-	addressParent: object | undefined,
-	context: DiffContext,
-): boolean => {
-	if (parent === frameLive) return true;
-
-	if (addressParent !== undefined && parent === addressParent) return true;
-
-	return reachesNode(parent, frameLive, context.climbMemo);
-};
-
-const processFrameExit = (
-	context: DiffContext,
-	before: object,
-	after: object,
-	path: OperationPath,
-	opsStart: number,
-	walked: DiffResult,
-	collapsed: boolean,
-): DiffResult => {
-	if (collapsed) return walked;
-
-	const frameLive = liveOf(after);
-	const addressParent = frameAddressParent(context, path);
-	const openGroups = new Array<EscapeGroup>();
-	let forceWholesale = false;
-
-	for (const group of walked.groups) {
-		const remaining = new Set<object>();
-
-		for (const parent of group.parents) {
-			if (!parentContainedByFrame(parent, frameLive, addressParent, context)) remaining.add(parent);
-		}
-
-		if (remaining.size === 0) {
-			forceWholesale = true;
-
-			break;
-		}
-
-		openGroups.push({ pair: group.pair, parents: remaining });
-	}
-
-	if (!forceWholesale) return { weight: walked.weight, groups: openGroups };
-
-	return commitOperation(context, opsStart, path, changePair(path, before, after), weighCarried);
+	return walked;
 };
 
 const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean =>
@@ -426,23 +475,21 @@ const walkContainer = (
 
 	enterAncestorPair(context.ancestors, before, after);
 
+	const afterLive = liveOf(after);
+	const priorPath = context.ancestorPaths.get(afterLive);
+
+	if (priorPath === undefined) context.ancestorPaths.set(afterLive, path);
+
 	try {
 		const opsStart = context.ops.length;
 		const walked = walk();
 
-		if (path.length === 0) return processFrameExit(context, before, after, path, opsStart, walked, false);
+		if (path.length === 0) return walked;
 
-		const { result: collapsed, collapsed: economicallyCollapsed } = tryCollapse(
-			context,
-			before,
-			after,
-			path,
-			opsStart,
-			walked,
-		);
-
-		return processFrameExit(context, before, after, path, opsStart, collapsed, economicallyCollapsed);
+		return tryCollapse(context, before, after, path, opsStart, walked);
 	} finally {
+		if (priorPath === undefined) context.ancestorPaths.delete(afterLive);
+
 		exitAncestorPair(context.ancestors, before, after);
 	}
 };
@@ -475,15 +522,58 @@ const getRootKind = (value: object): RootKind | undefined => {
 	return undefined;
 };
 
+const rewriteSurvivingUndos = (context: DiffContext): void => {
+	const lives = new Set<object>(context.removalLives);
+
+	for (const pair of context.ops) {
+		if (pair.undo.verb !== "assign") continue;
+
+		const original = getValueOriginal(pair.undo);
+
+		if (!isObjectLike(original)) continue;
+
+		const live = liveOf(original);
+
+		if (!context.candidateRoutes.has(live)) lives.add(live);
+	}
+
+	if (lives.size > 0) {
+		for (const [live, routes] of resolveCandidates(context.liveRoot, lives)) {
+			context.candidateRoutes.set(live, routes);
+		}
+	}
+
+	for (let index = 0; index < context.ops.length; index++) {
+		const pair = context.ops[index];
+
+		if (pair === undefined) continue;
+
+		if (pair.undo.verb !== "assign") continue;
+
+		const original = getValueOriginal(pair.undo);
+
+		if (!isObjectLike(original)) continue;
+
+		const live = liveOf(original);
+		const external = externalRoutesOf(context.candidateRoutes.get(live) ?? [], pair.do.path);
+		const surviving = external[0];
+
+		if (surviving === undefined) continue;
+
+		context.ops[index] = {
+			do: pair.do,
+			undo: createLinkMutation(pair.do.path, surviving),
+		};
+	}
+};
+
 /**
- * Produces invertible assign/delete pairs for the structural differences between two plain objects or arrays.
- * Neither argument need be a valtio snapshot.
+ * Produces invertible assign/delete pairs for the structural differences between two plain objects or
+ * arrays. Neither argument need be a valtio snapshot.
  *
- * Cycles and aliases are ordinary topology: pair re-entry is equality-in-progress, not an error.
- * An interior change reachable by k routes mints k ops, one per simple route. When a carried value
- * would hold an edge escaping the carried subtree, the mint surfaces to **closure** — the minimal
- * ancestor that contains every such target — so both halves close. Groups still open after the
- * root descent mint the root op (`assign` at `[]`, rendered as `"/"`). No cycle throws.
+ * Plain-object value diffing with severance: shared structure is not carried as links, each path is
+ * independent, and this public surface has no live graph and mints no links. Cycles are ordinary
+ * topology: pair re-entry is equality-in-progress, not an error.
  *
  * @param before - Earlier value.
  * @param after - Later value.
@@ -496,26 +586,21 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 	if (beforeKind === undefined || beforeKind !== afterKind) throw new IncompatibleObjectRootsError();
 
 	const ops = new Array<Operation>();
+	const liveRoot = liveOf(after);
+	const candidates = new Set<object>(takeFormationCandidates(liveRoot));
+	const candidateRoutes = new Map(resolveCandidates(liveRoot, candidates));
+
 	const context: DiffContext = {
 		ops,
 		ancestors: new Map(),
-		beforeRoot: before,
-		afterRoot: after,
-		diffRootLive: liveOf(after),
-		climbMemo: new Map(),
+		ancestorPaths: new Map(),
+		liveRoot,
+		candidateRoutes,
+		removalLives: new Set(),
 	};
 
-	const result = diffValue(context, before, after, createOperationPath([]));
-
-	if (result.groups.length > 0) {
-		commitOperation(
-			context,
-			0,
-			createOperationPath([]),
-			changePair(createOperationPath([]), before, after),
-			weighCarried,
-		);
-	}
+	diffValue(context, before, after, createOperationPath([]));
+	rewriteSurvivingUndos(context);
 
 	return ops;
 }

@@ -2,7 +2,7 @@ import { createChannel } from "../createChannel";
 import { createGroup } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { TrackedDate, TrackedMap, TrackedSet, type Operation, type OperationPath } from "../index";
-import { type Mutation } from "../ops/operation";
+import { createLinkMutation, type LinkMutation, type Mutation } from "../ops/operation";
 import { useMutableState } from "../react/useMutableState";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
@@ -26,6 +26,22 @@ describe("typing", () => {
 	it("exports Operation and OperationPath from the package root", () => {
 		expectTypeOf<Operation>().toMatchTypeOf<{ readonly do: Mutation; readonly undo: Mutation }>();
 		expectTypeOf<OperationPath>().toEqualTypeOf<ReadonlyArray<string | number>>();
+	});
+
+	it("includes LinkMutation in the Mutation union", () => {
+		expectTypeOf<LinkMutation>().toMatchTypeOf<Mutation>();
+		expectTypeOf(createLinkMutation(["alias"], ["shared"])).toEqualTypeOf<LinkMutation>();
+		expectTypeOf<Mutation["verb"]>().toEqualTypeOf<"assign" | "delete" | "link">();
+
+		const operation: Operation = {
+			do: { verb: "link", path: ["alias"], ref: ["shared"] },
+			undo: { verb: "delete", path: ["alias"] },
+		};
+
+		expectTypeOf(operation.do).toMatchTypeOf<Mutation>();
+		if (operation.do.verb === "link") {
+			expectTypeOf(operation.do.ref).toEqualTypeOf<OperationPath>();
+		}
 	});
 
 	it("types address components entirely inside flat paths", () => {

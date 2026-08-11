@@ -1,6 +1,6 @@
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { walkDataEntries } from "../utils/dataEntries";
-import { getValueOriginal, type AssignMutation, type Mutation, type Operation } from "./operation";
+import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndex, isCanonicalArrayIndexString, isObjectLike, MAX_ARRAY_LENGTH } from "./predicates";
 
@@ -18,6 +18,9 @@ interface ResolvedTerminal {
 
 const unresolvedError = (path: OperationPath): Error =>
 	new Error(`opshot: ${formatOperationPath(path)} does not resolve to a supported operation address`);
+
+const linkError = (path: OperationPath, ref: OperationPath, reason: string): Error =>
+	new Error(`opshot: link at ${formatOperationPath(path)} with ref ${formatOperationPath(ref)} ${reason}`);
 
 const isWritableDataDescriptor = (descriptor: PropertyDescriptor | undefined): boolean =>
 	descriptor !== undefined && "value" in descriptor && descriptor.writable === true;
@@ -146,6 +149,8 @@ const resolveTraversalSegment = (parent: unknown, segment: unknown, path: Operat
 };
 
 const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal => {
+	if (path.length === 0) throw new Error("opshot: root operations are not supported");
+
 	let parent: unknown = root;
 
 	for (let index = 0; index < path.length - 1; index++) parent = resolveTraversalSegment(parent, path[index], path);
@@ -155,23 +160,60 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 	return { parent, segment: path[path.length - 1] };
 };
 
-const applyRoot = (root: object, operation: Mutation): void => {
-	if (operation.verb === "delete") {
-		throw new Error("opshot: the root cannot be deleted; a root operation replaces content");
+export const resolveRefValue = (root: object, ref: OperationPath, linkPath?: OperationPath): object => {
+	let current: unknown = root;
+
+	for (let index = 0; index < ref.length; index++) {
+		if (!isObjectLike(current)) {
+			throw linkPath === undefined ? unresolvedError(ref) : linkError(linkPath, ref, "does not resolve");
+		}
+
+		try {
+			current = requirePlainProperty(current, ref[index], ref);
+		} catch {
+			throw linkPath === undefined ? unresolvedError(ref) : linkError(linkPath, ref, "does not resolve");
+		}
 	}
 
-	restoreValue(
-		getValuePayload(operation),
-		(value) => {
-			if (!isObjectLike(value)) throw unresolvedError(operation.path);
+	if (!isObjectLike(current)) {
+		throw linkPath === undefined
+			? new Error(`opshot: ${formatOperationPath(ref)} resolves to a non-object`)
+			: linkError(linkPath, ref, "resolves to a non-object");
+	}
 
-			restoreRecordedContent(root, value, new WeakSet());
-		},
-		() => root,
-	);
+	return current;
 };
 
-const applyPlain = (parent: object, segment: unknown, operation: Mutation): void => {
+const applyLink = (root: object, operation: LinkMutation): void => {
+	const path = operation.path;
+	const ref = operation.ref;
+
+	if (path.length === 0) throw linkError(path, ref, "does not resolve to a supported operation address");
+
+	const terminal = resolveTerminal(root, path);
+
+	if (Array.isArray(terminal.parent) && terminal.segment === "length") {
+		throw linkError(path, ref, "cannot address array length");
+	}
+
+	const key = requirePlainSegment(terminal.parent, terminal.segment, path);
+	const descriptor = Reflect.getOwnPropertyDescriptor(terminal.parent, key);
+	const present = descriptor !== undefined && descriptor.enumerable && "value" in descriptor;
+
+	if (descriptor !== undefined && !present) throw unresolvedError(path);
+
+	if (!present) {
+		const inheritedDescriptor = getInheritedDescriptor(terminal.parent, key);
+
+		if (inheritedDescriptor && !("value" in inheritedDescriptor)) {
+			throw new Error(`opshot: ${formatOperationPath(path)} resolves to an inherited accessor`);
+		}
+	}
+
+	Reflect.set(terminal.parent, key, resolveRefValue(root, ref, path));
+};
+
+const applyPlain = (parent: object, segment: unknown, operation: Exclude<Mutation, LinkMutation>): void => {
 	const path = operation.path;
 
 	if (Array.isArray(parent) && segment === "length") {
@@ -220,8 +262,8 @@ const applyPlain = (parent: object, segment: unknown, operation: Mutation): void
 };
 
 const applyMutation = (root: object, operation: Mutation): void => {
-	if (operation.path.length === 0) {
-		applyRoot(root, operation);
+	if (operation.verb === "link") {
+		applyLink(root, operation);
 
 		return;
 	}

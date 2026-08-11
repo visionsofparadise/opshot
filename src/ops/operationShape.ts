@@ -2,8 +2,17 @@ import type { Mutation, Operation } from "./operation";
 
 export const shapeHalf = (
 	half: Mutation,
-): { verb: Mutation["verb"]; path: ReadonlyArray<string | number>; value?: unknown } =>
-	"value" in half ? { verb: half.verb, path: half.path, value: half.value } : { verb: half.verb, path: half.path };
+): {
+	verb: Mutation["verb"];
+	path: ReadonlyArray<string | number>;
+	value?: unknown;
+	ref?: ReadonlyArray<string | number>;
+} =>
+	half.verb === "link"
+		? { verb: half.verb, path: half.path, ref: half.ref }
+		: "value" in half
+			? { verb: half.verb, path: half.path, value: half.value }
+			: { verb: half.verb, path: half.path };
 
 export const shapeOps = (
 	ops: ReadonlyArray<Operation>,

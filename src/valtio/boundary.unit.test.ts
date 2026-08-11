@@ -6,49 +6,16 @@ import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 import { installBoundary } from "./boundary";
 import { createMutableState } from "../createMutableState";
 import { peelIdentityLayer } from "../identity";
-import { isStateRoot, liveRootsOf, parentsOf } from "../inEdges";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
+import { getOptions } from "../settings";
 import { ignore } from "../ignore";
-import { TrackedMap } from "../tracked/trackedMap";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { shapeOps } from "../ops/operationShape";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
-
-const edgeSnapshotOf = (nodes: ReadonlyArray<object>): Map<object, Map<object, Set<string | number>>> => {
-	const snapshotTable = new Map<object, Map<object, Set<string | number>>>();
-
-	for (const node of nodes) {
-		const parents = parentsOf(node);
-
-		if (parents === undefined) continue;
-
-		snapshotTable.set(node, new Map([...parents].map(([parent, keys]) => [parent, new Set(keys)])));
-	}
-
-	return snapshotTable;
-};
-
-const expectEdgesEqual = (
-	left: Map<object, Map<object, Set<string | number>>>,
-	right: Map<object, Map<object, Set<string | number>>>,
-): void => {
-	expect(left.size).toBe(right.size);
-
-	for (const [child, leftParents] of left) {
-		const rightParents = right.get(child);
-
-		expect(rightParents).toBeDefined();
-		expect(leftParents.size).toBe(rightParents!.size);
-
-		for (const [parent, leftKeys] of leftParents) {
-			expect(rightParents!.get(parent)).toEqual(leftKeys);
-		}
-	}
-};
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
 	const emissions = new Array<{ state: T; ops: Array<Operation> }>();
@@ -1204,8 +1171,6 @@ describe("boundary: strict false", () => {
 
 		nonStrict.lookup = null;
 
-		expect(liveRootsOf(rawTargetOf(detached)).size).toBe(0);
-
 		const strict = createMutableState({ lookup: detached });
 
 		expect(strict.lookup).toBe(detached);
@@ -1302,9 +1267,9 @@ describe("boundary: strict false", () => {
 
 describe("boundary: strictness join", () => {
 	const joinMessage =
-		'opshot: cannot join a strict and a non-strict graph at "box" (a non-strict graph can admit values the strict promise excludes). Options:\n- match the states\' strict options\n- clone the value into the receiving state\n- share it as ignore()';
+		'opshot: cannot join a strict and a non-strict graph at "box" (admission stamps disagree and the value is not marked unsafeTrack). Options:\n- unsafeTrack(value) to declare the caveat lane\n- re-create the value as plain data in the receiving state';
 
-	it("throws when a strict state receives a live node from a non-strict graph", () => {
+	it("throws when a strict state receives a live unmarked node from a non-strict graph", () => {
 		const loose = createMutableState({ shared: { n: 1 } }, { strict: false });
 		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
 
@@ -1315,12 +1280,42 @@ describe("boundary: strictness join", () => {
 		expect(strict.box).toBeNull();
 	});
 
-	it("throws when a non-strict state receives a live node from a strict graph", () => {
+	it("throws when a non-strict state receives a live unmarked node from a strict graph", () => {
 		const strict = createMutableState({ shared: { n: 1 } });
 		const loose = createMutableState<{ box: { n: number } | null }>({ box: null }, { strict: false });
 
 		expect(() => {
 			loose.box = strict.shared;
+		}).toThrow(joinMessage);
+
+		expect(loose.box).toBeNull();
+	});
+
+	it("throws when a detached unmarked loose-stamped node enters a strict graph", () => {
+		const loose = createMutableState<{ shared: { n: number } | null }>({ shared: { n: 1 } }, { strict: false });
+		const detached = loose.shared!;
+
+		loose.shared = null;
+
+		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
+
+		expect(() => {
+			strict.box = detached;
+		}).toThrow(joinMessage);
+
+		expect(strict.box).toBeNull();
+	});
+
+	it("throws when a detached unmarked strict-stamped node enters a loose graph", () => {
+		const strict = createMutableState<{ shared: { n: number } | null }>({ shared: { n: 1 } });
+		const detached = strict.shared!;
+
+		strict.shared = null;
+
+		const loose = createMutableState<{ box: { n: number } | null }>({ box: null }, { strict: false });
+
+		expect(() => {
+			loose.box = detached;
 		}).toThrow(joinMessage);
 
 		expect(loose.box).toBeNull();
@@ -1358,7 +1353,18 @@ describe("boundary: strictness join", () => {
 		expect(right.box.n).toBe(2);
 	});
 
-	it("admits a detached loose-admitted subtree into a strict state on assignment", () => {
+	it("admits a marked value still live in a loose graph into a strict one", () => {
+		const map = new Map<string, number>();
+		const loose = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
+		const strict = createMutableState<{ box: Map<string, number> | null }>({ box: null });
+
+		strict.box = loose.lookup;
+
+		expect(strict.box).toBe(loose.lookup);
+		expect(isUnsafeTracked(map)).toBe(true);
+	});
+
+	it("admits a detached marked loose-admitted subtree into a strict state on assignment", () => {
 		const map = new Map<string, number>();
 		const loose = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
 		const detached = loose.lookup!;
@@ -1374,7 +1380,21 @@ describe("boundary: strictness join", () => {
 		expect(() => strict.box!.set("a", 1)).toThrow();
 	});
 
-	it("names the three remedies in the join error", () => {
+	it("does not restamp options on marked admission into a differing-strictness graph", () => {
+		const map = new Map<string, number>();
+		const loose = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
+		const detached = loose.lookup!;
+
+		loose.lookup = null;
+
+		const strict = createMutableState<{ box: Map<string, number> | null }>({ box: null });
+
+		strict.box = detached;
+
+		expect(getOptions(rawTargetOf(detached))?.strict).toBe(false);
+	});
+
+	it("names the stamp-join remedies in the join error", () => {
 		const loose = createMutableState({ shared: { n: 1 } }, { strict: false });
 		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
 
@@ -1382,196 +1402,105 @@ describe("boundary: strictness join", () => {
 			strict.box = loose.shared;
 		}).toThrow(joinMessage);
 
-		expect(joinMessage).toContain("match the states' strict options");
-		expect(joinMessage).toContain("clone the value into the receiving state");
-		expect(joinMessage).toContain("share it as ignore()");
+		expect(joinMessage).toContain("unsafeTrack(value) to declare the caveat lane");
+		expect(joinMessage).toContain("re-create the value as plain data in the receiving state");
 	});
 });
 
-describe("boundary: in-edge table exactness", () => {
-	it("registers every initializer interior edge exactly once and marks the root", () => {
-		const state = createMutableState({
-			document: { title: "a", tags: ["x", "y"] },
-		});
-		const root = rawTargetOf(state);
-		const document = rawTargetOf(state.document);
-		const tags = rawTargetOf(state.document.tags);
+describe("boundary: state root is not a tracked value", () => {
+	const rootMessage = (path?: string): string =>
+		path === undefined
+			? "opshot: a state root cannot be a tracked value"
+			: `opshot: a state root at ${path} cannot be a tracked value`;
 
-		expect(isStateRoot(root)).toBe(true);
-		expect(parentsOf(document)?.get(root)).toEqual(new Set(["document"]));
-		expect(parentsOf(tags)?.get(document)).toEqual(new Set(["tags"]));
-		expect(parentsOf(root)).toBeUndefined();
-	});
-
-	it("moves an edge on assignment and deregisters on delete", () => {
-		const first = { value: 1 };
-		const second = { value: 2 };
-		const state = createMutableState<{ box: { value: number } | undefined }>({ box: first });
-		const root = rawTargetOf(state);
-		const firstTarget = rawTargetOf(state.box!);
-
-		expect(parentsOf(firstTarget)?.get(root)).toEqual(new Set(["box"]));
-
-		transact(state, () => {
-			state.box = second;
-		});
-
-		const secondTarget = rawTargetOf(state.box!);
-
-		expect(parentsOf(firstTarget)?.get(root)).toBeUndefined();
-		expect(parentsOf(secondTarget)?.get(root)).toEqual(new Set(["box"]));
-
-		transact(state, () => {
-			delete state.box;
-		});
-
-		expect(parentsOf(secondTarget)?.get(root)).toBeUndefined();
-	});
-
-	it("leaves the table equal after undo through applyOperations", () => {
-		const state = createMutableState({ item: { value: 1 }, other: { value: 2 } });
-		const root = rawTargetOf(state);
-		const item = rawTargetOf(state.item);
-		const other = rawTargetOf(state.other);
-		const nodes = [root, item, other];
-		const before = edgeSnapshotOf(nodes);
-		const recorded = new Array<Operation>();
-
-		subscribe(state, (ops) => {
-			recorded.push(...ops);
-		});
-
-		transact(state, () => {
-			state.item = { value: 9 };
-		});
-
-		const replacement = rawTargetOf(state.item);
-
-		applyOperations(state, recorded, "undo");
-
-		expectEdgesEqual(edgeSnapshotOf([...nodes, replacement]), before);
-		expect(parentsOf(item)?.get(root)).toEqual(new Set(["item"]));
-		expect(parentsOf(replacement)?.get(root)).toBeUndefined();
-	});
-
-	it("leaves the table equal after a rolled-back throwing transact", () => {
-		const state = createMutableState({ item: { value: 1 } });
-		const root = rawTargetOf(state);
-		const item = rawTargetOf(state.item);
-		const before = edgeSnapshotOf([root, item]);
-
-		subscribe(state, () => {});
+	it("rejects assigning a state root into its own graph at the set trap", () => {
+		const state = createMutableState<{ self?: object; n: number }>({ n: 1 });
 
 		expect(() => {
-			transact(state, () => {
-				state.item = { value: 9 };
-				throw new Error("roll me back");
-			});
-		}).toThrow("roll me back");
+			state.self = state;
+		}).toThrow(rootMessage("/self"));
 
-		expect(state.item.value).toBe(1);
-		expectEdgesEqual(edgeSnapshotOf([root, item, rawTargetOf(state.item)]), before);
-		expect(parentsOf(item)?.get(root)).toEqual(new Set(["item"]));
+		expect(state).not.toHaveProperty("self");
 	});
 
-	it("maintains TrackedMap slot edges through set, delete, and clear", () => {
-		const state = createMutableState({
-			map: new TrackedMap<string, { n: number }>([["a", { n: 1 }]]),
-		});
-		const mapTarget = rawTargetOf(state.map);
-		const slots = rawTargetOf((state.map as unknown as { slots: object }).slots);
+	it("rejects a root-pointing back-edge through a child", () => {
+		const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
 
-		const firstPair = (state.map as unknown as { slots: Array<object> }).slots[0]!;
-		const firstPairTarget = rawTargetOf(firstPair);
-		const firstValueTarget = rawTargetOf(state.map.get("a")!);
+		expect(() => {
+			state.child.back = state;
+		}).toThrow(rootMessage("/back"));
 
-		expect(parentsOf(slots)?.get(mapTarget)).toEqual(new Set(["slots"]));
-		expect(parentsOf(firstPairTarget)?.has(slots)).toBe(true);
-		expect(parentsOf(firstValueTarget)?.has(firstPairTarget)).toBe(true);
-
-		transact(state, () => {
-			state.map.set("b", { n: 2 });
-		});
-
-		const secondPair = (state.map as unknown as { slots: Array<object | null> }).slots[1]!;
-		const secondPairTarget = rawTargetOf(secondPair as object);
-		const secondValueTarget = rawTargetOf(state.map.get("b")!);
-
-		expect(parentsOf(secondPairTarget)?.has(slots)).toBe(true);
-		expect(parentsOf(secondValueTarget)?.has(secondPairTarget)).toBe(true);
-
-		transact(state, () => {
-			state.map.delete("a");
-		});
-
-		expect(parentsOf(firstPairTarget)?.has(slots) ?? false).toBe(false);
-
-		transact(state, () => {
-			state.map.clear();
-		});
-
-		const clearedSlots = rawTargetOf((state.map as unknown as { slots: object }).slots);
-
-		expect(parentsOf(clearedSlots)?.get(mapTarget)).toEqual(new Set(["slots"]));
-		expect(parentsOf(secondPairTarget)?.has(clearedSlots) ?? false).toBe(false);
-		expect(state.map.size).toBe(0);
+		expect(state.child).not.toHaveProperty("back");
 	});
 
-	it("does not register a symbol-keyed hand-built carrier edge", () => {
-		const key = Symbol("hidden");
-		const nested = { n: 1 };
-		const carrier: { visible: { n: number }; [key: symbol]: { n: number } } = { visible: { n: 0 } };
+	it("rejects assigning a foreign state root at the set trap", () => {
+		const foreign = createMutableState({ n: 1 });
+		const state = createMutableState<{ held?: object }>({});
 
-		Object.defineProperty(carrier, key, {
-			value: nested,
-			writable: true,
-			enumerable: false,
-			configurable: true,
-		});
+		expect(() => {
+			state.held = foreign;
+		}).toThrow(rootMessage("/held"));
 
-		const state = createMutableState({ carrier });
-		const root = rawTargetOf(state);
-		const carrierTarget = rawTargetOf(state.carrier);
-		const visibleTarget = rawTargetOf(state.carrier.visible);
-		const nestedTarget = rawTargetOf(nested);
-
-		expect(parentsOf(carrierTarget)?.get(root)).toEqual(new Set(["carrier"]));
-		expect(parentsOf(visibleTarget)?.get(carrierTarget)).toEqual(new Set(["visible"]));
-		expect(parentsOf(nestedTarget)?.get(carrierTarget)).toBeUndefined();
+		expect(state).not.toHaveProperty("held");
 	});
 
-	it("deregisters truncated array element edges on length shrink", () => {
-		const first = { n: 1 };
-		const second = { n: 2 };
-		const state = createMutableState({ list: [first, second] });
-		const list = rawTargetOf(state.list);
-		const firstTarget = rawTargetOf(state.list[0]!);
-		const secondTarget = rawTargetOf(state.list[1]!);
+	it("rejects a state root in the createMutableState pre-walk", () => {
+		const foreign = createMutableState({ n: 1 });
 
-		expect(parentsOf(firstTarget)?.get(list)).toEqual(new Set(["0"]));
-		expect(parentsOf(secondTarget)?.get(list)).toEqual(new Set(["1"]));
+		expect(() => createMutableState({ held: foreign })).toThrow(rootMessage("/held"));
+	});
 
-		transact(state, () => {
-			state.list.length = 1;
-		});
+	it("rejects a state root nested in a fresh subtree at the set trap", () => {
+		const foreign = createMutableState({ n: 1 });
+		const state = createMutableState<{ box?: object }>({});
 
-		expect(parentsOf(firstTarget)?.get(list)).toEqual(new Set(["0"]));
-		expect(parentsOf(secondTarget)?.get(list)).toBeUndefined();
-		expect(liveRootsOf(secondTarget).size).toBe(0);
+		expect(() => {
+			state.box = { inner: foreign };
+		}).toThrow(rootMessage("/box/inner"));
+	});
 
-		transact(state, () => {
-			state.list.length = 0;
-		});
+	it("still admits subtree sharing across states", () => {
+		const shared = { n: 1 };
+		const a = createMutableState({ box: shared });
+		const b = createMutableState<{ box: { n: number } | null }>({ box: null });
 
-		expect(parentsOf(firstTarget)?.get(list)).toBeUndefined();
-		expect(liveRootsOf(firstTarget).size).toBe(0);
+		b.box = a.box;
 
-		transact(state, () => {
-			state.list.push(first);
-			state.list.pop();
-		});
+		expect(b.box).toBe(a.box);
+	});
 
-		expect(parentsOf(firstTarget)?.get(list)).toBeUndefined();
+	it("still admits a parent pointer one level down", () => {
+		const state = createMutableState<{
+			doc: { sections: Array<{ title: string; parent?: object }> };
+		}>({ doc: { sections: [{ title: "a" }] } });
+
+		state.doc.sections[0]!.parent = state.doc;
+
+		expect(state.doc.sections[0]!.parent).toBe(state.doc);
+	});
+
+	it("still admits a bare root reference through ignore()", () => {
+		const foreign = createMutableState({ n: 1 });
+		const state = createMutableState<{ held?: object }>({});
+
+		state.held = ignore(foreign);
+
+		expect(state.held).toBe(foreign);
+	});
+
+	it("names group, one-level-down, and ignore in the error", () => {
+		const state = createMutableState<{ self?: object }>({});
+		let message = "";
+
+		try {
+			state.self = state;
+		} catch (error) {
+			message = (error as Error).message;
+		}
+
+		expect(message).toContain("createGroup for composition across states");
+		expect(message).toContain("point one level down for a parent pointer");
+		expect(message).toContain("ignore(value) for a bare reference");
 	});
 });
 

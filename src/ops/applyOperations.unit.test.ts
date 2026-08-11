@@ -1,4 +1,4 @@
-import { getVersion, snapshot } from "valtio/vanilla";
+import { getVersion } from "valtio/vanilla";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { createMutableState } from "../createMutableState";
@@ -7,9 +7,17 @@ import { addressOf } from "../tracked/address";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
+import { resolveRefValue } from "./applyMutations";
 import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
-import { createAssignMutation, createDeleteMutation, type Operation, type Mutation } from "./operation";
+import {
+	createAssignMutation,
+	createDeleteMutation,
+	createLinkMutation,
+	type LinkMutation,
+	type Mutation,
+	type Operation,
+} from "./operation";
 import { formatOperationPath } from "./path";
 
 const asPair = (half: Mutation): Operation => ({ do: half, undo: half });
@@ -136,73 +144,14 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
-	it("applies a root assign as content replacement without reassigning the root", () => {
-		const state = createMutableState({ kept: 1, removed: 2 } as {
-			kept: number;
-			removed?: number;
-			added?: number;
-		});
-		const rootBefore = state;
-
-		applyOperations(state, [asPair(createAssignMutation([], { kept: 9, added: 3 }))], "do");
-
-		expect(state).toBe(rootBefore);
-		expect(state).toEqual({ kept: 9, added: 3 });
-		expect(Object.hasOwn(state, "removed")).toBe(false);
-	});
-
-	it("restores a registered interior target through a root assign", () => {
-		const interior = { n: 1 };
-		const state = createMutableState({ held: interior, tag: "before" });
-		const recorded = snapshot(state);
-
-		transact(state, () => {
-			state.held = { n: 9 };
-			state.tag = "after";
-		});
-
-		expect(isSameIdentity(state.held, interior)).toBe(false);
-
-		applyOperations(state, [asPair(createAssignMutation([], recorded))], "do");
-
-		expect(isSameIdentity(state.held, interior)).toBe(true);
-		expect(state.held.n).toBe(1);
-		expect(state.tag).toBe("before");
-	});
-
-	it("round-trips a root assign whose undo half carries the previous full content", () => {
-		const state = createMutableState({ a: 1, b: 2 } as { a: number; b?: number; c?: number });
-		const before = snapshot(state);
-		const rootBefore = state;
-
-		transact(state, () => {
-			state.a = 10;
-			delete state.b;
-			state.c = 3;
-		});
-
-		const after = snapshot(state);
-		const op: Operation = {
-			do: createAssignMutation([], after),
-			undo: createAssignMutation([], before),
-		};
-
-		applyOperations(state, [op], "undo");
-		expect(state).toBe(rootBefore);
-		expect(state).toEqual({ a: 1, b: 2 });
-		expect(Object.hasOwn(state, "c")).toBe(false);
-
-		applyOperations(state, [op], "do");
-		expect(state).toBe(rootBefore);
-		expect(state).toEqual({ a: 10, c: 3 });
-		expect(Object.hasOwn(state, "b")).toBe(false);
-	});
-
-	it("throws a named error when a root delete is applied", () => {
+	it("refuses root operations with the named message", () => {
 		const state = createMutableState({ count: 0 });
 
+		expect(() => applyOperations(state, [asPair(createAssignMutation([], { count: 1 }))], "do")).toThrow(
+			"opshot: root operations are not supported",
+		);
 		expect(() => applyOperations(state, [asPair(createDeleteMutation([]))], "do")).toThrow(
-			"opshot: the root cannot be deleted; a root operation replaces content",
+			"opshot: root operations are not supported",
 		);
 		expect(state.count).toBe(0);
 	});
@@ -1044,5 +993,167 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		applyOperations(state, ops, "undo");
 
 		expect(getVersion(state)).toBe(settled);
+	});
+});
+
+describe("applyOperations: link halves", () => {
+	it("resolves a ref read-only to the live object at that path", () => {
+		const state = createMutableState({ shared: { n: 1 }, nested: { deep: { n: 2 } } });
+
+		expect(resolveRefValue(state, ["shared"])).toBe(state.shared);
+		expect(resolveRefValue(state, ["nested", "deep"])).toBe(state.nested.deep);
+		expect(resolveRefValue(state, [])).toBe(state);
+		expect(() => resolveRefValue(state, ["missing"])).toThrow("does not resolve");
+		expect(() => resolveRefValue(state, ["shared", "n"])).toThrow("resolves to a non-object");
+	});
+
+	it("establishes sharing on a plain target", () => {
+		const state = createMutableState<{ shared: { n: number }; alias?: { n: number } }>({ shared: { n: 1 } });
+
+		applyOperations(
+			state,
+			[{ do: createLinkMutation(["alias"], ["shared"]), undo: createDeleteMutation(["alias"]) }],
+			"do",
+		);
+
+		expect(state.alias).toBe(state.shared);
+		expect(state.alias?.n).toBe(1);
+	});
+
+	it("applies a spread or JSON-copied link half", () => {
+		const state = createMutableState<{ shared: { n: number }; alias?: { n: number } }>({ shared: { n: 1 } });
+		const branded = createLinkMutation(["alias"], ["shared"]);
+		const spread = { ...branded };
+		const json = JSON.parse(JSON.stringify(branded)) as LinkMutation;
+
+		applyOperations(state, [{ do: spread as LinkMutation, undo: createDeleteMutation(["alias"]) }], "do");
+		expect(state.alias).toBe(state.shared);
+
+		applyOperations(state, [{ do: createDeleteMutation(["alias"]), undo: createDeleteMutation(["alias"]) }], "do");
+		expect(Object.hasOwn(state, "alias")).toBe(false);
+
+		applyOperations(state, [{ do: json, undo: createDeleteMutation(["alias"]) }], "do");
+		expect(state.alias).toBe(state.shared);
+	});
+
+	it("undoes a new-key link by deleting", () => {
+		const state = createMutableState<{ shared: { n: number }; alias?: { n: number } }>({ shared: { n: 1 } });
+		const ops: Array<Operation> = [
+			{ do: createLinkMutation(["alias"], ["shared"]), undo: createDeleteMutation(["alias"]) },
+		];
+
+		applyOperations(state, ops, "do");
+		expect(state.alias).toBe(state.shared);
+
+		applyOperations(state, ops, "undo");
+		expect(Object.hasOwn(state, "alias")).toBe(false);
+		expect(state.shared.n).toBe(1);
+	});
+
+	it("applies a mixed values-then-links batch in do and preserves the target-path invariant under undo", () => {
+		const state = createMutableState<{
+			target?: { id: number };
+			other?: { id: number };
+			alias?: { id: number };
+		}>({});
+		const ops: Array<Operation> = [
+			{ do: createAssignMutation(["target"], { id: 1 }), undo: createDeleteMutation(["target"]) },
+			{ do: createAssignMutation(["other"], { id: 2 }), undo: createDeleteMutation(["other"]) },
+			{ do: createLinkMutation(["alias"], ["target"]), undo: createDeleteMutation(["alias"]) },
+		];
+
+		applyOperations(state, ops, "do");
+		expect(state.alias).toBe(state.target);
+		expect(state.other?.id).toBe(2);
+
+		applyOperations(state, ops, "undo");
+		expect(state).toEqual({});
+	});
+
+	it("round-trips a link whose undo is itself a link", () => {
+		const state = createMutableState<{ a: { n: number }; b: { n: number }; alias: { n: number } | null }>({
+			a: { n: 1 },
+			b: { n: 2 },
+			alias: null,
+		});
+
+		applyOperations(
+			state,
+			[{ do: createLinkMutation(["alias"], ["a"]), undo: createAssignMutation(["alias"], null) }],
+			"do",
+		);
+		expect(state.alias).toBe(state.a);
+
+		const overwrite: Operation = {
+			do: createLinkMutation(["alias"], ["b"]),
+			undo: createLinkMutation(["alias"], ["a"]),
+		};
+
+		applyOperations(state, [overwrite], "do");
+		expect(state.alias).toBe(state.b);
+
+		applyOperations(state, [overwrite], "undo");
+		expect(state.alias).toBe(state.a);
+	});
+
+	it("refuses an unresolvable ref naming both paths", () => {
+		const state = createMutableState<{ shared: { n: number } }>({ shared: { n: 1 } });
+
+		expect(() =>
+			applyOperations(
+				state,
+				[{ do: createLinkMutation(["alias"], ["missing"]), undo: createDeleteMutation(["alias"]) }],
+				"do",
+			),
+		).toThrow("link at /alias with ref /missing does not resolve");
+	});
+
+	it("refuses a ref that resolves to a non-object naming both paths", () => {
+		const state = createMutableState<{ count: number; alias?: object }>({ count: 1 });
+
+		expect(() =>
+			applyOperations(
+				state,
+				[{ do: createLinkMutation(["alias"], ["count"]), undo: createDeleteMutation(["alias"]) }],
+				"do",
+			),
+		).toThrow("link at /alias with ref /count resolves to a non-object");
+	});
+
+	it("refuses a link addressed at array length naming both paths", () => {
+		const state = createMutableState<{ list: Array<number>; shared: { n: number } }>({
+			list: [1],
+			shared: { n: 1 },
+		});
+
+		expect(() =>
+			applyOperations(
+				state,
+				[
+					{
+						do: createLinkMutation(["list", "length"], ["shared"]),
+						undo: createDeleteMutation(["list", "length"]),
+					},
+				],
+				"do",
+			),
+		).toThrow("link at /list/length with ref /shared cannot address array length");
+	});
+
+	it("still refuses a spread assign half while accepting a well-formed unbranded link half", () => {
+		const state = createMutableState<{ shared: { n: number }; count: number; alias?: { n: number } }>({
+			shared: { n: 1 },
+			count: 0,
+		});
+		const copiedAssign = { ...createAssignMutation(["count"], 2) };
+		const copiedLink = { ...createLinkMutation(["alias"], ["shared"]) };
+
+		expect(() =>
+			applyOperations(state, [{ do: copiedAssign as Mutation, undo: createDeleteMutation(["count"]) }], "do"),
+		).toThrow("this op is a copy");
+		expect(state.count).toBe(0);
+
+		applyOperations(state, [{ do: copiedLink as LinkMutation, undo: createDeleteMutation(["alias"]) }], "do");
+		expect(state.alias).toBe(state.shared);
 	});
 });

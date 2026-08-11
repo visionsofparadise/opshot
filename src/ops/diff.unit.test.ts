@@ -10,8 +10,66 @@ import { TrackedSet } from "../tracked/trackedSet";
 import { transact } from "../transact";
 import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
-import { type Operation, type Mutation } from "./operation";
+import {
+	createAssignMutation,
+	createDeleteMutation,
+	createLinkMutation,
+	type Mutation,
+	type Operation,
+} from "./operation";
 import { shapeHalf, shapeOps } from "./operationShape";
+
+const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> = new WeakMap()): unknown => {
+	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
+
+	const objectValue = value as object;
+	const cached = memo.get(objectValue);
+
+	if (cached !== undefined) return cached;
+
+	if (Array.isArray(value)) {
+		const copy: Array<unknown> = [];
+
+		memo.set(value, copy);
+
+		for (let index = 0; index < value.length; index++) {
+			if (Object.hasOwn(value, index)) copy[index] = rehydrateTransportValue(value[index], memo);
+		}
+
+		copy.length = value.length;
+
+		return copy;
+	}
+
+	const copy: Record<string, unknown> = {};
+
+	memo.set(objectValue, copy);
+
+	for (const key of Object.keys(objectValue)) {
+		if (key === "__proto__") continue;
+
+		const descriptor = Reflect.getOwnPropertyDescriptor(objectValue, key);
+
+		if (descriptor === undefined || !("value" in descriptor)) continue;
+
+		copy[key] = rehydrateTransportValue(descriptor.value, memo);
+	}
+
+	return copy;
+};
+
+const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
+	ops.map((pair) => {
+		const projectHalf = (half: Mutation): Mutation => {
+			if (half.verb === "link") return createLinkMutation([...half.path], [...half.ref]);
+
+			if (half.verb === "delete") return createDeleteMutation([...half.path]);
+
+			return createAssignMutation([...half.path], "value" in half ? rehydrateTransportValue(half.value) : undefined);
+		};
+
+		return { do: projectHalf(pair.do), undo: projectHalf(pair.undo) };
+	});
 
 const readValue = (operation: Mutation): unknown => ("value" in operation ? operation.value : undefined);
 
@@ -653,7 +711,11 @@ describe("diffObjects: container collapse", () => {
 
 interface Formation {
 	readonly name: string;
-	readonly expectedDo: { readonly verb: string; readonly path: ReadonlyArray<string | number> };
+	readonly expectedDo: {
+		readonly verb: string;
+		readonly path: ReadonlyArray<string | number>;
+		readonly ref?: ReadonlyArray<string | number>;
+	};
 	readonly start: () => { readonly state: object; readonly form: () => void; readonly assertFormed: () => void };
 }
 
@@ -695,7 +757,7 @@ describe("diffObjects: cyclic values", () => {
 	const formations: ReadonlyArray<Formation> = [
 		{
 			name: "a child self-cycle",
-			expectedDo: { verb: "assign", path: ["box"] },
+			expectedDo: { verb: "link", path: ["box", "self"], ref: ["box"] },
 			start: () => {
 				const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
@@ -706,40 +768,6 @@ describe("diffObjects: cyclic values", () => {
 					},
 					assertFormed: () => {
 						expect(state.box.self).toBe(state.box);
-					},
-				};
-			},
-		},
-		{
-			name: "a root self-cycle",
-			expectedDo: { verb: "assign", path: ["self"] },
-			start: () => {
-				const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
-
-				return {
-					state,
-					form: () => {
-						state.self = state;
-					},
-					assertFormed: () => {
-						expect(state.self).toBe(state);
-					},
-				};
-			},
-		},
-		{
-			name: "a back-link to the root",
-			expectedDo: { verb: "assign", path: ["child", "back"] },
-			start: () => {
-				const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
-
-				return {
-					state,
-					form: () => {
-						state.child.back = state;
-					},
-					assertFormed: () => {
-						expect(state.child.back).toBe(state);
 					},
 				};
 			},
@@ -766,7 +794,7 @@ describe("diffObjects: cyclic values", () => {
 		},
 		{
 			name: "a two-node cycle",
-			expectedDo: { verb: "assign", path: [] },
+			expectedDo: { verb: "link", path: ["a", "peer"], ref: ["b"] },
 			start: () => {
 				const state = createMutableState<{ a: { n: number; peer?: object }; b: { n: number; peer?: object } }>({
 					a: { n: 1 },
@@ -788,8 +816,28 @@ describe("diffObjects: cyclic values", () => {
 		},
 	];
 
+	it("rejects a root self-cycle at formation time", () => {
+		const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
+
+		expect(() => {
+			state.self = state;
+		}).toThrow("a state root");
+
+		expect(state).not.toHaveProperty("self");
+	});
+
+	it("rejects a back-link to the root at formation time", () => {
+		const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
+
+		expect(() => {
+			state.child.back = state;
+		}).toThrow("a state root");
+
+		expect(state.child).not.toHaveProperty("back");
+	});
+
 	it.each(formations.map((formation) => [formation.name, formation] as const))(
-		"delivers a closed op forming %s and round-trips undo/do with carriable values",
+		"delivers a link or value op forming %s and round-trips undo/do",
 		(_name, formation) => {
 			const { state, form, assertFormed } = formation.start();
 			const heard = record(state);
@@ -797,21 +845,15 @@ describe("diffObjects: cyclic values", () => {
 			transact(state, form);
 
 			expect(heard).toHaveLength(1);
-			expect(heard[0]).toHaveLength(1);
 			expect(heard[0]?.[0]?.do).toMatchObject(formation.expectedDo);
 			assertFormed();
 
 			const delivered = heard[0] ?? [];
-			const undo = delivered[0]?.undo;
-			const doHalf = delivered[0]?.do;
-
-			expect(undo).toBeDefined();
-			expect(() => readValue(undo ?? { verb: "delete", path: [] })).not.toThrow();
-			expect(() => readValue(doHalf ?? { verb: "delete", path: [] })).not.toThrow();
 
 			const replicaSession = formation.start();
 
-			expect(() => applyOperations(replicaSession.state, delivered, "do")).not.toThrow();
+			expect(() => applyOperations(replicaSession.state, projectTransport(delivered), "do")).not.toThrow();
+			replicaSession.assertFormed();
 
 			replayUndo(state, delivered);
 			replayDo(state, delivered);
@@ -838,7 +880,7 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(thrown).toHaveLength(0);
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["box", "self"], ref: ["box"] });
 		expect(state.box.self).toBe(state.box);
 	});
 
@@ -889,7 +931,7 @@ describe("diffObjects: cyclic values", () => {
 		};
 	};
 
-	it("repairs a cycle with a closed op whose undo restores the cycle by identity", () => {
+	it("repairs a cycle with a delete whose undo link restores the cycle by identity", () => {
 		const { state, repair } = startRepair();
 		const heard = record(state);
 
@@ -897,12 +939,11 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["box", "self"] });
+		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "link", path: ["box", "self"], ref: ["box"] });
 		expect(state.box.self).toBeUndefined();
 
 		const delivered = heard[0] ?? [];
-
-		expect(() => readValue(delivered[0]?.undo ?? { verb: "delete", path: [] })).not.toThrow();
 
 		replayUndo(state, delivered);
 		expect(state.box.self).toBe(state.box);
@@ -930,7 +971,7 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(thrown).toHaveLength(0);
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["box", "self"] });
 	});
 
 	it("rolls back a throwing callback over a cyclic baseline with no cause and restores the cycle", async () => {
@@ -1102,7 +1143,7 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.c.n).toBe(7);
 	});
 
-	it("surfaces alias formation so a replica preserves sharing", () => {
+	it("mints a link for alias formation so a replica preserves sharing", () => {
 		const shared = { n: 1 };
 		const state = createMutableState<{ a: { b: { n: number } }; b: { n: number }; b2?: { n: number } }>({
 			a: { b: shared },
@@ -1114,7 +1155,7 @@ describe("diffObjects: cyclic values", () => {
 			state.b2 = state.a.b;
 		});
 
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: [] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["b2"], ref: ["a", "b"] });
 		expect(state.b2).toBe(state.a.b);
 
 		const replicaShared = { n: 1 };
@@ -1123,12 +1164,12 @@ describe("diffObjects: cyclic values", () => {
 			b: replicaShared,
 		});
 
-		applyOperations(replica, heard[0] ?? [], "do");
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
 		expect(replica.b2).toBe(replica.a.b);
 		expect(replica.b2).toBe(replica.b);
 	});
 
-	it("restores an interior cycle with internal identity on a replica", () => {
+	it("restores an interior cycle with a link on a replica", () => {
 		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 		const heard = record(state);
 
@@ -1138,11 +1179,11 @@ describe("diffObjects: cyclic values", () => {
 
 		const replica = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
-		applyOperations(replica, heard[0] ?? [], "do");
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
 		expect(replica.box.self).toBe(replica.box);
 	});
 
-	it("surfaces a delete of one route to a still-referenced node as a closed assign", () => {
+	it("mints a link undo for a delete of one route to a still-referenced node", () => {
 		const shared = { n: 1 };
 		const state = createMutableState<{ a: { b: { n: number } }; b?: { n: number } }>({
 			a: { b: shared },
@@ -1154,7 +1195,8 @@ describe("diffObjects: cyclic values", () => {
 			delete state.b;
 		});
 
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: [] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["b"] });
+		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "link", path: ["b"], ref: ["a", "b"] });
 		expect(state.b).toBeUndefined();
 		expect(state.a.b.n).toBe(1);
 
@@ -1162,7 +1204,7 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.b).toBe(state.a.b);
 	});
 
-	it("surfaces a nested multi-route delete at the minimal common ancestor", () => {
+	it("mints a link undo for a nested multi-route delete at the formation route", () => {
 		const shared = { n: 1 };
 		const state = createMutableState<{
 			outer: { a: { x: { n: number } }; b: { y?: { n: number } } };
@@ -1175,7 +1217,12 @@ describe("diffObjects: cyclic values", () => {
 			delete state.outer.b.y;
 		});
 
-		expect(pathOf(heard[0])).toEqual([["outer"]]);
+		expect(pathOf(heard[0])).toEqual([["outer", "b", "y"]]);
+		expect(heard[0]?.[0]?.undo).toMatchObject({
+			verb: "link",
+			path: ["outer", "b", "y"],
+			ref: ["outer", "a", "x"],
+		});
 		expect(state.outer.b.y).toBeUndefined();
 		expect(state.outer.a.x.n).toBe(1);
 
@@ -1195,7 +1242,7 @@ describe("diffObjects: cyclic values", () => {
 		expect(pathOf(heard[0])).toEqual([["a", "b", "c"], ["d"]]);
 	});
 
-	it("surfaces two independent sibling escapes each at their own containing frame", () => {
+	it("mints links for two independent sibling cycles at their formation routes", () => {
 		const state = createMutableState<{
 			left: { n: number; self?: object };
 			right: { n: number; self?: object };
@@ -1207,12 +1254,21 @@ describe("diffObjects: cyclic values", () => {
 			state.right.self = state.right;
 		});
 
-		expect(pathOf(heard[0])).toEqual([["left"], ["right"]]);
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{
+				do: { verb: "link", path: ["left", "self"], ref: ["left"] },
+				undo: { verb: "delete", path: ["left", "self"] },
+			},
+			{
+				do: { verb: "link", path: ["right", "self"], ref: ["right"] },
+				undo: { verb: "delete", path: ["right", "self"] },
+			},
+		]);
 		expect(state.left.self).toBe(state.left);
 		expect(state.right.self).toBe(state.right);
 	});
 
-	it("surfaces an escape reached only through a symbol-keyed carried ride-along", () => {
+	it("assigns a symbol-keyed carrier with value carriage (symbol edges stay ride-along)", () => {
 		const external = { marker: 1 };
 		const state = createMutableState<{
 			held: { marker: number };
@@ -1264,5 +1320,206 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(heard[0]).toHaveLength(1);
 		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["diamond"] });
+	});
+
+	it("preserves sharing across a JSON round trip of a formation batch", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: shared });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		const wire = JSON.stringify(shapeOps(heard[0] ?? []));
+		const revived = (
+			JSON.parse(wire) as Array<{ do: ReturnType<typeof shapeHalf>; undo: ReturnType<typeof shapeHalf> }>
+		).map((pair) => {
+			const project = (half: ReturnType<typeof shapeHalf>): Mutation => {
+				if (half.verb === "link") return createLinkMutation(half.path, half.ref ?? []);
+
+				if (half.verb === "delete") return createDeleteMutation(half.path);
+
+				return createAssignMutation(half.path, half.value);
+			};
+
+			return { do: project(pair.do), undo: project(pair.undo) };
+		});
+		const replica = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: { n: 1 } });
+
+		applyOperations(replica, revived, "do");
+		expect(replica.b).toBe(replica.a);
+	});
+
+	it("mints a link undo for an init-time alias overwrite", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a: { n: number }; b: { n: number }; alias: { n: number } }>({
+			a: shared,
+			b: { n: 2 },
+			alias: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.alias = state.b;
+		});
+
+		const overwrite = heard[0] ?? [];
+
+		expect(overwrite[0]?.do).toMatchObject({ verb: "link", path: ["alias"], ref: ["b"] });
+		expect(overwrite[0]?.undo).toMatchObject({ verb: "link", path: ["alias"], ref: ["a"] });
+
+		replayUndo(state, overwrite);
+		expect(state.alias).toBe(state.a);
+
+		replayDo(state, overwrite);
+		expect(state.alias).toBe(state.b);
+	});
+
+	it("mints a link undo for a cross-tick alias overwrite", async () => {
+		const state = createMutableState<{ a: { n: number }; b: { n: number }; alias?: { n: number } }>({
+			a: { n: 1 },
+			b: { n: 2 },
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.alias = state.a;
+		});
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		transact(state, () => {
+			state.alias = state.b;
+		});
+
+		const overwrite = heard[1] ?? [];
+
+		expect(overwrite[0]?.do).toMatchObject({ verb: "link", path: ["alias"], ref: ["b"] });
+		expect(overwrite[0]?.undo).toMatchObject({ verb: "link", path: ["alias"], ref: ["a"] });
+
+		replayUndo(state, overwrite);
+		expect(state.alias).toBe(state.a);
+
+		replayDo(state, overwrite);
+		expect(state.alias).toBe(state.b);
+	});
+
+	it("mints a deferred emitOn alias formation as a link when another state flushes first", async () => {
+		const deferred: Array<() => void> = [];
+		const emitOn = (flush: () => void): void => {
+			deferred.push(flush);
+		};
+		const shared = { n: 1 };
+		const stateA = createMutableState<{ held: { n: number }; alias?: { n: number } }>({ held: shared }, { emitOn });
+		const stateB = createMutableState<{ count: number }>({ count: 0 });
+		const heardA = record(stateA);
+		const heardB = record(stateB);
+
+		stateA.alias = stateA.held;
+		stateB.count = 1;
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(heardB).toHaveLength(1);
+		expect(heardA).toHaveLength(0);
+
+		for (const flush of deferred) flush();
+
+		expect(heardA).toHaveLength(1);
+		expect(heardA[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["alias"], ref: ["held"] });
+		expect(stateA.alias).toBe(stateA.held);
+	});
+
+	it("decomposes a fresh carrier with an escaping key so the link sits at its key position", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{
+			shared: { n: number };
+			carrier?: { x: number; y: { n: number }; z: number };
+		}>({ shared });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.carrier = { x: 1, y: state.shared, z: 2 };
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{
+				do: { verb: "assign", path: ["carrier"], value: {} },
+				undo: { verb: "delete", path: ["carrier"] },
+			},
+			{
+				do: { verb: "assign", path: ["carrier", "x"], value: 1 },
+				undo: { verb: "delete", path: ["carrier", "x"] },
+			},
+			{
+				do: { verb: "link", path: ["carrier", "y"], ref: ["shared"] },
+				undo: { verb: "delete", path: ["carrier", "y"] },
+			},
+			{
+				do: { verb: "assign", path: ["carrier", "z"], value: 2 },
+				undo: { verb: "delete", path: ["carrier", "z"] },
+			},
+		]);
+		expect(state.carrier?.y).toBe(state.shared);
+	});
+
+	it("mints a link for a moved subtree's interior alias", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{
+			shared: { n: number };
+			from?: { inner: { n: number }; tag: number };
+			to?: { inner: { n: number }; tag: number };
+		}>({ shared, from: { inner: shared, tag: 1 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.to = state.from;
+			delete state.from;
+		});
+
+		const ops = heard[0] ?? [];
+		const link = ops.find((pair) => pair.do.verb === "link");
+
+		expect(link?.do).toMatchObject({ verb: "link" });
+		expect(state.to?.inner).toBe(state.shared);
+		expect(state.from).toBeUndefined();
+	});
+
+	it("mints a facade slot link across TrackedMap set and delete", () => {
+		const shared = { n: 1 };
+		const state = createMutableState({
+			shared,
+			map: new TrackedMap<string, { n: number }>(),
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.map.set("k", state.shared);
+		});
+
+		const formation = heard[0] ?? [];
+		const link = formation.find((pair) => pair.do.verb === "link");
+
+		expect(link?.do.verb).toBe("link");
+		expect(link?.do).toMatchObject({ verb: "link", ref: ["shared"] });
+		expect(state.map.get("k")).toBe(state.shared);
+
+		transact(state, () => {
+			state.map.delete("k");
+		});
+
+		const removal = heard[1] ?? [];
+
+		expect(removal.length).toBeGreaterThan(0);
+		expect(state.map.has("k")).toBe(false);
+
+		replayUndo(state, removal);
+		expect(state.map.get("k")).toBe(state.shared);
+
+		replayDo(state, removal);
+		expect(state.map.has("k")).toBe(false);
 	});
 });
