@@ -3,10 +3,11 @@ import { walkDataEntries } from "../utils/dataEntries";
 import { isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import {
 	canonicalRouteOf,
+	createRouteIndex,
 	externalRoutesOf,
-	resolveCandidates,
+	isPossiblyShared,
 	routeUnderPath,
-	takeFormationCandidates,
+	type RouteIndex,
 } from "./commitWalk";
 import {
 	createAssignMutation,
@@ -36,8 +37,7 @@ interface DiffContext {
 	readonly beforeRoot: object;
 	readonly afterRoot: object;
 	readonly linksEnabled: boolean;
-	candidateRoutes: Map<object, ReadonlyArray<OperationPath>>;
-	readonly removalLives: Set<object>;
+	routeIndex: RouteIndex | undefined;
 }
 
 class IncompatibleObjectRootsError extends Error {
@@ -76,8 +76,20 @@ const mergeResults = (results: ReadonlyArray<DiffResult>): DiffResult => {
 
 const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
 
-const routesOf = (context: DiffContext, live: object): ReadonlyArray<OperationPath> =>
-	context.candidateRoutes.get(live) ?? [];
+const requireRouteIndex = (context: DiffContext): RouteIndex => {
+	context.routeIndex ??= createRouteIndex(context.liveRoot);
+
+	return context.routeIndex;
+};
+
+const usableExternalRoutesOf = (
+	context: DiffContext,
+	live: object,
+	formation: OperationPath,
+): ReadonlyArray<OperationPath> =>
+	externalRoutesOf(requireRouteIndex(context).routesOf(live), formation).filter((route) =>
+		routeResolvesIn(context.afterRoot, route, live),
+	);
 
 const routeResolvesIn = (root: object, route: OperationPath, live: object): boolean => {
 	let current: unknown = root;
@@ -96,10 +108,8 @@ const routeResolvesIn = (root: object, route: OperationPath, live: object): bool
 };
 
 const refForMint = (context: DiffContext, live: object, container: OperationPath): OperationPath | undefined => {
-	const routes = routesOf(context, live);
-	const external = externalRoutesOf(routes, container).filter((route) =>
-		routeResolvesIn(context.afterRoot, route, live),
-	);
+	const routes = requireRouteIndex(context).routesOf(live);
+	const external = usableExternalRoutesOf(context, live, container);
 
 	if (external.length === 0) return undefined;
 
@@ -124,49 +134,8 @@ const linkOperation = (
 	undo: beforePresent ? createAssignMutation(path, before) : createDeleteMutation(path),
 });
 
-const harvestInteriorCandidates = (context: DiffContext, value: object): void => {
-	const lives = new Set<object>();
+const payloadHasPossiblyShared = (value: object): boolean => {
 	const visited = new Set<object>();
-
-	const visit = (node: object): void => {
-		const live = liveOf(node);
-
-		if (visited.has(live)) return;
-
-		visited.add(live);
-
-		if (getRegisteredTarget(node) !== undefined) lives.add(live);
-
-		if (!isCloneable(node)) return;
-
-		for (const entry of walkDataEntries(node)) {
-			const child: unknown = entry.value;
-
-			if (!isObjectLike(child)) continue;
-
-			visit(child);
-		}
-	};
-
-	visit(value);
-
-	const missing = new Set<object>();
-
-	for (const live of lives) {
-		if (!context.candidateRoutes.has(live)) missing.add(live);
-	}
-
-	if (missing.size === 0) return;
-
-	for (const [live, routes] of resolveCandidates(context.liveRoot, missing)) {
-		context.candidateRoutes.set(live, routes);
-	}
-};
-
-const valueHasEmbeddedEscapes = (context: DiffContext, value: unknown, formation: OperationPath): boolean => {
-	if (!isObjectLike(value) || !isCloneable(value) || context.candidateRoutes.size === 0) return false;
-
-	const visited = new Set<object>([liveOf(value)]);
 
 	const visit = (node: object): boolean => {
 		const live = liveOf(node);
@@ -175,9 +144,7 @@ const valueHasEmbeddedEscapes = (context: DiffContext, value: unknown, formation
 
 		visited.add(live);
 
-		const routes = context.candidateRoutes.get(live);
-
-		if (routes !== undefined && refForMint(context, live, formation) !== undefined) return true;
+		if (isPossiblyShared(live)) return true;
 
 		if (!isCloneable(node)) return false;
 
@@ -201,6 +168,62 @@ const valueHasEmbeddedEscapes = (context: DiffContext, value: unknown, formation
 	}
 
 	return false;
+};
+
+const hasSharedEscapeUnderPath = (context: DiffContext, path: OperationPath): boolean => {
+	const index = requireRouteIndex(context);
+
+	for (const live of index.sharedLives) {
+		const routes = index.routesOf(live);
+
+		if (!routes.some((route) => routeUnderPath(route, path))) continue;
+
+		if (usableExternalRoutesOf(context, live, path).length > 0) return true;
+	}
+
+	return false;
+};
+
+const carriedUndoLiveOf = (pair: Operation): object | undefined => {
+	if (pair.undo.verb !== "assign") return undefined;
+
+	const original = getValueOriginal(pair.undo);
+
+	if (!isObjectLike(original)) return undefined;
+
+	return liveOf(original);
+};
+
+const forEachHintedCarriedUndo = (
+	context: DiffContext,
+	opsStart: number,
+	visit: (pair: Operation, live: object, index: number) => boolean,
+): void => {
+	for (let index = opsStart; index < context.ops.length; index++) {
+		const pair = context.ops[index];
+
+		if (pair === undefined) continue;
+
+		const live = carriedUndoLiveOf(pair);
+
+		if (live === undefined || !isPossiblyShared(live)) continue;
+
+		if (visit(pair, live, index)) return;
+	}
+};
+
+const collapseHidesSurvivingSharing = (context: DiffContext, opsStart: number): boolean => {
+	let found = false;
+
+	forEachHintedCarriedUndo(context, opsStart, (pair, live) => {
+		if (usableExternalRoutesOf(context, live, pair.do.path).length === 0) return false;
+
+		found = true;
+
+		return true;
+	});
+
+	return found;
 };
 
 const commitOperation = (
@@ -299,14 +322,14 @@ const mintAssignment = (
 		if (ancestorPath !== undefined && ancestorPath.length > 0)
 			return commitLink(context, path, ancestorPath, before, beforePresent);
 
-		const ref = refForMint(context, live, path);
+		if (isPossiblyShared(live)) {
+			const ref = refForMint(context, live, path);
 
-		if (ref !== undefined) return commitLink(context, path, ref, before, beforePresent);
+			if (ref !== undefined) return commitLink(context, path, ref, before, beforePresent);
+		}
 
 		if (isPlainObject(after) || isPlainArray(after)) {
-			if (context.candidateRoutes.has(live)) harvestInteriorCandidates(context, after);
-
-			if (valueHasEmbeddedEscapes(context, after, path)) {
+			if (payloadHasPossiblyShared(after) && hasSharedEscapeUnderPath(context, path)) {
 				if (!beforePresent) return mintDecomposedAddition(context, path, after);
 
 				return mintDecomposedChange(context, path, before, after);
@@ -324,48 +347,11 @@ const mintAssignment = (
 const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult =>
 	mintAssignment(context, path, undefined, after, false);
 
-const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult => {
-	if (isObjectLike(before)) context.removalLives.add(liveOf(before));
-
-	return commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
-};
+const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult =>
+	commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
 
 const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult =>
 	mintAssignment(context, path, before, after, true);
-
-const resolveRemovalRoutes = (context: DiffContext): void => {
-	const missing = new Set<object>();
-
-	for (const live of context.removalLives) {
-		if (!context.candidateRoutes.has(live)) missing.add(live);
-	}
-
-	if (missing.size === 0) return;
-
-	const resolved = resolveCandidates(context.liveRoot, missing);
-
-	for (const live of missing) context.candidateRoutes.set(live, resolved.get(live) ?? []);
-};
-
-const collapseHidesSurvivingRemoval = (context: DiffContext, opsStart: number): boolean => {
-	const removals = new Array<{ readonly path: OperationPath; readonly live: object }>();
-
-	for (let index = opsStart; index < context.ops.length; index++) {
-		const pair = context.ops[index];
-
-		if (pair?.do.verb !== "delete" || pair.undo.verb !== "assign") continue;
-
-		const original = getValueOriginal(pair.undo);
-
-		if (isObjectLike(original)) removals.push({ path: pair.do.path, live: liveOf(original) });
-	}
-
-	if (removals.length === 0) return false;
-
-	resolveRemovalRoutes(context);
-
-	return removals.some((removal) => externalRoutesOf(routesOf(context, removal.live), removal.path).length > 0);
-};
 
 const tryCollapse = (
 	context: DiffContext,
@@ -377,37 +363,40 @@ const tryCollapse = (
 ): DiffResult => {
 	if (walked.weight === 0) return walked;
 
-	if (valueHasEmbeddedEscapes(context, after, path) || valueHasEmbeddedEscapes(context, before, path)) {
-		return walked;
-	}
+	const probe = { sawHintedNode: false };
+	const onNode = (node: object): void => {
+		if (isPossiblyShared(node) || isPossiblyShared(liveOf(node))) probe.sawHintedNode = true;
+	};
 
-	if (context.linksEnabled && collapseHidesSurvivingRemoval(context, opsStart)) return walked;
-
-	const beforeWeight = weighValue(before, walked.weight);
-	const afterWeight = weighValue(after, walked.weight - beforeWeight);
+	const beforeWeight = weighValue(before, walked.weight, onNode);
+	const afterWeight = weighValue(after, walked.weight - beforeWeight, onNode);
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
-	if (collapsedWeight < walked.weight) {
-		const decisionWeights = new Map<object, number>();
+	if (collapsedWeight >= walked.weight) return walked;
 
-		if (isObjectLike(before)) decisionWeights.set(before, beforeWeight);
+	if (context.linksEnabled) {
+		if (probe.sawHintedNode && hasSharedEscapeUnderPath(context, path)) return walked;
 
-		if (isObjectLike(after)) decisionWeights.set(after, afterWeight);
-
-		const weighHalf = (value: unknown): number => {
-			if (isObjectLike(value)) {
-				const memoized = decisionWeights.get(value);
-
-				if (memoized !== undefined) return memoized;
-			}
-
-			return weighCarried(value);
-		};
-
-		return commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf);
+		if (collapseHidesSurvivingSharing(context, opsStart)) return walked;
 	}
 
-	return walked;
+	const decisionWeights = new Map<object, number>();
+
+	if (isObjectLike(before)) decisionWeights.set(before, beforeWeight);
+
+	if (isObjectLike(after)) decisionWeights.set(after, afterWeight);
+
+	const weighHalf = (value: unknown): number => {
+		if (isObjectLike(value)) {
+			const memoized = decisionWeights.get(value);
+
+			if (memoized !== undefined) return memoized;
+		}
+
+		return weighCarried(value);
+	};
+
+	return commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf);
 };
 
 const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean =>
@@ -575,67 +564,73 @@ const getRootKind = (value: object): RootKind | undefined => {
 	return undefined;
 };
 
-const routeDisturbedAfter = (context: DiffContext, index: number, route: OperationPath): boolean => {
-	for (let later = index + 1; later < context.ops.length; later++) {
-		const pair = context.ops[later];
+interface DoPathTrieNode {
+	terminalMax: number;
+	readonly children: Map<string | number, DoPathTrieNode>;
+}
+
+const createDoPathTrie = (ops: ReadonlyArray<Operation>): ((route: OperationPath, afterIndex: number) => boolean) => {
+	const root: DoPathTrieNode = { terminalMax: -1, children: new Map() };
+
+	for (let index = 0; index < ops.length; index++) {
+		const pair = ops[index];
 
 		if (pair === undefined) continue;
 
-		if (routeUnderPath(route, pair.do.path)) return true;
+		let current = root;
+
+		for (const segment of pair.do.path) {
+			let child = current.children.get(segment);
+
+			if (child === undefined) {
+				child = { terminalMax: -1, children: new Map() };
+				current.children.set(segment, child);
+			}
+
+			current = child;
+		}
+
+		current.terminalMax = Math.max(current.terminalMax, index);
 	}
 
-	return false;
+	return (route: OperationPath, afterIndex: number): boolean => {
+		let current = root;
+
+		if (current.terminalMax > afterIndex) return true;
+
+		for (const segment of route) {
+			const child = current.children.get(segment);
+
+			if (child === undefined) return false;
+
+			current = child;
+
+			if (current.terminalMax > afterIndex) return true;
+		}
+
+		return false;
+	};
 };
 
 const rewriteSurvivingUndos = (context: DiffContext): void => {
 	if (!context.linksEnabled) return;
 
-	const lives = new Set<object>();
+	const routeDisturbedAfter = createDoPathTrie(context.ops);
 
-	for (const live of context.removalLives) {
-		if (!context.candidateRoutes.has(live)) lives.add(live);
-	}
+	forEachHintedCarriedUndo(context, 0, (pair, live, index) => {
+		const surviving = usableExternalRoutesOf(context, live, pair.do.path).find(
+			(route) => !routeDisturbedAfter(route, index),
+		);
 
-	for (const pair of context.ops) {
-		if (pair.undo.verb !== "assign") continue;
-
-		const original = getValueOriginal(pair.undo);
-
-		if (!isObjectLike(original)) continue;
-
-		const live = liveOf(original);
-
-		if (!context.candidateRoutes.has(live)) lives.add(live);
-	}
-
-	if (lives.size > 0) {
-		for (const [live, routes] of resolveCandidates(context.liveRoot, lives)) {
-			context.candidateRoutes.set(live, routes);
-		}
-	}
-
-	for (let index = 0; index < context.ops.length; index++) {
-		const pair = context.ops[index];
-
-		if (pair === undefined) continue;
-
-		if (pair.undo.verb !== "assign") continue;
-
-		const original = getValueOriginal(pair.undo);
-
-		if (!isObjectLike(original)) continue;
-
-		const live = liveOf(original);
-		const external = externalRoutesOf(context.candidateRoutes.get(live) ?? [], pair.do.path);
-		const surviving = external.find((route) => !routeDisturbedAfter(context, index, route));
-
-		if (surviving === undefined) continue;
+		if (surviving === undefined) return false;
 
 		context.ops[index] = {
 			do: pair.do,
 			undo: createLinkMutation(pair.do.path, surviving),
 		};
-	}
+
+		return false;
+	});
 };
 
 /**
@@ -659,8 +654,6 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 	const ops = new Array<Operation>();
 	const liveRoot = liveOf(after);
 	const linksEnabled = getRegisteredTarget(after) !== undefined;
-	const candidates = new Set<object>(linksEnabled ? takeFormationCandidates(liveRoot) : []);
-	const candidateRoutes = new Map(resolveCandidates(liveRoot, candidates));
 
 	const context: DiffContext = {
 		ops,
@@ -670,8 +663,7 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 		beforeRoot: before,
 		afterRoot: after,
 		linksEnabled,
-		candidateRoutes,
-		removalLives: new Set(),
+		routeIndex: undefined,
 	};
 
 	diffValue(context, before, after, createOperationPath([]));

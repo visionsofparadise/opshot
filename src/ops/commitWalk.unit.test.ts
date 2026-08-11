@@ -1,27 +1,15 @@
-import { createMutableState } from "../createMutableState";
-import { subscribe } from "../subscribe";
 import { unstable_getInternalStates } from "valtio/vanilla";
-import {
-	absorbFormationPulse,
-	clearFormationCandidates,
-	clearFormationPulse,
-	externalRoutesOf,
-	flagFormationCandidate,
-	formationCandidatesOf,
-	resolveCandidates,
-	takeFormationCandidates,
-} from "./commitWalk";
+import { createMutableState } from "../createMutableState";
+import { ignore } from "../ignore";
+import { subscribe } from "../subscribe";
+import { createRouteIndex, externalRoutesOf, flagPossiblyShared, isPossiblyShared, routeUnderPath } from "./commitWalk";
 import { createOperationPath } from "./path";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
-describe("resolveCandidates", () => {
-	afterEach(() => {
-		clearFormationCandidates();
-	});
-
+describe("createRouteIndex", () => {
 	it("returns the first-encounter route as canonical and every found route", () => {
 		const shared = { n: 1 };
 		const state = createMutableState({
@@ -30,31 +18,30 @@ describe("resolveCandidates", () => {
 			c: shared,
 		});
 
-		const routes = [...resolveCandidates(state, new Set([state.a.b as object])).values()];
+		const index = createRouteIndex(state);
+		const routes = index.routesOf(state.a.b as object);
 
-		expect(routes).toHaveLength(1);
-		expect(routes[0]?.map((path) => [...path])).toEqual([["a", "b"], ["b"], ["c"]]);
+		expect(routes.map((path) => [...path])).toEqual([["a", "b"], ["b"], ["c"]]);
+		expect(index.sharedLives.has(rawTargetOf(state.a.b as object))).toBe(true);
 	});
 
-	it("returns an empty map when there are no candidates", () => {
-		const state = createMutableState({ a: { n: 1 } });
-
-		expect(resolveCandidates(state, new Set()).size).toBe(0);
-	});
-
-	it("returns no entry for a detached candidate", () => {
+	it("reports unreachable for a detached node", () => {
 		const state = createMutableState({ a: { n: 1 } });
 		const detached = { n: 2 };
+		const index = createRouteIndex(state);
 
-		expect(resolveCandidates(state, new Set([detached])).size).toBe(0);
+		expect(index.isReachable(detached)).toBe(false);
+		expect(index.routesOf(detached)).toEqual([]);
 	});
 
-	it("returns no entry for a cross-graph candidate", () => {
+	it("reports unreachable for a cross-graph node", () => {
 		const shared = { n: 1 };
 		const stateA = createMutableState({ held: shared });
 		const stateB = createMutableState({ other: { n: 2 } });
+		const index = createRouteIndex(stateB);
 
-		expect(resolveCandidates(stateB, new Set([stateA.held as object])).size).toBe(0);
+		expect(index.isReachable(stateA.held as object)).toBe(false);
+		expect(index.routesOf(stateA.held as object)).toEqual([]);
 	});
 
 	it("is cycle-safe and records every simple route to the cycle node", () => {
@@ -62,10 +49,44 @@ describe("resolveCandidates", () => {
 
 		state.box.self = state.box;
 
-		const routes = [...resolveCandidates(state, new Set([state.box as object])).values()];
+		const index = createRouteIndex(state);
+		const routes = index.routesOf(state.box as object);
+
+		expect(routes.map((path) => [...path])).toEqual([["box"], ["box", "self"]]);
+	});
+
+	it("does not descend into refSet children", () => {
+		const hidden = { n: 1 };
+		const state = createMutableState({
+			open: { n: 2 },
+			wrapped: ignore({ held: hidden }),
+		});
+
+		const index = createRouteIndex(state);
+
+		expect(index.isReachable(state.open)).toBe(true);
+		expect(index.isReachable(hidden)).toBe(false);
+		expect(index.routesOf(hidden)).toEqual([]);
+	});
+
+	it("mints numeric segments for array indexes", () => {
+		const item = { n: 1 };
+		const state = createMutableState({ list: [item] });
+		const index = createRouteIndex(state);
+		const routes = index.routesOf(state.list[0] as object);
 
 		expect(routes).toHaveLength(1);
-		expect(routes[0]?.map((path) => [...path])).toEqual([["box"], ["box", "self"]]);
+		expect([...routes[0]!]).toEqual(["list", 0]);
+		expect(typeof routes[0]![1]).toBe("number");
+	});
+
+	it("compares segments strictly in routeUnderPath", () => {
+		const numeric = createOperationPath(["list", 0]);
+		const stringy = createOperationPath(["list", "0"]);
+
+		expect(routeUnderPath(numeric, createOperationPath(["list", 0]))).toBe(true);
+		expect(routeUnderPath(numeric, createOperationPath(["list", "0"]))).toBe(false);
+		expect(routeUnderPath(stringy, createOperationPath(["list", 0]))).toBe(false);
 	});
 
 	it("externalRoutesOf drops routes under the formation path", () => {
@@ -73,64 +94,149 @@ describe("resolveCandidates", () => {
 
 		expect(externalRoutesOf(routes, createOperationPath(["b2"])).map((path) => [...path])).toEqual([["a", "b"]]);
 	});
+});
 
-	it("flags formation candidates onto the host state's ledger", () => {
-		const state = createMutableState({ shared: { n: 1 } });
+describe("sharing hint", () => {
+	it("flags on direct assignment of an already-tracked proxy", () => {
+		const state = createMutableState<{ held: { n: number }; alias?: { n: number } }>({ held: { n: 1 } });
 
-		expect(formationCandidatesOf(state).size).toBe(0);
+		expect(isPossiblyShared(state.held)).toBe(false);
 
-		flagFormationCandidate(state.shared, state);
+		state.alias = state.held;
 
-		expect(formationCandidatesOf(state).size).toBe(1);
-		expect(resolveCandidates(state, formationCandidatesOf(state)).size).toBe(1);
+		expect(isPossiblyShared(state.held)).toBe(true);
 	});
 
-	it("scopes formation candidates per state and take clears only that state", () => {
-		const stateA = createMutableState({ shared: { n: 1 } });
-		const stateB = createMutableState({ other: { n: 2 } });
-
-		flagFormationCandidate(stateA.shared, stateA);
-		flagFormationCandidate(stateB.other, stateB);
-
-		expect(formationCandidatesOf(stateA).size).toBe(1);
-		expect(formationCandidatesOf(stateB).size).toBe(1);
-
-		const takenA = takeFormationCandidates(stateA);
-
-		expect(takenA.size).toBe(1);
-		expect(formationCandidatesOf(stateA).size).toBe(0);
-		expect(formationCandidatesOf(stateB).size).toBe(1);
-		expect(takeFormationCandidates(stateB).size).toBe(1);
-		expect(formationCandidatesOf(stateB).size).toBe(0);
-	});
-
-	it("nested-host flags land on a pulse until absorb copies them onto a root ledger", () => {
-		const state = createMutableState({ box: { n: 1 } });
-		const nestedHost = rawTargetOf(state.box);
-
-		flagFormationCandidate(state.box, nestedHost);
-
-		expect(formationCandidatesOf(state).size).toBe(0);
-
-		absorbFormationPulse(state);
-
-		expect(formationCandidatesOf(state).size).toBe(1);
-
-		clearFormationPulse();
-		expect(takeFormationCandidates(state).size).toBe(1);
-	});
-
-	it("nested bare cycle formation reaches the root ledger via notify absorb", () => {
-		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
-		const heard = new Array<unknown>();
-
-		subscribe(state, (ops) => {
-			heard.push(ops);
+	it("flags an embedded tracked node through initializer replay", () => {
+		const state = createMutableState<{ held: { n: number }; wrap?: { inner: { n: number } } }>({
+			held: { n: 1 },
 		});
+
+		state.wrap = { inner: state.held };
+
+		expect(isPossiblyShared(state.held)).toBe(true);
+	});
+
+	it("flags a duplicate raw reference through the proxyCache arm", () => {
+		const shared = { n: 1 };
+		const state = createMutableState({ a: shared, alias: shared });
+
+		expect(isPossiblyShared(state.a)).toBe(true);
+		expect(isPossiblyShared(state.alias)).toBe(true);
+		expect(rawTargetOf(state.a)).toBe(rawTargetOf(state.alias));
+	});
+
+	it("records an explicit flagPossiblyShared call", () => {
+		const node = { n: 1 };
+
+		expect(isPossiblyShared(node)).toBe(false);
+
+		flagPossiblyShared(node);
+
+		expect(isPossiblyShared(node)).toBe(true);
+	});
+
+	it("leaves the hint unflagged when a write is refused", () => {
+		const source: { hub: { n: number }; slot?: unknown } = { hub: { n: 1 } };
+
+		Object.defineProperty(source, "slot", { value: undefined, writable: false, enumerable: true });
+
+		const state = createMutableState(source);
+
+		expect(() => {
+			state.slot = state.hub;
+		}).toThrow("trap returned falsish");
+
+		expect(isPossiblyShared(state.hub)).toBe(false);
+	});
+
+	it("leaves the hint unflagged when the strictness join throws", () => {
+		const loose = createMutableState({ node: { n: 1 } }, { strict: false });
+		const strict = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } });
+
+		expect(() => {
+			strict.slot = loose.node;
+		}).toThrow("strict");
+
+		expect(isPossiblyShared(loose.node)).toBe(false);
+		expect(isPossiblyShared(strict.hub)).toBe(false);
+	});
+});
+
+describe("formation detection (index semantics)", () => {
+	it("detects init-time aliasing at index build", () => {
+		const shared = { n: 1 };
+		const state = createMutableState({ a: shared, alias: shared });
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(state.a).map((path) => [...path])).toEqual([["a"], ["alias"]]);
+		expect(index.sharedLives.has(rawTargetOf(state.a))).toBe(true);
+	});
+
+	it("detects cross-tick aliasing at index build", async () => {
+		const state = createMutableState<{ a: { n: number }; alias?: { n: number } }>({ a: { n: 1 } });
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		state.alias = state.a;
+
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(state.a).map((path) => [...path])).toEqual([["a"], ["alias"]]);
+		expect(index.sharedLives.has(rawTargetOf(state.a))).toBe(true);
+		expect(isPossiblyShared(state.a)).toBe(true);
+	});
+
+	it("isolates multi-state sharing as per-diff derivation", async () => {
+		const deferred: Array<() => void> = [];
+		const emitOn = (flush: () => void): void => {
+			deferred.push(flush);
+		};
+		const shared = { n: 1 };
+		const stateA = createMutableState<{ held: { n: number }; alias?: { n: number } }>({ held: shared }, { emitOn });
+		const stateB = createMutableState<{ held: { n: number }; alias?: { n: number } }>({ held: shared });
+		const heardA = new Array<unknown>();
+		const heardB = new Array<unknown>();
+
+		subscribe(stateA, (ops) => {
+			heardA.push(ops);
+		});
+		subscribe(stateB, (ops) => {
+			heardB.push(ops);
+		});
+
+		stateA.alias = stateA.held;
+		stateB.alias = stateB.held;
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(heardB).toHaveLength(1);
+		expect(heardA).toHaveLength(0);
+
+		const indexA = createRouteIndex(stateA);
+		const indexB = createRouteIndex(stateB);
+
+		expect(indexA.routesOf(stateA.held).map((path) => [...path])).toEqual([["held"], ["alias"]]);
+		expect(indexB.routesOf(stateB.held).map((path) => [...path])).toEqual([["held"], ["alias"]]);
+		expect(indexA.isReachable(stateB)).toBe(false);
+		expect(indexB.isReachable(stateA)).toBe(false);
+
+		for (const flush of deferred) flush();
+
+		expect(heardA).toHaveLength(1);
+		expect(heardB).toHaveLength(1);
+	});
+
+	it("detects nested cycle formation on the live graph without a resident ledger", () => {
+		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
 		state.box.self = state.box;
 
-		expect(state.box.self).toBe(state.box);
-		expect(formationCandidatesOf(state).size).toBe(1);
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(state.box as object).map((path) => [...path])).toEqual([["box"], ["box", "self"]]);
+		expect(isPossiblyShared(state.box)).toBe(true);
 	});
 });

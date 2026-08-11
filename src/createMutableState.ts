@@ -1,16 +1,12 @@
-import { proxy, unstable_getInternalStates } from "valtio/vanilla";
+import { proxy } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
 import { getOptions, stampOptions, type MutableNodeOptions } from "./settings";
-import { isStateRoot, markStateRoot } from "./stateRoots";
+import { markStateRoot } from "./stateRoots";
 import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";
 import { assertInitializerStrictnessJoins, assertSafeDataPaths, installBoundary } from "./valtio/boundary";
-import { frozenRootError, rejectionError, stateRootValueError } from "./valtio/boundaryErrors";
+import { frozenRootError, rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
-
-const { proxyStateMap, refSet } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 /**
  * Options for `createMutableState`, including optional group membership.
@@ -53,30 +49,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		if (options?.strict !== false) throw rejectionError(properties, decision.kind);
 	} else if (decision.lane !== "track") throw frozenRootError(properties);
 
-	if (options?.strict !== false) assertSafeDataPaths(properties, [], new Set());
-	else {
-		const visits = new Set<object>();
-
-		const rejectStateRoots = (value: unknown, path: Array<string>): void => {
-			if (typeof value !== "object" || value === null || visits.has(value)) return;
-
-			visits.add(value);
-
-			if (refSet.has(value)) return;
-
-			if (isStateRoot(rawTargetOf(value))) throw stateRootValueError(path);
-
-			for (const key of Object.keys(value)) {
-				const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-
-				if (descriptor === undefined || !("value" in descriptor)) continue;
-
-				rejectStateRoots(descriptor.value, [...path, key]);
-			}
-		};
-
-		rejectStateRoots(properties, []);
-	}
+	assertSafeDataPaths(properties, [], new Set(), options?.strict !== false ? "admission" : "rootsOnly");
 
 	const base = Object.create(Reflect.getPrototypeOf(properties)) as T;
 

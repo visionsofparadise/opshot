@@ -10,6 +10,7 @@ interface WeightState {
 	weight: number;
 	readonly budget: number;
 	readonly seen: WeakSet<object>;
+	readonly onNode: ((node: object) => void) | undefined;
 }
 
 const addWeight = (state: WeightState, amount: number): boolean => {
@@ -37,6 +38,7 @@ const weigh = (value: unknown, state: WeightState): void => {
 
 	if (isCloneable(value)) {
 		state.seen.add(value);
+		state.onNode?.(value);
 
 		if (!addWeight(state, NODE_WEIGHT)) return;
 
@@ -54,8 +56,8 @@ const weigh = (value: unknown, state: WeightState): void => {
 	}
 };
 
-export const weighValue = (value: unknown, budget: number): number => {
-	const state: WeightState = { weight: 0, budget, seen: new WeakSet() };
+export const weighValue = (value: unknown, budget: number, onNode?: (node: object) => void): number => {
+	const state: WeightState = { weight: 0, budget, seen: new WeakSet(), onNode };
 
 	weigh(value, state);
 

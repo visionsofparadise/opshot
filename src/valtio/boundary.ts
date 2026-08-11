@@ -1,7 +1,7 @@
 import { getUntracked } from "proxy-compare";
 import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { clearFormationPulse, flagFormationCandidate } from "../ops/commitWalk";
+import { flagPossiblyShared } from "../ops/commitWalk";
 import { peelReadProxy } from "../peelReadProxy";
 import { getOptions, inheritOptions } from "../settings";
 import { isStateRoot } from "../stateRoots";
@@ -21,7 +21,7 @@ import {
 import { admissionDecision, admissionLane, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
-const { proxyStateMap, refSet } = unstable_getInternalStates();
+const { proxyStateMap, proxyCache, refSet } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
@@ -48,14 +48,18 @@ const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 	return current;
 };
 
-const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>, host: object | undefined): void => {
+export type DataPathWalkMode = "admission" | "rootsOnly";
+
+const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>, mode: DataPathWalkMode): void => {
 	if (typeof value !== "object" || value === null) return;
 
 	if (visits.has(value)) return;
 
 	visits.add(value);
 
-	if (isStateRoot(rawTargetOf(value)) && !refSet.has(value)) throw stateRootValueError(path);
+	if (refSet.has(value)) return;
+
+	if (isStateRoot(rawTargetOf(value))) throw stateRootValueError(path);
 
 	for (const entry of walkDataEntries(value)) {
 		const child: unknown = entry.value;
@@ -65,9 +69,9 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		const childPath = [...path, entry.key];
 
 		if (!entry.writable) {
-			if (admissionLane(child) === "leaf") continue;
+			if (mode === "admission" && admissionLane(child) !== "leaf") throw nonWritablePropertyError(child, childPath);
 
-			throw nonWritablePropertyError(child, childPath);
+			continue;
 		}
 
 		if (refSet.has(child)) continue;
@@ -75,17 +79,28 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		if (proxyStateMap.has(child)) {
 			if (isStateRoot(rawTargetOf(child))) throw stateRootValueError(childPath);
 
-			if (host !== undefined) flagFormationCandidate(child, host);
+			continue;
+		}
+
+		if (mode === "admission") {
+			if (certifyAdmission(child, childPath) === "track") walkDataPaths(child, childPath, visits, mode);
 
 			continue;
 		}
 
-		if (certifyAdmission(child, childPath) === "track") walkDataPaths(child, childPath, visits, host);
+		if (admissionLane(child) === "leaf") continue;
+
+		walkDataPaths(child, childPath, visits, mode);
 	}
 };
 
-export const assertSafeDataPaths = (value: unknown, path: Array<string>, visits: Set<object>, host?: object): void => {
-	walkDataPaths(value, path, visits, host);
+export const assertSafeDataPaths = (
+	value: unknown,
+	path: Array<string>,
+	visits: Set<object>,
+	mode: DataPathWalkMode = "admission",
+): void => {
+	walkDataPaths(value, path, visits, mode);
 };
 
 const stampedStrictOf = (target: object): boolean => getOptions(target)?.strict !== false;
@@ -188,8 +203,6 @@ const refusesWrite = (target: object, property: string | symbol, value: unknown)
 
 let installed = false;
 
-let formationSetDepth = 0;
-
 export function installBoundary(): void {
 	if (installed) return;
 
@@ -238,7 +251,7 @@ export function installBoundary(): void {
 							const decision = admissionDecision(resolved);
 
 							if (strict && !isInitializing() && decision.lane === "track")
-								assertSafeDataPaths(resolved, location, new Set(), target);
+								assertSafeDataPaths(resolved, location, new Set());
 
 							if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
@@ -257,20 +270,17 @@ export function installBoundary(): void {
 						typeof resolved === "object" &&
 						resolved !== null &&
 						!refSet.has(resolved) &&
-						proxyStateMap.has(resolved)
-					)
-						flagFormationCandidate(resolved, target);
+						(proxyStateMap.has(resolved) || proxyCache.has(resolved))
+					) {
+						flagPossiblyShared(resolved);
+					}
 
 					setDepth += 1;
-					formationSetDepth += 1;
 
 					try {
 						return defaultSet(target, prop, resolved, receiver);
 					} finally {
 						setDepth -= 1;
-						formationSetDepth -= 1;
-
-						if (formationSetDepth === 0) clearFormationPulse();
 					}
 				},
 				deleteProperty(target, prop) {

@@ -7,6 +7,7 @@ import { installBoundary } from "./boundary";
 import { createMutableState } from "../createMutableState";
 import { peelIdentityLayer } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
+import { isPossiblyShared } from "../ops/commitWalk";
 import { type Operation } from "../ops/operation";
 import { getOptions } from "../settings";
 import { ignore } from "../ignore";
@@ -1448,6 +1449,56 @@ describe("boundary: state root is not a tracked value", () => {
 		const foreign = createMutableState({ n: 1 });
 
 		expect(() => createMutableState({ held: foreign })).toThrow(rootMessage("/held"));
+		expect(() => createMutableState({ held: foreign }, { strict: false })).toThrow(rootMessage("/held"));
+	});
+
+	it("rejects a foreign state root nested under a reachable track edge in the loose pre-walk", () => {
+		const foreign = createMutableState({ n: 1 });
+
+		expect(() => createMutableState({ outer: { inner: foreign } }, { strict: false })).toThrow(
+			rootMessage("/outer/inner"),
+		);
+	});
+
+	it("admits a state root inside a frozen container under the loose factory, matching the trap", () => {
+		const foreign = createMutableState({ n: 1 }, { strict: false });
+		const frozen = Object.freeze({ held: foreign });
+
+		expect(() => createMutableState({ box: frozen }, { strict: false })).not.toThrow();
+
+		const state = createMutableState<{ box?: object }>({}, { strict: false });
+
+		expect(() => {
+			state.box = Object.freeze({ held: foreign });
+		}).not.toThrow();
+	});
+
+	it("admits a state root behind a non-writable property under the loose factory, matching the trap", () => {
+		const foreign = createMutableState({ n: 1 }, { strict: false });
+		const holder: Record<string, unknown> = {};
+
+		Object.defineProperty(holder, "sealed", {
+			value: foreign,
+			writable: false,
+			enumerable: true,
+			configurable: true,
+		});
+
+		expect(() => createMutableState(holder, { strict: false })).not.toThrow();
+
+		const state = createMutableState<{ box?: object }>({}, { strict: false });
+		const payload: Record<string, unknown> = {};
+
+		Object.defineProperty(payload, "sealed", {
+			value: foreign,
+			writable: false,
+			enumerable: true,
+			configurable: true,
+		});
+
+		expect(() => {
+			state.box = payload;
+		}).not.toThrow();
 	});
 
 	it("rejects a state root nested in a fresh subtree at the set trap", () => {
@@ -1572,7 +1623,7 @@ describe("boundary: route-scoped declarations", () => {
 	});
 });
 
-describe("boundary: bare references and the formation ledger", () => {
+describe("boundary: bare references and the sharing hint", () => {
 	it("admits an ignored state root under both strictness settings", () => {
 		const foreign = createMutableState({ q: 1 });
 
@@ -1596,7 +1647,7 @@ describe("boundary: bare references and the formation ledger", () => {
 		}).not.toThrow();
 	});
 
-	it("leaves no formation candidate behind when a write is refused", () => {
+	it("leaves the sharing hint unflagged when a write is refused", () => {
 		const source: { hub: { n: number }; slot?: unknown } = { hub: { n: 1 } };
 
 		Object.defineProperty(source, "slot", { value: undefined, writable: false, enumerable: true });
@@ -1609,6 +1660,7 @@ describe("boundary: bare references and the formation ledger", () => {
 		}).toThrow("trap returned falsish");
 
 		expect(state.slot).toBeUndefined();
+		expect(isPossiblyShared(state.hub)).toBe(false);
 
 		transact(state, () => {
 			state.hub.n = 2;
@@ -1619,13 +1671,16 @@ describe("boundary: bare references and the formation ledger", () => {
 		}
 	});
 
-	it("leaves no formation candidate behind when the strictness join throws", () => {
+	it("leaves the sharing hint unflagged when the strictness join throws", () => {
 		const loose = createMutableState({ node: { n: 1 } }, { strict: false });
 		const strict = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } });
 
 		expect(() => {
 			strict.slot = loose.node;
 		}).toThrow("strict");
+
+		expect(isPossiblyShared(loose.node)).toBe(false);
+		expect(isPossiblyShared(strict.hub)).toBe(false);
 
 		const heard = recordEmissions(strict);
 

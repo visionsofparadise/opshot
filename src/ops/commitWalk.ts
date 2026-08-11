@@ -1,104 +1,127 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { isStateRoot } from "../stateRoots";
 import { walkDataEntries } from "../utils/dataEntries";
 import { isPlainArray } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString } from "./predicates";
 
-const { proxyStateMap } = unstable_getInternalStates();
+const { proxyStateMap, refSet } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
-const emptyFormationCandidates: ReadonlySet<object> = new Set();
+const possiblyShared = new WeakSet<object>();
 
-let formationCandidatesByRoot = new WeakMap<object, Set<object>>();
-
-let formationPulse = new Set<object>();
-
-const bucketFor = (root: object): Set<object> => {
-	const key = rawTargetOf(root);
-	let bucket = formationCandidatesByRoot.get(key);
-
-	if (bucket === undefined) {
-		bucket = new Set();
-		formationCandidatesByRoot.set(key, bucket);
-	}
-
-	return bucket;
+export const flagPossiblyShared = (node: object): void => {
+	possiblyShared.add(rawTargetOf(node));
 };
 
-/**
- * Flags an already-registered admitted node as a formation candidate for the commit walk.
- *
- * A state-root host records the candidate on that root's ledger immediately. A nested host
- * writes into a short-lived pulse; each armed emitter absorbs the pulse onto its root ledger when
- * valtio notifies the write, so multi-root sharing copies to every notified root and a deferred
- * `emitOn` on one state cannot clear another's ledger.
- *
- * @param node - Already-registered admitted value.
- * @param host - Container that received the write (root or nested raw/proxy target).
- * @returns Nothing.
- */
-export const flagFormationCandidate = (node: object, host?: object): void => {
-	const candidate = rawTargetOf(node);
-
-	if (host !== undefined) {
-		const liveHost = rawTargetOf(host);
-
-		if (isStateRoot(liveHost)) {
-			bucketFor(liveHost).add(candidate);
-
-			return;
-		}
-	}
-
-	formationPulse.add(candidate);
-};
-
-/**
- * Copies the current formation pulse onto a state's root ledger at notify time.
- *
- * @param root - State root (write proxy or raw target).
- * @returns Nothing.
- */
-export const absorbFormationPulse = (root: object): void => {
-	if (formationPulse.size === 0) return;
-
-	const bucket = bucketFor(root);
-
-	for (const candidate of formationPulse) bucket.add(candidate);
-};
-
-export const clearFormationPulse = (): void => {
-	if (formationPulse.size === 0) return;
-
-	formationPulse = new Set();
-};
-
-export const formationCandidatesOf = (root: object): ReadonlySet<object> =>
-	formationCandidatesByRoot.get(rawTargetOf(root)) ?? emptyFormationCandidates;
-
-export const takeFormationCandidates = (root: object): ReadonlySet<object> => {
-	const key = rawTargetOf(root);
-	const bucket = formationCandidatesByRoot.get(key);
-
-	if (bucket === undefined) return emptyFormationCandidates;
-
-	formationCandidatesByRoot.delete(key);
-
-	return bucket;
-};
-
-export const clearFormationCandidates = (): void => {
-	formationCandidatesByRoot = new WeakMap();
-	formationPulse = new Set();
-};
+export const isPossiblyShared = (node: object): boolean => possiblyShared.has(rawTargetOf(node));
 
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
-const segmentEquals = (left: string | number, right: string | number): boolean =>
-	left === right || String(left) === String(right);
+interface InEdge {
+	readonly parentLive: object;
+	readonly segment: string | number;
+}
+
+export interface RouteIndex {
+	readonly isReachable: (live: object) => boolean;
+	readonly routesOf: (live: object) => ReadonlyArray<OperationPath>;
+	readonly sharedLives: ReadonlySet<object>;
+}
+
+export const createRouteIndex = (root: object): RouteIndex => {
+	const inEdges = new Map<object, Array<InEdge>>();
+	const expanded = new Set<object>();
+	const firstRouteMemo = new Map<object, OperationPath>();
+	const shared = new Set<object>();
+	const rootLive = rawTargetOf(root);
+
+	inEdges.set(rootLive, []);
+
+	const visit = (node: object): void => {
+		const live = rawTargetOf(node);
+
+		if (expanded.has(live)) return;
+
+		expanded.add(live);
+
+		for (const entry of walkDataEntries(node)) {
+			const child: unknown = entry.value;
+
+			if (typeof child !== "object" || child === null) continue;
+
+			if (refSet.has(child)) continue;
+
+			const childLive = rawTargetOf(child);
+			const segment = segmentFor(node, entry.key);
+			const edges = inEdges.get(childLive);
+
+			if (edges === undefined) {
+				inEdges.set(childLive, [{ parentLive: live, segment }]);
+			} else {
+				edges.push({ parentLive: live, segment });
+
+				if (edges.length === 2) shared.add(childLive);
+			}
+
+			visit(child);
+		}
+	};
+
+	visit(root);
+
+	const firstRouteOf = (live: object): OperationPath => {
+		const memoized = firstRouteMemo.get(live);
+
+		if (memoized !== undefined) return memoized;
+
+		const edges = inEdges.get(live);
+
+		if (edges === undefined || edges.length === 0) {
+			const empty = createOperationPath([]);
+
+			firstRouteMemo.set(live, empty);
+
+			return empty;
+		}
+
+		const first = edges[0];
+
+		if (first === undefined) {
+			const empty = createOperationPath([]);
+
+			firstRouteMemo.set(live, empty);
+
+			return empty;
+		}
+
+		const route = createOperationPath([...firstRouteOf(first.parentLive), first.segment]);
+
+		firstRouteMemo.set(live, route);
+
+		return route;
+	};
+
+	return {
+		isReachable: (live: object): boolean => inEdges.has(rawTargetOf(live)),
+		routesOf: (live: object): ReadonlyArray<OperationPath> => {
+			const key = rawTargetOf(live);
+			const edges = inEdges.get(key);
+
+			if (edges === undefined) return [];
+
+			if (edges.length === 0) return [firstRouteOf(key)];
+
+			return edges.map((edge, index) => {
+				if (index === 0) return firstRouteOf(key);
+
+				return createOperationPath([...firstRouteOf(edge.parentLive), edge.segment]);
+			});
+		},
+		sharedLives: shared,
+	};
+};
 
 export const routeUnderPath = (route: OperationPath, formation: OperationPath): boolean => {
 	if (route.length < formation.length) return false;
@@ -109,7 +132,7 @@ export const routeUnderPath = (route: OperationPath, formation: OperationPath): 
 
 		if (routeSegment === undefined || formationSegment === undefined) return false;
 
-		if (!segmentEquals(routeSegment, formationSegment)) return false;
+		if (routeSegment !== formationSegment) return false;
 	}
 
 	return true;
@@ -121,44 +144,3 @@ export const externalRoutesOf = (
 ): ReadonlyArray<OperationPath> => routes.filter((route) => !routeUnderPath(route, formation));
 
 export const canonicalRouteOf = (routes: ReadonlyArray<OperationPath>): OperationPath | undefined => routes[0];
-
-export const resolveCandidates = (
-	root: object,
-	candidates: ReadonlySet<object>,
-): ReadonlyMap<object, ReadonlyArray<OperationPath>> => {
-	const wanted = new Set<object>();
-
-	for (const candidate of candidates) wanted.add(rawTargetOf(candidate));
-
-	if (wanted.size === 0) return new Map();
-
-	const found = new Map<object, Array<OperationPath>>();
-	const expanded = new Set<object>();
-
-	const visit = (node: object, path: OperationPath): void => {
-		const live = rawTargetOf(node);
-
-		if (wanted.has(live)) {
-			const routes = found.get(live);
-
-			if (routes === undefined) found.set(live, [path]);
-			else routes.push(path);
-		}
-
-		if (expanded.has(live)) return;
-
-		expanded.add(live);
-
-		for (const entry of walkDataEntries(node)) {
-			const child: unknown = entry.value;
-
-			if (typeof child !== "object" || child === null) continue;
-
-			visit(child, createOperationPath([...path, segmentFor(node, entry.key)]));
-		}
-	};
-
-	visit(root, createOperationPath([]));
-
-	return found;
-};

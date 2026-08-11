@@ -2,6 +2,7 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState, type MutableStateOptions } from "../createMutableState";
 import { isSameIdentity } from "../identity";
+import { ignore } from "../ignore";
 import { subscribe } from "../subscribe";
 import { addressOf } from "../tracked/address";
 import { TrackedDate } from "../tracked/trackedDate";
@@ -1680,6 +1681,112 @@ describe("diffObjects: link batch construction", () => {
 		applyOperations(replica, projected, "undo");
 
 		expect(replica.bag.slot).toBe(replica.keep);
+	});
+
+	it("declines collapse when an overwritten key's node survives externally", () => {
+		const start = (): { keep: { n: number }; bag: Record<string, unknown> } => ({
+			keep: { n: 1 },
+			bag: { x: 1, y: 2 },
+		});
+
+		const state = createMutableState(start());
+
+		state.bag.slot = state.keep;
+
+		const heard = record(state);
+
+		transact(state, () => {
+			state.bag.slot = { n: 99 };
+			delete state.bag.x;
+			delete state.bag.y;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(shapeOps(delivered).some((pair) => pair.undo.verb === "link")).toBe(true);
+
+		const replica = createMutableState(start());
+
+		replica.bag.slot = replica.keep;
+
+		const projected = projectTransport(delivered);
+
+		applyOperations(replica, projected, "do");
+		expect(replica.bag.slot).toEqual({ n: 99 });
+		expect(replica.bag.slot).not.toBe(replica.keep);
+
+		applyOperations(replica, projected, "undo");
+		expect(replica.bag.slot).toBe(replica.keep);
+	});
+
+	it("carries by value a node reachable only through an ignore()d container", () => {
+		const state = createMutableState<{
+			hold?: { n: number };
+			wrapped: { held: { n: number } };
+			slot?: { n: number };
+		}>({
+			hold: { n: 1 },
+			wrapped: ignore({ held: { n: 0 } }),
+		});
+
+		const node = state.hold!;
+
+		state.wrapped = ignore({ held: node });
+		delete state.hold;
+
+		const heard = record(state);
+
+		transact(state, () => {
+			state.slot = node;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.do.verb).toBe("assign");
+		expect(delivered[0]?.do).not.toMatchObject({ verb: "link" });
+
+		const replica = createMutableState<{
+			hold?: { n: number };
+			wrapped: { held: { n: number } };
+			slot?: { n: number };
+		}>({
+			hold: { n: 1 },
+			wrapped: ignore({ held: { n: 0 } }),
+		});
+
+		const replicaNode = replica.hold!;
+
+		replica.wrapped = ignore({ held: replicaNode });
+		delete replica.hold;
+
+		applyOperations(replica, projectTransport(delivered), "do");
+		expect(replica.slot).toEqual({ n: 1 });
+		expect(replica.slot).not.toBe(replicaNode);
+	});
+
+	it("mints a link for a fresh subtree embedding a tracked node in loose mode", () => {
+		const state = createMutableState<{ held: { n: number }; wrap?: { inner: { n: number } } }>(
+			{ held: { n: 1 } },
+			{ strict: false },
+		);
+		const heard = record(state);
+
+		transact(state, () => {
+			state.wrap = { inner: state.held };
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(shapeOps(delivered).some((pair) => pair.do.verb === "link")).toBe(true);
+
+		const replica = createMutableState<{ held: { n: number }; wrap?: { inner: { n: number } } }>(
+			{ held: { n: 1 } },
+			{ strict: false },
+		);
+
+		applyOperations(replica, projectTransport(delivered), "do");
+		expect(replica.wrap?.inner).toBe(replica.held);
 	});
 
 	it("mints no links from the public plain-object surface", () => {

@@ -1,6 +1,5 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { applyMutations } from "../ops/applyMutations";
-import { absorbFormationPulse } from "../ops/commitWalk";
 import { diffObjects } from "../ops/diff";
 import { getOptions } from "../settings";
 import {
@@ -88,8 +87,6 @@ export const armEmitter = (record: EmitterRecord): void => {
 	record.disarmEmission = valtioSubscribe(
 		record.writeProxy,
 		() => {
-			absorbFormationPulse(targetOf(record.writeProxy));
-
 			const wasDirty = record.hasUnreported;
 
 			record.hasUnreported = true;
