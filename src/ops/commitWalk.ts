@@ -25,15 +25,17 @@ interface InEdge {
 }
 
 export interface RouteIndex {
-	readonly isReachable: (live: object) => boolean;
 	readonly routesOf: (live: object) => ReadonlyArray<OperationPath>;
 	readonly sharedLives: ReadonlySet<object>;
 }
+
+const NO_ROUTES: ReadonlyArray<OperationPath> = [];
 
 export const createRouteIndex = (root: object): RouteIndex => {
 	const inEdges = new Map<object, Array<InEdge>>();
 	const expanded = new Set<object>();
 	const firstRouteMemo = new Map<object, OperationPath>();
+	const routesMemo = new Map<object, ReadonlyArray<OperationPath>>();
 	const shared = new Set<object>();
 	const rootLive = rawTargetOf(root);
 
@@ -76,27 +78,11 @@ export const createRouteIndex = (root: object): RouteIndex => {
 
 		if (memoized !== undefined) return memoized;
 
-		const edges = inEdges.get(live);
-
-		if (edges === undefined || edges.length === 0) {
-			const empty = createOperationPath([]);
-
-			firstRouteMemo.set(live, empty);
-
-			return empty;
-		}
-
-		const first = edges[0];
-
-		if (first === undefined) {
-			const empty = createOperationPath([]);
-
-			firstRouteMemo.set(live, empty);
-
-			return empty;
-		}
-
-		const route = createOperationPath([...firstRouteOf(first.parentLive), first.segment]);
+		const first = inEdges.get(live)?.[0];
+		const route =
+			first === undefined
+				? createOperationPath([])
+				: createOperationPath([...firstRouteOf(first.parentLive), first.segment]);
 
 		firstRouteMemo.set(live, route);
 
@@ -104,20 +90,27 @@ export const createRouteIndex = (root: object): RouteIndex => {
 	};
 
 	return {
-		isReachable: (live: object): boolean => inEdges.has(rawTargetOf(live)),
 		routesOf: (live: object): ReadonlyArray<OperationPath> => {
 			const key = rawTargetOf(live);
+			const memoized = routesMemo.get(key);
+
+			if (memoized !== undefined) return memoized;
+
 			const edges = inEdges.get(key);
 
-			if (edges === undefined) return [];
+			if (edges === undefined || edges.length === 0) {
+				routesMemo.set(key, NO_ROUTES);
 
-			if (edges.length === 0) return [firstRouteOf(key)];
+				return NO_ROUTES;
+			}
 
-			return edges.map((edge, index) => {
-				if (index === 0) return firstRouteOf(key);
+			const routes = edges.map((edge, index) =>
+				index === 0 ? firstRouteOf(key) : createOperationPath([...firstRouteOf(edge.parentLive), edge.segment]),
+			);
 
-				return createOperationPath([...firstRouteOf(edge.parentLive), edge.segment]);
-			});
+			routesMemo.set(key, routes);
+
+			return routes;
 		},
 		sharedLives: shared,
 	};

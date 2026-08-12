@@ -30,7 +30,6 @@ describe("createRouteIndex", () => {
 		const detached = { n: 2 };
 		const index = createRouteIndex(state);
 
-		expect(index.isReachable(detached)).toBe(false);
 		expect(index.routesOf(detached)).toEqual([]);
 	});
 
@@ -40,8 +39,14 @@ describe("createRouteIndex", () => {
 		const stateB = createMutableState({ other: { n: 2 } });
 		const index = createRouteIndex(stateB);
 
-		expect(index.isReachable(stateA.held as object)).toBe(false);
 		expect(index.routesOf(stateA.held as object)).toEqual([]);
+	});
+
+	it("gives the root no addressable route, the empty path not being one", () => {
+		const state = createMutableState({ a: { n: 1 } });
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(state)).toEqual([]);
 	});
 
 	it("is cycle-safe and records every simple route to the cycle node", () => {
@@ -64,8 +69,7 @@ describe("createRouteIndex", () => {
 
 		const index = createRouteIndex(state);
 
-		expect(index.isReachable(state.open)).toBe(true);
-		expect(index.isReachable(hidden)).toBe(false);
+		expect(index.routesOf(state.open).map((path) => [...path])).toEqual([["open"]]);
 		expect(index.routesOf(hidden)).toEqual([]);
 	});
 
@@ -220,8 +224,8 @@ describe("formation detection (index semantics)", () => {
 
 		expect(indexA.routesOf(stateA.held).map((path) => [...path])).toEqual([["held"], ["alias"]]);
 		expect(indexB.routesOf(stateB.held).map((path) => [...path])).toEqual([["held"], ["alias"]]);
-		expect(indexA.isReachable(stateB)).toBe(false);
-		expect(indexB.isReachable(stateA)).toBe(false);
+		expect(indexA.routesOf(stateB)).toEqual([]);
+		expect(indexB.routesOf(stateA)).toEqual([]);
 
 		for (const flush of deferred) flush();
 

@@ -82,14 +82,19 @@ const requireRouteIndex = (context: DiffContext): RouteIndex => {
 	return context.routeIndex;
 };
 
+const usableRoutesIn = (
+	context: DiffContext,
+	routes: ReadonlyArray<OperationPath>,
+	live: object,
+	formation: OperationPath,
+): ReadonlyArray<OperationPath> =>
+	externalRoutesOf(routes, formation).filter((route) => routeResolvesIn(context.afterRoot, route, live));
+
 const usableExternalRoutesOf = (
 	context: DiffContext,
 	live: object,
 	formation: OperationPath,
-): ReadonlyArray<OperationPath> =>
-	externalRoutesOf(requireRouteIndex(context).routesOf(live), formation).filter((route) =>
-		routeResolvesIn(context.afterRoot, route, live),
-	);
+): ReadonlyArray<OperationPath> => usableRoutesIn(context, requireRouteIndex(context).routesOf(live), live, formation);
 
 const routeResolvesIn = (root: object, route: OperationPath, live: object): boolean => {
 	let current: unknown = root;
@@ -109,7 +114,7 @@ const routeResolvesIn = (root: object, route: OperationPath, live: object): bool
 
 const refForMint = (context: DiffContext, live: object, container: OperationPath): OperationPath | undefined => {
 	const routes = requireRouteIndex(context).routesOf(live);
-	const external = usableExternalRoutesOf(context, live, container);
+	const external = usableRoutesIn(context, routes, live, container);
 
 	if (external.length === 0) return undefined;
 
@@ -134,7 +139,7 @@ const linkOperation = (
 	undo: beforePresent ? createAssignMutation(path, before) : createDeleteMutation(path),
 });
 
-const payloadHasPossiblyShared = (value: object): boolean => {
+const payloadEmbedsEscape = (context: DiffContext, value: object, formation: OperationPath): boolean => {
 	const visited = new Set<object>();
 
 	const visit = (node: object): boolean => {
@@ -144,7 +149,7 @@ const payloadHasPossiblyShared = (value: object): boolean => {
 
 		visited.add(live);
 
-		if (isPossiblyShared(live)) return true;
+		if (isPossiblyShared(live) && usableExternalRoutesOf(context, live, formation).length > 0) return true;
 
 		if (!isCloneable(node)) return false;
 
@@ -178,7 +183,7 @@ const hasSharedEscapeUnderPath = (context: DiffContext, path: OperationPath): bo
 
 		if (!routes.some((route) => routeUnderPath(route, path))) continue;
 
-		if (usableExternalRoutesOf(context, live, path).length > 0) return true;
+		if (usableRoutesIn(context, routes, live, path).length > 0) return true;
 	}
 
 	return false;
@@ -329,7 +334,7 @@ const mintAssignment = (
 		}
 
 		if (isPlainObject(after) || isPlainArray(after)) {
-			if (payloadHasPossiblyShared(after) && hasSharedEscapeUnderPath(context, path)) {
+			if (payloadEmbedsEscape(context, after, path)) {
 				if (!beforePresent) return mintDecomposedAddition(context, path, after);
 
 				return mintDecomposedChange(context, path, before, after);
