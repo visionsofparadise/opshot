@@ -467,7 +467,7 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 
 				if (existing === undefined) continue;
 
-				if (samePathSegments(existing.do.path, recorded)) {
+				if (existing.do.verb === "delete" && samePathSegments(existing.do.path, recorded)) {
 					insertAt = index;
 
 					break;

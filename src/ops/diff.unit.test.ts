@@ -1488,6 +1488,27 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.b).toBe(state.c);
 	});
 
+	it("undoes a dest overwrite and src delete onto the old dest and the shared src", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ dest: { n: number }; src?: { n: number } }>({
+			dest: { n: 0 },
+			src: shared,
+		});
+		const held = state.src;
+		const heard = record(state);
+
+		transact(state, () => {
+			state.dest = shared;
+			delete state.src;
+		});
+
+		applyOperations(state, heard[0] ?? [], "undo");
+		expect(state.dest).not.toBe(state.src);
+		expect(state.dest.n).toBe(0);
+		expect(state.src).toBe(held);
+		expect(state.src?.n).toBe(1);
+	});
+
 	it("preserves sharing across a JSON round trip of a formation batch", () => {
 		const shared = { n: 1 };
 		const state = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: shared });
