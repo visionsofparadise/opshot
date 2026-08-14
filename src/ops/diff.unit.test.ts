@@ -877,6 +877,16 @@ describe("diffObjects: cyclic values", () => {
 
 			expect(heard).toHaveLength(1);
 			expect(heard[0]?.[0]?.do).toMatchObject(formation.expectedDo);
+			if (formation.name === "a wholesale cyclic object") {
+				expect(shapeOps(heard[0] ?? [])).toEqual([
+					{ do: { verb: "assign", path: ["node"], value: {} }, undo: { verb: "delete", path: ["node"] } },
+					{ do: { verb: "assign", path: ["node", "m"], value: 1 }, undo: { verb: "delete", path: ["node", "m"] } },
+					{
+						do: { verb: "link", path: ["node", "self"], ref: ["node"] },
+						undo: { verb: "delete", path: ["node", "self"] },
+					},
+				]);
+			}
 			assertFormed();
 
 			const delivered = heard[0] ?? [];
@@ -942,7 +952,13 @@ describe("diffObjects: cyclic values", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["holder"] });
+		expect(pathOf(heard[0])).toEqual([
+			["holder", "a"],
+			["holder", "b"],
+			["holder", "c"],
+			["holder", "d"],
+			["holder", "e"],
+		]);
 		expect(state.holder.a).toBe(10);
 		expect(state.holder.cycle.self).toBe(state.holder.cycle);
 	});
@@ -1335,7 +1351,9 @@ describe("diffObjects: cyclic values", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do.verb).toBe("assign");
+		expect(heard[0]).toHaveLength(2);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["a", "self"], value: {} });
+		expect(heard[0]?.[1]?.do).toMatchObject({ verb: "link", path: ["a", "self", "self"], ref: ["a", "self"] });
 		expect(() => readValue(heard[0]?.[0]?.do ?? { verb: "delete", path: [] })).not.toThrow();
 		expect(state.a.self).toBeDefined();
 		expect((state.a.self as { self?: object }).self).toBe(state.a.self);
@@ -1349,8 +1367,100 @@ describe("diffObjects: cyclic values", () => {
 			state.diamond = buildAliasedDiamond(64);
 		});
 
-		expect(heard[0]).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["diamond"] });
+		expect(heard[0]!.length).toBeGreaterThan(1);
+		expect(heard[0]!.length).toBeLessThan(200);
+		expect((heard[0] ?? []).some((pair) => pair.do.verb === "link")).toBe(true);
+		expect(() => JSON.stringify(heard[0])).not.toThrow();
+
+		const replica = createMutableState<{ n: number; diamond?: object }>({ n: 1 });
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+
+		const root = replica.diamond as { left: object; right: object };
+
+		expect(root.left).toBe(root.right);
+
+		let current = root.left as { left: object; right: object };
+
+		for (let step = 0; step < 3; step++) {
+			expect(current.left).toBe(current.right);
+			current = current.left as { left: object; right: object };
+		}
+	});
+
+	it("decomposes a fresh self-cycle so the assign payload is a tree", () => {
+		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
+		const heard = record(state);
+
+		transact(state, () => {
+			const node: { m: number; self?: object } = { m: 1 };
+
+			node.self = node;
+			state.node = node;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["node"], value: {} }, undo: { verb: "delete", path: ["node"] } },
+			{ do: { verb: "assign", path: ["node", "m"], value: 1 }, undo: { verb: "delete", path: ["node", "m"] } },
+			{
+				do: { verb: "link", path: ["node", "self"], ref: ["node"] },
+				undo: { verb: "delete", path: ["node", "self"] },
+			},
+		]);
+	});
+
+	it("decomposes a last-route delete of a cyclic node", () => {
+		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
+
+		transact(state, () => {
+			const node: { m: number; self?: object } = { m: 1 };
+
+			node.self = node;
+			state.node = node;
+		});
+
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.node;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "delete", path: ["node", "m"] }, undo: { verb: "assign", path: ["node", "m"], value: 1 } },
+			{
+				do: { verb: "delete", path: ["node", "self"] },
+				undo: { verb: "link", path: ["node", "self"], ref: ["node"] },
+			},
+			{ do: { verb: "delete", path: ["node"] }, undo: { verb: "assign", path: ["node"], value: {} } },
+		]);
+	});
+
+	it("decomposes a last-route delete of an aliased diamond", () => {
+		const state = createMutableState<{ n: number; node?: { left: { n: number }; right: { n: number } } }>({ n: 1 });
+
+		transact(state, () => {
+			const shared = { n: 1 };
+
+			state.node = { left: shared, right: shared };
+		});
+
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.node;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{
+				do: { verb: "delete", path: ["node", "left"] },
+				undo: { verb: "assign", path: ["node", "left"], value: { n: 1 } },
+			},
+			{
+				do: { verb: "delete", path: ["node", "right"] },
+				undo: { verb: "link", path: ["node", "right"], ref: ["node", "left"] },
+			},
+			{ do: { verb: "delete", path: ["node"] }, undo: { verb: "assign", path: ["node"], value: {} } },
+		]);
 	});
 
 	it("preserves sharing across a JSON round trip of a formation batch", () => {

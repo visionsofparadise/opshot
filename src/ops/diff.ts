@@ -33,6 +33,7 @@ interface DiffContext {
 	readonly ops: Array<Operation>;
 	readonly ancestors: Ancestors;
 	readonly ancestorPaths: Map<object, OperationPath>;
+	readonly firstMintRoute: Map<object, OperationPath>;
 	readonly liveRoot: object;
 	readonly beforeRoot: object;
 	readonly afterRoot: object;
@@ -175,6 +176,32 @@ const payloadEmbedsEscape = (context: DiffContext, value: object, formation: Ope
 	return false;
 };
 
+const payloadHasInteriorSharing = (value: object): boolean => {
+	const seen = new Set<object>();
+
+	seen.add(liveOf(value));
+
+	const visit = (node: object): boolean => {
+		for (const entry of walkDataEntries(node)) {
+			const child: unknown = entry.value;
+
+			if (!isObjectLike(child)) continue;
+
+			const live = liveOf(child);
+
+			if (seen.has(live)) return true;
+
+			seen.add(live);
+
+			if (visit(child)) return true;
+		}
+
+		return false;
+	};
+
+	return visit(value);
+};
+
 const hasSharedEscapeUnderPath = (context: DiffContext, path: OperationPath): boolean => {
 	const index = requireRouteIndex(context);
 
@@ -295,14 +322,58 @@ const mintDecomposedContents = (context: DiffContext, path: OperationPath, after
 	return mergeResults(results);
 };
 
+const recordFirstMint = (context: DiffContext, live: object, path: OperationPath): OperationPath => {
+	const recorded = context.firstMintRoute.get(live);
+
+	if (recorded !== undefined) return recorded;
+
+	context.firstMintRoute.set(live, path);
+
+	return path;
+};
+
 const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): DiffResult =>
 	mergeResults([
 		commitOperation(context, context.ops.length, path, additionPair(path, emptyContainerOf(after)), weighCarried),
 		mintDecomposedContents(context, path, after),
 	]);
 
-const mintDecomposedChange = (context: DiffContext, path: OperationPath, before: unknown, after: object): DiffResult =>
-	mergeResults([
+const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before: object): DiffResult => {
+	recordFirstMint(context, liveOf(before), path);
+
+	const results = new Array<DiffResult>();
+
+	if (isPlainArray(before)) {
+		for (let index = 0; index < before.length; index++) {
+			if (!Object.hasOwn(before, index)) continue;
+
+			results.push(pushRemoval(context, appendOperationPath(path, index), before[index]));
+		}
+
+		results.push(diffObjectProperties(context, before, [], path, true));
+	} else {
+		for (const entry of walkDataEntries(before)) {
+			results.push(pushRemoval(context, appendOperationPath(path, entry.key), entry.value));
+		}
+	}
+
+	results.push(
+		commitOperation(context, context.ops.length, path, removalPair(path, emptyContainerOf(before)), weighCarried),
+	);
+
+	return mergeResults(results);
+};
+
+const mintDecomposedChange = (context: DiffContext, path: OperationPath, before: unknown, after: object): DiffResult => {
+	if (
+		isObjectLike(before) &&
+		payloadHasInteriorSharing(before) &&
+		usableExternalRoutesOf(context, liveOf(before), path).length === 0
+	) {
+		return mergeResults([mintDecomposedRemoval(context, path, before), mintDecomposedAddition(context, path, after)]);
+	}
+
+	return mergeResults([
 		commitOperation(
 			context,
 			context.ops.length,
@@ -312,6 +383,7 @@ const mintDecomposedChange = (context: DiffContext, path: OperationPath, before:
 		),
 		mintDecomposedContents(context, path, after),
 	]);
+};
 
 const mintAssignment = (
 	context: DiffContext,
@@ -326,19 +398,30 @@ const mintAssignment = (
 
 		if (ancestorPath !== undefined) return commitLink(context, path, ancestorPath, before, beforePresent);
 
+		const recorded = context.firstMintRoute.get(live);
+
+		if (recorded !== undefined && routeResolvesIn(context.afterRoot, recorded, live)) {
+			return commitLink(context, path, recorded, before, beforePresent);
+		}
+
 		if (isPossiblyShared(live)) {
 			const ref = refForMint(context, live, path);
 
 			if (ref !== undefined) return commitLink(context, path, ref, before, beforePresent);
 		}
 
-		if (isPlainObject(after) || isPlainArray(after)) {
-			if (payloadEmbedsEscape(context, after, path)) {
-				if (!beforePresent) return mintDecomposedAddition(context, path, after);
+		if (
+			(isPlainObject(after) || isPlainArray(after)) &&
+			(payloadEmbedsEscape(context, after, path) || payloadHasInteriorSharing(after))
+		) {
+			recordFirstMint(context, live, path);
 
-				return mintDecomposedChange(context, path, before, after);
-			}
+			if (!beforePresent) return mintDecomposedAddition(context, path, after);
+
+			return mintDecomposedChange(context, path, before, after);
 		}
+
+		recordFirstMint(context, live, path);
 	}
 
 	if (beforePresent) {
@@ -351,8 +434,44 @@ const mintAssignment = (
 const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult =>
 	mintAssignment(context, path, undefined, after, false);
 
-const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult =>
-	commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
+const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult => {
+	if (isObjectLike(before) && context.linksEnabled) {
+		const live = liveOf(before);
+		const recorded = context.firstMintRoute.get(live);
+
+		if (recorded !== undefined) {
+			let sameRoute = recorded.length === path.length;
+
+			if (sameRoute) {
+				for (let index = 0; index < recorded.length; index++) {
+					if (recorded[index] !== path[index]) {
+						sameRoute = false;
+
+						break;
+					}
+				}
+			}
+
+			if (!sameRoute) {
+				return commitOperation(
+					context,
+					context.ops.length,
+					path,
+					{ do: createDeleteMutation(path), undo: createLinkMutation(path, recorded) },
+					weighCarried,
+				);
+			}
+		}
+
+		if (payloadHasInteriorSharing(before) && usableExternalRoutesOf(context, live, path).length === 0) {
+			return mintDecomposedRemoval(context, path, before);
+		}
+
+		recordFirstMint(context, live, path);
+	}
+
+	return commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
+};
 
 const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult =>
 	mintAssignment(context, path, before, after, true);
@@ -379,6 +498,13 @@ const tryCollapse = (
 	if (collapsedWeight >= walked.weight) return walked;
 
 	if (context.linksEnabled) {
+		if (
+			(isObjectLike(after) && payloadHasInteriorSharing(after)) ||
+			(isObjectLike(before) && payloadHasInteriorSharing(before))
+		) {
+			return walked;
+		}
+
 		if (probe.sawHintedNode && hasSharedEscapeUnderPath(context, path)) return walked;
 
 		if (collapseHidesSurvivingSharing(context, opsStart)) return walked;
@@ -658,6 +784,7 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 		ops,
 		ancestors: new Map(),
 		ancestorPaths: new Map(),
+		firstMintRoute: new Map(),
 		liveRoot,
 		beforeRoot: before,
 		afterRoot: after,
