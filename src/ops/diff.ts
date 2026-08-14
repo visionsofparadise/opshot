@@ -398,7 +398,12 @@ const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before
 	return mergeResults(results);
 };
 
-const mintDecomposedChange = (context: DiffContext, path: OperationPath, before: unknown, after: object): DiffResult => {
+const mintDecomposedChange = (
+	context: DiffContext,
+	path: OperationPath,
+	before: unknown,
+	after: object,
+): DiffResult => {
 	if (
 		isObjectLike(before) &&
 		payloadHasInteriorSharing(before) &&

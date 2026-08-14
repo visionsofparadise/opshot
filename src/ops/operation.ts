@@ -135,11 +135,8 @@ export const isMutation = (value: unknown): value is Mutation =>
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
-export const createAssignMutation = (
-	path: OperationPath,
-	value: unknown,
-	original: unknown = value,
-): AssignMutation => new AssignHalf(path, value, original);
+export const createAssignMutation = (path: OperationPath, value: unknown, original: unknown = value): AssignMutation =>
+	new AssignHalf(path, value, original);
 
 export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);
 
