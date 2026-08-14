@@ -3,20 +3,13 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 /**
  * Schedules when bare writes notify listeners. Call `flush` once.
  *
- * Governs bare writes only. A `transact` delivers synchronously and ignores this.
- * Invoked once per window, a microtask after the first write of a burst.
- *
- * A pending flush pins its state until it runs, measured at about 380 KB for a
- * 200-row state, so a scheduler that discards the callback retains what it was given.
- *
  * @param flush - Delivers pending ops.
  * @returns Nothing.
  */
 export type EmissionScheduler = (flush: () => void) => void;
 
 /**
- * Options stamped onto a mutable node: emission scheduling and strictness.
- * Shared by root creation and `group.createMutableState`.
+ * State creation options.
  *
  * @example
  * createMutableState({ x: 0 }, { emitOn: (flush) => requestAnimationFrame(flush), strict: false })
@@ -24,14 +17,11 @@ export type EmissionScheduler = (flush: () => void) => void;
 export interface MutableNodeOptions {
 	/**
 	 * When bare writes notify listeners. Defaults to a microtask.
-	 * A `transact` delivers synchronously regardless.
 	 */
 	readonly emitOn?: EmissionScheduler;
 
 	/**
 	 * When false, tracks values that would otherwise be rejected. Defaults to true.
-	 * Graphs of differing strictness refuse to join: match this option on both sides, mark the
-	 * value with `unsafeTrack`, or re-create it as plain data in the receiving state.
 	 */
 	readonly strict?: boolean;
 }

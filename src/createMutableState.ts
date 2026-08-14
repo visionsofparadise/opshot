@@ -9,7 +9,7 @@ import { frozenRootError, rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
 
 /**
- * Options for `createMutableState`, including optional group membership.
+ * Options for `createMutableState`.
  *
  * @example
  * createMutableState({ count: 0 }, { group, emitOn, strict: false })
@@ -24,20 +24,9 @@ export interface MutableStateOptions extends MutableNodeOptions {
 /**
  * Creates a mutable state object.
  *
- * A state is everything reachable from its root through tracked edges. Every tracked edge's target
- * has a determined treatment — tracked, by shape or `unsafeTrack()`, or endpoint, by `ignore()`,
- * freeze, or ride-along declaration — and an edge whose target has no determined treatment throws
- * at its formation. The graph ends at its endpoints; beyond them the model is silent. Graphs of
- * differing strictness refuse to join (mark the value with `unsafeTrack`, or re-create it as plain
- * data). Each state's op stream is faithful to its own graph, sharing within the graph carried by
- * link ops addressing it, and the self-contained unit is the transaction batch; identity across
- * states is live-only, never carried. Cycles and aliases are ordinary tracked topology: no cycle throws
- * at formation or later.
- *
  * @typeParam T - State shape.
  * @param properties - Initial fields.
- * @param options - Creation options (`group`, `emitOn`, `strict`). Default `strict` is true; pass
- *   `strict: false` to unsafely track values that would otherwise be rejected.
+ * @param options - Creation options.
  * @returns The state.
  */
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {

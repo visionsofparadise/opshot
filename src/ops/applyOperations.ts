@@ -39,27 +39,11 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
 };
 
 /**
- * Applies operation pairs to a state in the given direction. A delivered batch is the
- * self-contained unit: re-applying it at a matching state is a no-op for all three verbs, but a
- * link's referent is defined by its stream position, so an op is not meaningful in isolation.
- *
- * `"do"` applies each pair's do half in delivery order. `"undo"` applies each pair's undo half in
- * reverse delivery order. The library owns that ordering and the target-path rule: a link applies
- * only after the ops that establish its ref target's path in that direction. Runs through `transact`
- * and cannot run inside one — call at top level.
- *
- * Halves are assign, delete, or link (`verb`, `path`, and on assign `.value`, on link `.ref`). Link
- * ref resolvability is batch-scoped: a ref is defined by earlier ops in the stream and is not
- * preflighted. A well-formed link half applies without the brand; assign and delete still require it.
- * Never spread, JSON-round-trip, or `structuredClone` a value-bearing half before applying it.
- * A link half's `ref` is plain data, so sharing survives serialization as addressing rather than as
- * in-memory identity — but a batch is only appliable where every value-bearing and delete half still
- * carries its brand, so transport means re-minting those halves rather than applying copies. Value
- * carriage of unfound candidates and fresh-subtree internal aliasing keep in-memory residue only.
+ * Applies operations to a state.
  *
  * @param state - State to change.
- * @param operations - Operation pairs to apply.
- * @param direction - Which half to apply, and the ordering that direction implies.
+ * @param operations - Operations to apply.
+ * @param direction - `"do"` or `"undo"`.
  * @param meta - Passed to listeners.
  * @returns Nothing.
  */

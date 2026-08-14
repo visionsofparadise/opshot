@@ -43,7 +43,6 @@ const arePropsEqual = (previous: object, next: object): boolean => {
 
 /**
  * Wraps a component so it re-renders only when fields it read change.
- * Searches props for states through plain data, under the same constraints as state creation.
  *
  * @typeParam P - Props type.
  * @param Component - Component to wrap.

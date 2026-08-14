@@ -639,16 +639,11 @@ const rewriteSurvivingUndos = (context: DiffContext): void => {
 };
 
 /**
- * Produces invertible assign/delete pairs for the structural differences between two plain objects or
- * arrays. Neither argument need be a valtio snapshot.
- *
- * Plain-object value diffing with severance: shared structure is not carried as links, each path is
- * independent, and this public surface has no live graph and mints no links. Cycles are ordinary
- * topology: pair re-entry is equality-in-progress, not an error.
+ * Diffs two plain objects into ops.
  *
  * @param before - Earlier value.
  * @param after - Later value.
- * @returns Operations that take before to after.
+ * @returns Ops from before to after.
  */
 export function diffObjects(before: object, after: object): Array<Operation> {
 	const beforeKind = getRootKind(before);

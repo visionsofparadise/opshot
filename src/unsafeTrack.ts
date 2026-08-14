@@ -10,10 +10,7 @@ declare const unsafeTrackedBrand: unique symbol;
 export type UnsafeTracked<T extends object> = T & { readonly [unsafeTrackedBrand]: true };
 
 /**
- * Declares a value **tracked** that would otherwise be rejected (no determined treatment by shape).
- * The mark is a declaration on the edge that admits it; `strict: false` is the same admission for
- * every reject-lane value entering that graph. The mark travels with a detached value into a
- * strict graph; a live join of strict and non-strict graphs still throws.
+ * Tracks a value that would otherwise be rejected.
  *
  * @typeParam T - Value type.
  * @param value - Value to track.

@@ -11,11 +11,7 @@ export type EmissionContext<M> =
 	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
 
 /**
- * Listens for changes from a group's states, including nested groups.
- * Outer groups run first. Delivery is best-effort at the group edge: groups retain no index of
- * their states.
- *
- * Hears every `transact` on one of those states, at any depth, with its meta.
+ * Listens for changes from a group's states.
  *
  * @param group - Group to listen to.
  * @param listener - Called on each change.
@@ -25,12 +21,6 @@ export function subscribe(group: Group, listener: GroupListener): () => void;
 
 /**
  * Listens for changes to a state.
- *
- * A state emits for every change in its reachable graph, including writes made through another
- * state that shares a node. Hears every write beneath this node, as paths relative to it. A
- * `transact` at, above, or below this node delivers synchronously and carries its meta; a bare
- * write delivers on the state's emission window with no meta. Every mutation applied while
- * subscribed is delivered before unsubscribe returns.
  *
  * @param state - State (or nested object) to listen to.
  * @param listener - Called on each change.

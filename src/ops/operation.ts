@@ -66,7 +66,7 @@ export interface LinkMutation {
 }
 
 /**
- * One half of an invertible pair: an assign, a delete, or a link at a path.
+ * An assign, a delete, or a link.
  *
  * @example
  * { verb: "assign", path: ["profile"], value: { name: "Ada" } }
@@ -81,12 +81,12 @@ export type Mutation = AssignMutation | DeleteMutation | LinkMutation;
  */
 export interface Operation {
 	/**
-	 * Half that applies the change.
+	 * Forward operation.
 	 */
 	readonly do: Mutation;
 
 	/**
-	 * Half that reverses the change.
+	 * Reverse operation.
 	 */
 	readonly undo: Mutation;
 }

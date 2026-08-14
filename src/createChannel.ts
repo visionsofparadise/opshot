@@ -15,11 +15,6 @@ export interface Channel<M extends object> {
 	/**
 	 * Runs a transaction with this channel's meta.
 	 *
-	 * Nesting a `transact` inside another throws. A throwing callback rolls back tracked writes and
-	 * emits nothing, except a record that already carried unflushed bare writes when the transaction
-	 * first touched it — that record keeps all of its writes, this transaction's included, and
-	 * reports them bare. Effects outside tracked state are not undone.
-	 *
 	 * @param state - State to change.
 	 * @param mutate - Function that writes the state.
 	 * @param meta - Meta for this write.
@@ -28,8 +23,7 @@ export interface Channel<M extends object> {
 	transact(state: object, mutate: () => void, meta?: Partial<M>): void;
 
 	/**
-	 * Listens for changes from a group's states, including nested groups.
-	 * Outer groups run first.
+	 * Listens for changes from a group's states.
 	 *
 	 * @param group - Group to listen to.
 	 * @param listener - Called on each change.
@@ -50,13 +44,11 @@ export interface Channel<M extends object> {
 	subscribe(state: object, listener: (ops: ReadonlyArray<Operation>, context: EmissionContext<M>) => void): () => void;
 
 	/**
-	 * Applies operation pairs with this channel's meta.
-	 *
-	 * Runs through `transact` and cannot run inside one — call at top level.
+	 * Applies operations with this channel's meta.
 	 *
 	 * @param state - State to change.
-	 * @param operations - Operation pairs to apply.
-	 * @param direction - Which half to apply, and the ordering that direction implies.
+	 * @param operations - Operations to apply.
+	 * @param direction - `"do"` or `"undo"`.
 	 * @param meta - Meta for this write.
 	 * @returns Nothing.
 	 */
