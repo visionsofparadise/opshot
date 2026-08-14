@@ -1,8 +1,15 @@
-import { isTrackable } from "./classify";
+import { ignore } from "../ignore";
+import { admissionLane } from "./classify";
 
-describe("isTrackable", () => {
-	it("rejects null and primitives", () => {
-		expect(isTrackable(null)).toBe(false);
-		expect(isTrackable(1)).toBe(false);
+describe("admissionLane", () => {
+	it("classifies non-objects as leaves", () => {
+		expect(admissionLane(null)).toBe("leaf");
+		expect(admissionLane(1)).toBe("leaf");
+		expect(admissionLane(() => 1)).toBe("leaf");
+	});
+
+	it("classifies ignore() and freeze as untracked", () => {
+		expect(admissionLane(ignore({ a: 1 }))).toBe("untracked");
+		expect(admissionLane(Object.freeze({ a: 1 }))).toBe("untracked");
 	});
 });

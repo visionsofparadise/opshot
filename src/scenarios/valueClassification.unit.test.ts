@@ -6,7 +6,7 @@ import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
 import { unsafeTrack } from "../unsafeTrack";
-import { classifyValue, isTrackable, type ValueKind } from "../valtio/classify";
+import { admissionLane, classifyValue, type AdmissionLane, type ValueKind } from "../valtio/classify";
 
 type RemedyTag = "trackedMap" | "trackedSet" | "trackedDate" | "unsafeTrack" | "ignore";
 
@@ -14,7 +14,7 @@ interface Witness {
 	readonly name: string;
 	readonly create: () => object;
 	readonly kind: ValueKind;
-	readonly trackable: boolean;
+	readonly lane: AdmissionLane;
 	readonly remedies?: ReadonlyArray<RemedyTag>;
 }
 
@@ -71,192 +71,192 @@ const offeredRemedies = (value: object): ReadonlyArray<RemedyTag> | undefined =>
 };
 
 const witnesses: ReadonlyArray<Witness> = [
-	{ name: "plainObject", create: () => ({ a: 1 }), kind: "plain", trackable: true },
+	{ name: "plainObject", create: () => ({ a: 1 }), kind: "plain", lane: "tracked" },
 	{
 		name: "nullPrototypeObject",
 		create: () => Object.assign(Object.create(null) as object, { a: 1 }),
 		kind: "plain",
-		trackable: true,
+		lane: "tracked",
 	},
-	{ name: "plainArray", create: () => [1, 2, 3], kind: "plainArray", trackable: true },
+	{ name: "plainArray", create: () => [1, 2, 3], kind: "plainArray", lane: "tracked" },
 	{
 		name: "arraySubclass",
 		create: () => new ArraySubclass(),
 		kind: "arraySubclass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
-	{ name: "cleanClass", create: () => new CleanPoint(), kind: "cleanClass", trackable: true },
+	{ name: "cleanClass", create: () => new CleanPoint(), kind: "cleanClass", lane: "tracked" },
 	{
 		name: "cleanArrowClass",
 		create: () => new ArrowPoint(),
 		kind: "cleanClass",
-		trackable: true,
+		lane: "tracked",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "privateClass",
 		create: () => new PrivateBox(),
 		kind: "privateClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "map",
 		create: () => new Map([["a", 1]]),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["trackedMap", "unsafeTrack", "ignore"],
 	},
 	{
 		name: "set",
 		create: () => new Set([1, 2]),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["trackedSet", "unsafeTrack", "ignore"],
 	},
 	{
 		name: "date",
 		create: () => new Date(0),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["trackedDate", "unsafeTrack", "ignore"],
 	},
 	{
 		name: "mapSubclass",
 		create: () => new MapSubclass(),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["trackedMap", "unsafeTrack", "ignore"],
 	},
 	{
 		name: "regExp",
 		create: () => /catalog/g,
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "error",
 		create: () => new Error("catalog"),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "promise",
 		create: () => Promise.resolve(1),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "url",
 		create: () => new URL("https://example.com"),
 		kind: "privateClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "urlSearchParams",
 		create: () => new URLSearchParams("a=1"),
 		kind: "privateClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "typedArray",
 		create: () => new Uint8Array([1, 2, 3]),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "arrayBuffer",
 		create: () => new ArrayBuffer(8),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "dataView",
 		create: () => new DataView(new ArrayBuffer(8)),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "weakMap",
 		create: () => new WeakMap(),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
 		name: "weakSet",
 		create: () => new WeakSet(),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "dangerous",
 		remedies: ["unsafeTrack", "ignore"],
 	},
-	{ name: "frozenPlainObject", create: () => Object.freeze({ a: 1 }), kind: "plain", trackable: false },
-	{ name: "frozenCleanClass", create: () => Object.freeze(new CleanPoint()), kind: "cleanClass", trackable: false },
+	{ name: "frozenPlainObject", create: () => Object.freeze({ a: 1 }), kind: "plain", lane: "untracked" },
+	{ name: "frozenCleanClass", create: () => Object.freeze(new CleanPoint()), kind: "cleanClass", lane: "untracked" },
 	{
 		name: "frozenCleanArrowClass",
 		create: () => Object.freeze(new ArrowPoint()),
 		kind: "cleanClass",
-		trackable: false,
+		lane: "untracked",
 	},
-	{ name: "ignoredValue", create: () => ignore({ a: 1 }), kind: "plain", trackable: false },
+	{ name: "ignoredValue", create: () => ignore({ a: 1 }), kind: "plain", lane: "untracked" },
 	{
 		name: "unsafeTrackedCleanArrowClass",
 		create: () => unsafeTrack(new ArrowPoint()),
 		kind: "cleanClass",
-		trackable: true,
+		lane: "tracked",
 	},
 	{
 		name: "unsafeTrackedPrivateClass",
 		create: () => unsafeTrack(new PrivateBox()),
 		kind: "privateClass",
-		trackable: true,
+		lane: "tracked",
 	},
 	{
 		name: "frozenMap",
 		create: () => Object.freeze(new Map([["a", 1]])),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "untracked",
 	},
 	{
 		name: "frozenSet",
 		create: () => Object.freeze(new Set([1, 2])),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "untracked",
 	},
 	{
 		name: "frozenDate",
 		create: () => Object.freeze(new Date(0)),
 		kind: "nativeClass",
-		trackable: false,
+		lane: "untracked",
 	},
 	{
 		name: "frozenUnsafeTrackedValue",
 		create: () => unsafeTrack(Object.freeze({ a: 1 })),
 		kind: "plain",
-		trackable: false,
+		lane: "untracked",
 	},
 	{
 		name: "trackedMap",
 		create: () => new TrackedMap<string, number>([["a", 1]]),
 		kind: "cleanClass",
-		trackable: true,
+		lane: "tracked",
 	},
-	{ name: "trackedSet", create: () => new TrackedSet<number>([1, 2]), kind: "cleanClass", trackable: true },
-	{ name: "trackedDate", create: () => new TrackedDate(0), kind: "cleanClass", trackable: true },
+	{ name: "trackedSet", create: () => new TrackedSet<number>([1, 2]), kind: "cleanClass", lane: "tracked" },
+	{ name: "trackedDate", create: () => new TrackedDate(0), kind: "cleanClass", lane: "tracked" },
 	{
 		name: "reactElement",
 		create: () => createElement("div", { id: "probe" }, "leaf") as object,
 		kind: "plain",
-		trackable: false,
+		lane: "untracked",
 	},
 ];
 
@@ -265,7 +265,7 @@ describe("valueClassification", () => {
 		const value = witness.create();
 
 		expect(classifyValue(value)).toBe(witness.kind);
-		expect(isTrackable(value)).toBe(witness.trackable);
+		expect(admissionLane(value)).toBe(witness.lane);
 		expect(offeredRemedies(value)).toEqual(witness.remedies);
 	});
 });

@@ -54,7 +54,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 
 			if (typeof child !== "object" || child === null) continue;
 
-			if (admissionLane(child) === "leaf") continue;
+			if (admissionLane(child) === "untracked") continue;
 
 			const childLive = rawTargetOf(child);
 			const segment = segmentFor(node, entry.key);

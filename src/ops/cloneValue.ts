@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
-import { isTrackable } from "../valtio/classify";
+import { admissionLane } from "../valtio/classify";
 import type { OperationPath } from "./path";
 
 const { refSet } = unstable_getInternalStates();
@@ -9,9 +9,10 @@ const { refSet } = unstable_getInternalStates();
 export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value) && !refSet.has(value);
 
 export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-	isTrackable(value) && !Array.isArray(value);
+	admissionLane(value) === "tracked" && !Array.isArray(value);
 
-export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> => isTrackable(value);
+export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
+	admissionLane(value) === "tracked";
 
 export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path: OperationPath): unknown => {
 	if (!isCloneable(value)) return value;

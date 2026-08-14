@@ -24,7 +24,7 @@ const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>): AdmissionLane => {
 	const decision = admissionDecision(value);
 
-	if (decision.lane === "reject") throw rejectionError(value, decision.kind, path);
+	if (decision.lane === "dangerous") throw rejectionError(value, decision.kind, path);
 
 	return decision.lane;
 };
@@ -73,7 +73,8 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		const childPath = [...path, entry.key];
 
 		if (!entry.writable) {
-			if (mode === "admission" && admissionLane(child) !== "leaf") throw nonWritablePropertyError(child, childPath);
+			if (mode === "admission" && admissionLane(child) !== "untracked")
+				throw nonWritablePropertyError(child, childPath);
 
 			continue;
 		}
@@ -87,12 +88,12 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		}
 
 		if (mode === "admission") {
-			if (certifyAdmission(child, childPath) === "track") walkDataPaths(child, childPath, visits, mode);
+			if (certifyAdmission(child, childPath) === "tracked") walkDataPaths(child, childPath, visits, mode);
 
 			continue;
 		}
 
-		if (admissionLane(child) === "leaf") continue;
+		if (admissionLane(child) === "untracked") continue;
 
 		walkDataPaths(child, childPath, visits, mode);
 	}
@@ -217,7 +218,7 @@ export function installBoundary(): void {
 	unstable_replaceInternalFunction("canProxy", () => (value) => {
 		if (typeof value !== "object" || value === null) return false;
 
-		return certifyAdmission(value) === "track";
+		return certifyAdmission(value) === "tracked";
 	});
 
 	unstable_replaceInternalFunction("createSnapshot", () => createSnapshotPreservingAccessors);
@@ -268,14 +269,14 @@ export function installBoundary(): void {
 						} else {
 							const decision = admissionDecision(resolved);
 
-							if (strict && !isInitializing() && decision.lane === "track")
+							if (strict && !isInitializing() && decision.lane === "tracked")
 								assertSafeDataPaths(resolved, location, new Set());
 
 							if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
 							inheritOptions(target, resolved);
 
-							if (decision.lane === "reject") {
+							if (decision.lane === "dangerous") {
 								if (receiverOptions?.strict === false) unsafeTrack(resolved);
 								else throw rejectionError(resolved, decision.kind, isInitializing() ? undefined : location);
 							}

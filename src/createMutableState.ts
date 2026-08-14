@@ -34,9 +34,9 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	const decision = admissionDecision(properties);
 
-	if (decision.lane === "leaf") return properties;
+	if (decision.lane === "leaf" || decision.lane === "untracked") return properties;
 
-	if (decision.lane === "reject") {
+	if (decision.lane === "dangerous") {
 		if (options?.strict !== false) throw rejectionError(properties, decision.kind);
 	}
 
@@ -46,7 +46,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(properties));
 
-	if (decision.lane === "reject" || isUnsafeTracked(properties)) unsafeTrack(base);
+	if (decision.lane === "dangerous" || isUnsafeTracked(properties)) unsafeTrack(base);
 
 	stampOptions(base, options);
 

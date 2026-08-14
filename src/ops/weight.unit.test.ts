@@ -20,7 +20,7 @@ describe("weighValue", () => {
 		expect(weighValue("", Number.MAX_SAFE_INTEGER)).toBe(LEAF_WEIGHT);
 	});
 
-	it("charges zero for identity leaves: functions, ignore()d values, and frozen objects", () => {
+	it("charges zero for function leaves and for untracked ignore()d and frozen values", () => {
 		const ignored = ignore({ nested: { text: "x".repeat(1_000) }, more: { a: 1, b: 2, c: 3 } });
 		const largeFunction = Object.assign(() => undefined, {
 			cache: { values: Array.from({ length: 100 }, (_, index) => index) },

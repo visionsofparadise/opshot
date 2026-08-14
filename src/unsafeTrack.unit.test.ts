@@ -5,7 +5,7 @@ import { ignore } from "./ignore";
 import { applyOperations } from "./ops/applyOperations";
 import { type Operation } from "./ops/operation";
 import { isUnsafeTracked, unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
-import { isTrackable } from "./valtio/classify";
+import { admissionLane } from "./valtio/classify";
 import { shapeOps } from "./ops/operationShape";
 
 const recordOwned = <T extends object>(state: T): Array<Array<Operation>> => {
@@ -47,7 +47,7 @@ describe("unsafeTrack", () => {
 		expect(isUnsafeTracked(erased.payload)).toBe(false);
 	});
 
-	it("marks the value trackable without putting it in refSet", () => {
+	it("marks the value tracked without putting it in refSet", () => {
 		class PrivateBox {
 			#secret = 1;
 			public x = 0;
@@ -58,12 +58,12 @@ describe("unsafeTrack", () => {
 
 		const box = new PrivateBox();
 
-		expect(isTrackable(box)).toBe(false);
+		expect(admissionLane(box)).toBe("dangerous");
 
 		unsafeTrack(box);
 
-		expect(isTrackable(box)).toBe(true);
-		expect(isTrackable(ignore({ y: 1 }))).toBe(false);
+		expect(admissionLane(box)).toBe("tracked");
+		expect(admissionLane(ignore({ y: 1 }))).toBe("untracked");
 	});
 });
 

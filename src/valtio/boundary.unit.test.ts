@@ -446,7 +446,7 @@ describe("boundary: certification descends only where valtio proxies", () => {
 		expect(state.box.label).toBe("fixed");
 	});
 
-	it("admits a frozen container as a leaf whose non-writable interior never reaches the admission throw", () => {
+	it("admits a frozen container as untracked whose non-writable interior never reaches the admission throw", () => {
 		const inner = { n: 1 };
 		const frozen = Object.freeze({ inner });
 		const state = createMutableState({ frozen, tick: 0 });
@@ -681,7 +681,7 @@ describe("boundary: admitted by rule", () => {
 	});
 });
 
-describe("boundary: ignore lane", () => {
+describe("boundary: ignore", () => {
 	it("admits an ignored Map by reference, untracked and silent", () => {
 		const lookup = ignore(new Map<string, number>());
 		const state = createMutableState({ lookup, tick: 0 });
@@ -770,7 +770,7 @@ describe("boundary: meta-mutation trap gates", () => {
 
 		Object.freeze(frozen);
 
-		expect(admissionLane(frozen)).toBe("leaf");
+		expect(admissionLane(frozen)).toBe("untracked");
 	});
 
 	it("leaves freezing a snapshot and an op's recorded value untouched", () => {
@@ -1135,7 +1135,7 @@ describe("boundary: strict false", () => {
 		expect(nonStrictHeard.map((emission) => emission.ops)).toEqual(strictHeard.map((emission) => emission.ops));
 	});
 
-	it("still leaves a refSet member as a leaf", () => {
+	it("still leaves a refSet member untracked", () => {
 		const element = ignore({ node: "dom" });
 		const state = createMutableState({ element }, { strict: false });
 		const emissions = recordEmissions(state);
@@ -1465,16 +1465,16 @@ describe("boundary: state root is not a tracked value", () => {
 });
 
 describe("boundary: route-scoped declarations", () => {
-	it("tracks an ignore()d value's child at a separately assigned tracked edge while the leaf route stays unpromised", () => {
+	it("tracks an ignore()d value's child at a separately assigned tracked edge while the untracked route stays unpromised", () => {
 		const child = { n: 1 };
-		const leaf = { child };
-		const state = createMutableState<{ leaf: typeof leaf; tracked?: { n: number } }>({
-			leaf: ignore(leaf),
+		const ignored = { child };
+		const state = createMutableState<{ ignored: typeof ignored; tracked?: { n: number } }>({
+			ignored: ignore(ignored),
 		});
 		const emissions = recordEmissions(state);
 
 		transact(state, () => {
-			state.tracked = leaf.child;
+			state.tracked = ignored.child;
 		});
 
 		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
@@ -1483,9 +1483,9 @@ describe("boundary: route-scoped declarations", () => {
 				undo: { verb: "delete", path: ["tracked"] },
 			},
 		]);
-		expect(state.leaf.child).toBe(child);
+		expect(state.ignored.child).toBe(child);
 		expect(proxyStateMap.has(state.tracked as object)).toBe(true);
-		expect(proxyStateMap.has(state.leaf.child as object)).toBe(false);
+		expect(proxyStateMap.has(state.ignored.child as object)).toBe(false);
 		expect(rawTargetOf(state.tracked as object)).toBe(child);
 
 		emissions.length = 0;
@@ -1501,29 +1501,29 @@ describe("boundary: route-scoped declarations", () => {
 			},
 		]);
 		expect(state.tracked!.n).toBe(5);
-		expect(leaf.child.n).toBe(5);
-		expect(state.leaf.child.n).toBe(5);
+		expect(ignored.child.n).toBe(5);
+		expect(state.ignored.child.n).toBe(5);
 	});
 
-	it("lands a mutation through the leaf's interior reference on the raw target, visible on read, emitting nothing", async () => {
+	it("lands a mutation through the ignored node's interior reference on the raw target, visible on read, emitting nothing", async () => {
 		const child = { n: 1 };
-		const leaf = { child };
-		const state = createMutableState<{ leaf: typeof leaf; tracked?: { n: number } }>({
-			leaf: ignore(leaf),
+		const ignored = { child };
+		const state = createMutableState<{ ignored: typeof ignored; tracked?: { n: number } }>({
+			ignored: ignore(ignored),
 		});
 		const emissions = recordEmissions(state);
 
 		transact(state, () => {
-			state.tracked = leaf.child;
+			state.tracked = ignored.child;
 		});
 
 		emissions.length = 0;
 
-		leaf.child.n = 7;
+		ignored.child.n = 7;
 
 		expect(state.tracked!.n).toBe(7);
-		expect(state.leaf.child.n).toBe(7);
-		expect(rawTargetOf(state.tracked as object)).toBe(leaf.child);
+		expect(state.ignored.child.n).toBe(7);
+		expect(rawTargetOf(state.tracked as object)).toBe(ignored.child);
 		expect(emissions).toEqual([]);
 
 		await Promise.resolve();

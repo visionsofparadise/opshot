@@ -47,32 +47,28 @@ export function classifyValue(value: object): ValueKind {
 	return classifyChain(value.constructor);
 }
 
-export type AdmissionLane = "track" | "leaf" | "reject";
+export type AdmissionLane = "tracked" | "untracked" | "leaf" | "dangerous";
 
 export type AdmissionDecision =
-	| { readonly lane: "track" | "leaf" }
-	| { readonly lane: "reject"; readonly kind: Exclude<ValueKind, "plain" | "plainArray"> };
+	| { readonly lane: "tracked" | "untracked" | "leaf" }
+	| { readonly lane: "dangerous"; readonly kind: Exclude<ValueKind, "plain" | "plainArray"> };
 
 export function admissionDecision(value: unknown): AdmissionDecision {
 	if (typeof value !== "object" || value === null) return { lane: "leaf" };
 
-	if (refSet.has(value)) return { lane: "leaf" };
+	if (refSet.has(value)) return { lane: "untracked" };
 
-	if (Object.isFrozen(value)) return { lane: "leaf" };
+	if (Object.isFrozen(value)) return { lane: "untracked" };
 
-	if (isUnsafeTracked(value)) return { lane: "track" };
+	if (isUnsafeTracked(value)) return { lane: "tracked" };
 
 	const kind = classifyValue(value);
 
-	if (kind === "plain" || kind === "plainArray" || kind === "cleanClass") return { lane: "track" };
+	if (kind === "plain" || kind === "plainArray" || kind === "cleanClass") return { lane: "tracked" };
 
-	return { lane: "reject", kind };
+	return { lane: "dangerous", kind };
 }
 
 export function admissionLane(value: unknown): AdmissionLane {
 	return admissionDecision(value).lane;
-}
-
-export function isTrackable(value: unknown): boolean {
-	return admissionDecision(value).lane === "track";
 }

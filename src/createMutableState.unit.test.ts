@@ -438,7 +438,7 @@ describe("createMutableState: root certification", () => {
 		]);
 	});
 
-	it("attaches a rejectable Map root under strict false", () => {
+	it("attaches a dangerous Map root under strict false", () => {
 		const state = createMutableState(new Map<string, number>(), { strict: false });
 
 		expect(isState(state)).toBe(true);
@@ -466,7 +466,7 @@ describe("createMutableState: root certification", () => {
 		]);
 	});
 
-	it("emits from a subscribed write on a rejectable root under strict false", () => {
+	it("emits from a subscribed write on a dangerous root under strict false", () => {
 		class Arrow {
 			count = 0;
 			bump = (): void => {

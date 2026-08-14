@@ -48,7 +48,7 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 		const snapshotDescriptor: PropertyDescriptor = { value, enumerable: descriptor.enumerable, configurable: true };
 
 		if (typeof value === "object" && value !== null) {
-			if (admissionLane(value) === "leaf") {
+			if (admissionLane(value) === "untracked") {
 				markToTrack(value, false);
 			} else {
 				const childState = proxyStateMap.get(value);

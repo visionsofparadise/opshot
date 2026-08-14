@@ -155,7 +155,7 @@ const autoIgnoredFrozen = {
 	methodInteriorWritesEmit: false,
 } satisfies Record<BehaviorName, boolean>;
 
-const rejected = {
+const dangerous = {
 	attachesAtCreate: false,
 	attachesByBareWrite: false,
 	readBackIsRawReference: false,
@@ -166,8 +166,8 @@ const rejected = {
 	methodInteriorWritesEmit: false,
 } satisfies Record<BehaviorName, boolean>;
 
-const rejectedEmptyMethods = {
-	...rejected,
+const dangerousEmptyMethods = {
+	...dangerous,
 	methodsWork: true,
 } satisfies Record<BehaviorName, boolean>;
 
@@ -189,17 +189,6 @@ const leafFunction = {
 	readBackResolvesToSameIdentity: true,
 	emitsOnInteriorMutation: false,
 	roundTripsFaithfully: true,
-	methodsWork: true,
-	methodInteriorWritesEmit: false,
-} satisfies Record<BehaviorName, boolean>;
-
-const leafFrozen = {
-	attachesAtCreate: true,
-	attachesByBareWrite: true,
-	readBackIsRawReference: true,
-	readBackResolvesToSameIdentity: true,
-	emitsOnInteriorMutation: false,
-	roundTripsFaithfully: false,
 	methodsWork: true,
 	methodInteriorWritesEmit: false,
 } satisfies Record<BehaviorName, boolean>;
@@ -318,9 +307,9 @@ export const catalog = [
 	{ name: "frozenMap", create: () => Object.freeze(new Map([["a", 1]])), expect: autoIgnoredFrozen },
 	{ name: "frozenSet", create: () => Object.freeze(new Set([1, 2])), expect: autoIgnoredFrozen },
 	{ name: "frozenDate", create: () => Object.freeze(new Date(0)), expect: autoIgnoredFrozen },
-	{ name: "rawMap", create: () => new Map([["a", 1]]), expect: rejected, scopeExpect: scopeInert },
-	{ name: "rawSet", create: () => new Set([1, 2]), expect: rejected, scopeExpect: scopeInert },
-	{ name: "rawDate", create: () => new Date(0), expect: rejected, scopeExpect: scopeInert },
+	{ name: "rawMap", create: () => new Map([["a", 1]]), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "rawSet", create: () => new Set([1, 2]), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "rawDate", create: () => new Date(0), expect: dangerous, scopeExpect: scopeInert },
 	{ name: "cleanClassInstance", create: () => new CleanPoint(), expect: trackedData, scopeExpect: scopeRenders },
 	{
 		name: "cleanMutatingClassInstance",
@@ -328,14 +317,14 @@ export const catalog = [
 		expect: trackedWithMutatingMethods,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "cleanArrowClassInstance", create: () => new ArrowPoint(), expect: rejected, scopeExpect: scopeRenders },
+	{ name: "cleanArrowClassInstance", create: () => new ArrowPoint(), expect: dangerous, scopeExpect: scopeRenders },
 	{
 		name: "unsafeTrackedCleanArrowClass",
 		create: () => unsafeTrack(new ArrowPoint()),
 		expect: trackedData,
 		scopeExpect: scopeRenders,
 	},
-	{ name: "privateFieldClassInstance", create: () => new PrivateBox(), expect: rejected, scopeExpect: scopeInert },
+	{ name: "privateFieldClassInstance", create: () => new PrivateBox(), expect: dangerous, scopeExpect: scopeInert },
 	{
 		name: "unsafeTrackedPrivateClass",
 		create: () => unsafeTrack(new PrivatePublicBox()),
@@ -348,23 +337,23 @@ export const catalog = [
 		expect: unsafePrivateCycle,
 		scopeExpect: scopeInert,
 	},
-	{ name: "arraySubclass", create: () => new ArraySubclass(), expect: rejected, scopeExpect: scopeInert },
-	{ name: "mapSubclass", create: () => new MapSubclass(), expect: rejected, scopeExpect: scopeInert },
-	{ name: "regExp", create: () => /catalog/g, expect: rejected, scopeExpect: scopeInert },
-	{ name: "errorValue", create: () => new Error("catalog"), expect: rejected, scopeExpect: scopeInert },
-	{ name: "promise", create: () => Promise.resolve(1), expect: rejectedEmptyMethods, scopeExpect: scopeInert },
-	{ name: "url", create: () => new URL("https://example.com"), expect: rejected, scopeExpect: scopeInert },
-	{ name: "urlSearchParams", create: () => new URLSearchParams("a=1"), expect: rejected, scopeExpect: scopeInert },
-	{ name: "typedArray", create: () => new Uint8Array([1, 2, 3]), expect: rejected, scopeExpect: scopeInert },
-	{ name: "arrayBuffer", create: () => new ArrayBuffer(8), expect: rejected, scopeExpect: scopeInert },
+	{ name: "arraySubclass", create: () => new ArraySubclass(), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "mapSubclass", create: () => new MapSubclass(), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "regExp", create: () => /catalog/g, expect: dangerous, scopeExpect: scopeInert },
+	{ name: "errorValue", create: () => new Error("catalog"), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "promise", create: () => Promise.resolve(1), expect: dangerousEmptyMethods, scopeExpect: scopeInert },
+	{ name: "url", create: () => new URL("https://example.com"), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "urlSearchParams", create: () => new URLSearchParams("a=1"), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "typedArray", create: () => new Uint8Array([1, 2, 3]), expect: dangerous, scopeExpect: scopeInert },
+	{ name: "arrayBuffer", create: () => new ArrayBuffer(8), expect: dangerous, scopeExpect: scopeInert },
 	{
 		name: "dataView",
 		create: () => new DataView(new ArrayBuffer(8)),
-		expect: rejectedEmptyMethods,
+		expect: dangerousEmptyMethods,
 		scopeExpect: scopeInert,
 	},
-	{ name: "weakMap", create: () => new WeakMap(), expect: rejectedEmptyMethods, scopeExpect: scopeInert },
-	{ name: "weakSet", create: () => new WeakSet(), expect: rejectedEmptyMethods, scopeExpect: scopeInert },
+	{ name: "weakMap", create: () => new WeakMap(), expect: dangerousEmptyMethods, scopeExpect: scopeInert },
+	{ name: "weakSet", create: () => new WeakSet(), expect: dangerousEmptyMethods, scopeExpect: scopeInert },
 	{ name: "ignoredMap", create: () => ignore(new Map([["a", 1]])), expect: ignored, scopeExpect: scopeInert },
 	{ name: "ignoredClassInstance", create: () => ignore(new CleanPoint()), expect: ignored, scopeExpect: scopeInert },
 	{
@@ -412,5 +401,5 @@ export const catalog = [
 		expect: leafFunction,
 	},
 	{ name: "arrowFunction", create: () => () => 1, expect: leafFunction },
-	{ name: "reactElement", create: makeReactElement, expect: leafFrozen },
+	{ name: "reactElement", create: makeReactElement, expect: autoIgnoredFrozen },
 ] satisfies ReadonlyArray<CatalogEntry>;
