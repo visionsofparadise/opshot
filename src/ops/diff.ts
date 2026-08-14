@@ -280,6 +280,22 @@ const commitOperation = (
 	return { weight };
 };
 
+const samePathSegments = (left: OperationPath, right: OperationPath): boolean => {
+	if (left.length !== right.length) return false;
+
+	for (let index = 0; index < left.length; index++) {
+		if (left[index] !== right[index]) return false;
+	}
+
+	return true;
+};
+
+const insertOperation = (context: DiffContext, index: number, pair: Operation): DiffResult => {
+	context.ops.splice(index, 0, pair);
+
+	return { weight: OPERATION_WEIGHT };
+};
+
 const commitLink = (
 	context: DiffContext,
 	path: OperationPath,
@@ -439,28 +455,26 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 		const live = liveOf(before);
 		const recorded = context.firstMintRoute.get(live);
 
-		if (recorded !== undefined) {
-			let sameRoute = recorded.length === path.length;
+		if (recorded !== undefined && !samePathSegments(recorded, path)) {
+			const pair: Operation = {
+				do: createDeleteMutation(path),
+				undo: createLinkMutation(path, recorded),
+			};
+			let insertAt = context.ops.length;
 
-			if (sameRoute) {
-				for (let index = 0; index < recorded.length; index++) {
-					if (recorded[index] !== path[index]) {
-						sameRoute = false;
+			for (let index = 0; index < context.ops.length; index++) {
+				const existing = context.ops[index];
 
-						break;
-					}
+				if (existing === undefined) continue;
+
+				if (samePathSegments(existing.do.path, recorded)) {
+					insertAt = index;
+
+					break;
 				}
 			}
 
-			if (!sameRoute) {
-				return commitOperation(
-					context,
-					context.ops.length,
-					path,
-					{ do: createDeleteMutation(path), undo: createLinkMutation(path, recorded) },
-					weighCarried,
-				);
-			}
+			return insertOperation(context, insertAt, pair);
 		}
 
 		if (payloadHasInteriorSharing(before) && usableExternalRoutesOf(context, live, path).length === 0) {

@@ -1433,6 +1433,9 @@ describe("diffObjects: cyclic values", () => {
 			},
 			{ do: { verb: "delete", path: ["node"] }, undo: { verb: "assign", path: ["node"], value: {} } },
 		]);
+
+		applyOperations(state, heard[0] ?? [], "undo");
+		expect(state.node?.self).toBe(state.node);
 	});
 
 	it("decomposes a last-route delete of an aliased diamond", () => {
@@ -1452,15 +1455,37 @@ describe("diffObjects: cyclic values", () => {
 
 		expect(shapeOps(heard[0] ?? [])).toEqual([
 			{
-				do: { verb: "delete", path: ["node", "left"] },
-				undo: { verb: "assign", path: ["node", "left"], value: { n: 1 } },
-			},
-			{
 				do: { verb: "delete", path: ["node", "right"] },
 				undo: { verb: "link", path: ["node", "right"], ref: ["node", "left"] },
 			},
+			{
+				do: { verb: "delete", path: ["node", "left"] },
+				undo: { verb: "assign", path: ["node", "left"], value: { n: 1 } },
+			},
 			{ do: { verb: "delete", path: ["node"] }, undo: { verb: "assign", path: ["node"], value: {} } },
 		]);
+
+		applyOperations(state, heard[0] ?? [], "undo");
+		expect(state.node?.left).toBe(state.node?.right);
+	});
+
+	it("deletes two of three aliases and undoes onto the survivor", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ a?: { n: number }; b?: { n: number }; c: { n: number } }>({
+			a: shared,
+			b: shared,
+			c: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.a;
+			delete state.b;
+		});
+
+		applyOperations(state, heard[0] ?? [], "undo");
+		expect(state.a).toBe(state.b);
+		expect(state.b).toBe(state.c);
 	});
 
 	it("preserves sharing across a JSON round trip of a formation batch", () => {
