@@ -8,17 +8,13 @@ import { isStateRoot } from "../stateRoots";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
 import {
-	definePropertyError,
 	nonWritablePropertyError,
-	ownProtoKeyError,
-	preventExtensionsError,
 	rejectionError,
-	setPrototypeOfError,
 	snapshotDonationError,
 	stateRootValueError,
 	strictnessJoinError,
 } from "./boundaryErrors";
-import { admissionDecision, admissionLane, type AdmissionLane } from "./classify";
+import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
 const { proxyStateMap, proxyCache, refSet } = unstable_getInternalStates();
@@ -63,6 +59,14 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 
 	for (const entry of walkDataEntries(value)) {
 		const child: unknown = entry.value;
+
+		if (
+			mode === "admission" &&
+			classifyValue(value) === "cleanClass" &&
+			!isUnsafeTracked(value) &&
+			typeof child === "function"
+		)
+			throw rejectionError(value, "cleanClass", [...path, entry.key]);
 
 		if (typeof child !== "object" || child === null) continue;
 
@@ -113,6 +117,8 @@ const assertStrictnessJoin = (resolved: object, receiverStrict: boolean, key: st
 	if (stampedStrictOf(incomingTarget) === receiverStrict) return;
 
 	if (isMarkedUnsafe(resolved)) return;
+
+	if (!stampedStrictOf(incomingTarget)) return;
 
 	throw strictnessJoinError(key);
 };
@@ -219,8 +225,6 @@ export function installBoundary(): void {
 	unstable_replaceInternalFunction(
 		"createHandler",
 		(createHandler) => (isInitializing, addPropListener, removePropListener, notifyUpdate) => {
-			let setDepth = 0;
-
 			const handler = createHandler(isInitializing, addPropListener, removePropListener, notifyUpdate);
 			const defaultDelete = handler.deleteProperty;
 			const defaultSet = handler.set;
@@ -233,13 +237,27 @@ export function installBoundary(): void {
 				set(target, prop, value, receiver) {
 					const assigned: unknown = value;
 
-					if (prop === "__proto__") throw ownProtoKeyError();
-
 					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 
 					const location = typeof prop === "string" ? [prop] : [];
 					const receiverOptions = getOptions(target);
 					const strict = receiverOptions?.strict !== false;
+					const receiverKind = classifyValue(target);
+
+					if (
+						!isInitializing() &&
+						strict &&
+						!isMarkedUnsafe(target) &&
+						receiverKind !== "plain" &&
+						receiverKind !== "plainArray" &&
+						typeof resolved === "function" &&
+						typeof prop === "string"
+					) {
+						const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
+
+						if (descriptor === undefined || descriptor.enumerable === true)
+							throw rejectionError(target, receiverKind, [prop]);
+					}
 
 					if (typeof resolved === "object" && resolved !== null && !refSet.has(resolved)) {
 						if (isStateRoot(rawTargetOf(resolved)))
@@ -275,27 +293,19 @@ export function installBoundary(): void {
 						flagPossiblyShared(resolved);
 					}
 
-					setDepth += 1;
-
-					try {
-						return defaultSet(target, prop, resolved, receiver);
-					} finally {
-						setDepth -= 1;
-					}
+					return defaultSet(target, prop, resolved, receiver);
 				},
 				deleteProperty(target, prop) {
 					return defaultDelete(target, prop);
 				},
 				defineProperty(target, prop, descriptor) {
-					if (setDepth > 0 || isInitializing()) return Reflect.defineProperty(target, prop, descriptor);
-
-					throw definePropertyError();
+					return Reflect.defineProperty(target, prop, descriptor);
 				},
-				setPrototypeOf() {
-					throw setPrototypeOfError();
+				setPrototypeOf(target, proto) {
+					return Reflect.setPrototypeOf(target, proto);
 				},
-				preventExtensions() {
-					throw preventExtensionsError();
+				preventExtensions(target) {
+					return Reflect.preventExtensions(target);
 				},
 			};
 		},

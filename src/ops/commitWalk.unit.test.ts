@@ -73,6 +73,16 @@ describe("createRouteIndex", () => {
 		expect(index.routesOf(hidden)).toEqual([]);
 	});
 
+	it("does not descend a frozen child", () => {
+		const nested = { n: 2 };
+		const frozen = Object.freeze({ n: 1, nested });
+		const state = createMutableState({ child: frozen });
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(frozen)).toEqual([]);
+		expect(index.routesOf(nested)).toEqual([]);
+	});
+
 	it("mints numeric segments for array indexes", () => {
 		const item = { n: 1 };
 		const state = createMutableState({ list: [item] });
@@ -155,15 +165,15 @@ describe("sharing hint", () => {
 	});
 
 	it("leaves the hint unflagged when the strictness join throws", () => {
-		const loose = createMutableState({ node: { n: 1 } }, { strict: false });
-		const strict = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } });
+		const strict = createMutableState({ node: { n: 1 } });
+		const loose = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } }, { strict: false });
 
 		expect(() => {
-			strict.slot = loose.node;
+			loose.slot = strict.node;
 		}).toThrow("strict");
 
-		expect(isPossiblyShared(loose.node)).toBe(false);
-		expect(isPossiblyShared(strict.hub)).toBe(false);
+		expect(isPossiblyShared(strict.node)).toBe(false);
+		expect(isPossiblyShared(loose.hub)).toBe(false);
 	});
 });
 

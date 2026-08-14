@@ -54,17 +54,6 @@ export const nonWritablePropertyError = (value: object, path: ReadonlyArray<stri
 		path,
 	);
 
-export const frozenRootError = (value: object): Error =>
-	boundaryError(
-		constructorName(value.constructor),
-		"a frozen root would half-attach, keeping the freeze where it is inert and dropping it where it counts",
-		[
-			"pass the root unfrozen (tracked state cannot be frozen)",
-			"hold the frozen value as an auto-ignored leaf field inside a plain root",
-		],
-		undefined,
-	);
-
 export const snapshotDonationError = (key: string | symbol): Error =>
 	new Error(
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
@@ -78,26 +67,6 @@ export const stateRootValueError = (path?: ReadonlyArray<string>): Error =>
 export const strictnessJoinError = (key: string | symbol): Error =>
 	new Error(
 		`opshot: cannot join a strict and a non-strict graph at "${String(key)}" (admission stamps disagree and the value is not marked unsafeTrack). Options:\n- unsafeTrack(value) to declare the caveat lane\n- re-create the value as plain data in the receiving state`,
-	);
-
-export const ownProtoKeyError = (): Error =>
-	new Error(
-		"opshot: own __proto__ key is not supported on tracked state; do not place an own __proto__ key in state (an own __proto__ key resolves to an inherited accessor, and prototype mutation is not tracked data)",
-	);
-
-export const definePropertyError = (): Error =>
-	new Error(
-		"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input (meta-mutation has no faithful operation representation)",
-	);
-
-export const setPrototypeOfError = (): Error =>
-	new Error(
-		"opshot: setPrototypeOf is not supported on tracked state; set the prototype before the value enters state (meta-mutation has no faithful operation representation)",
-	);
-
-export const preventExtensionsError = (): Error =>
-	new Error(
-		"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (meta-mutation has no faithful operation representation)",
 	);
 
 const inheritsFromPrototype = (value: object, prototype: object): boolean => {

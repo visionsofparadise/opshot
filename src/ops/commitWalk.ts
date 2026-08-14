@@ -1,10 +1,11 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { walkDataEntries } from "../utils/dataEntries";
+import { admissionLane } from "../valtio/classify";
 import { isPlainArray } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString } from "./predicates";
 
-const { proxyStateMap, refSet } = unstable_getInternalStates();
+const { proxyStateMap } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
@@ -53,7 +54,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 
 			if (typeof child !== "object" || child === null) continue;
 
-			if (refSet.has(child)) continue;
+			if (admissionLane(child) === "leaf") continue;
 
 			const childLive = rawTargetOf(child);
 			const segment = segmentFor(node, entry.key);

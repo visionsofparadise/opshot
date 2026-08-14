@@ -91,7 +91,7 @@ const witnesses: ReadonlyArray<Witness> = [
 		name: "cleanArrowClass",
 		create: () => new ArrowPoint(),
 		kind: "cleanClass",
-		trackable: false,
+		trackable: true,
 		remedies: ["unsafeTrack", "ignore"],
 	},
 	{
@@ -221,10 +221,28 @@ const witnesses: ReadonlyArray<Witness> = [
 		trackable: true,
 	},
 	{
+		name: "frozenMap",
+		create: () => Object.freeze(new Map([["a", 1]])),
+		kind: "nativeClass",
+		trackable: false,
+	},
+	{
+		name: "frozenSet",
+		create: () => Object.freeze(new Set([1, 2])),
+		kind: "nativeClass",
+		trackable: false,
+	},
+	{
+		name: "frozenDate",
+		create: () => Object.freeze(new Date(0)),
+		kind: "nativeClass",
+		trackable: false,
+	},
+	{
 		name: "frozenUnsafeTrackedValue",
 		create: () => unsafeTrack(Object.freeze({ a: 1 })),
 		kind: "plain",
-		trackable: true,
+		trackable: false,
 	},
 	{
 		name: "trackedMap",

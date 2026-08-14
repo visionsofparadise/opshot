@@ -93,13 +93,14 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		}
 
 		expect(() => createMutableState({ arrow: new Arrow() })).toThrow(
-			"opshot: Arrow at /arrow cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
+			"opshot: Arrow at /arrow/bump cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
-	it("throws for a frozen Map: freezing does not freeze internal slots", () => {
-		expect(() => createMutableState({ lookup: Object.freeze(new Map<string, number>()) })).toThrow(
-			"opshot: Map at /lookup cannot be tracked",
-		);
+	it("holds a frozen Map as that node", () => {
+		const frozenMap = Object.freeze(new Map<string, number>());
+		const state = createMutableState({ lookup: frozenMap });
+
+		expect(state.lookup).toBe(frozenMap);
 	});
 });

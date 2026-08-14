@@ -5,7 +5,7 @@ import { getOptions, stampOptions, type MutableNodeOptions } from "./settings";
 import { markStateRoot } from "./stateRoots";
 import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";
 import { assertInitializerStrictnessJoins, assertSafeDataPaths, installBoundary } from "./valtio/boundary";
-import { frozenRootError, rejectionError } from "./valtio/boundaryErrors";
+import { rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
 
 /**
@@ -34,9 +34,11 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	const decision = admissionDecision(properties);
 
+	if (decision.lane === "leaf") return properties;
+
 	if (decision.lane === "reject") {
 		if (options?.strict !== false) throw rejectionError(properties, decision.kind);
-	} else if (decision.lane !== "track") throw frozenRootError(properties);
+	}
 
 	assertSafeDataPaths(properties, [], new Set(), options?.strict !== false ? "admission" : "rootsOnly");
 

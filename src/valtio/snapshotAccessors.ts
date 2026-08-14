@@ -3,8 +3,9 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
+import { admissionLane } from "./classify";
 
-const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
+const { proxyStateMap, snapCache } = unstable_getInternalStates();
 
 export const createSnapshotPreservingAccessors = <T extends object>(target: T, version: number): T => {
 	const cached = snapCache.get(target);
@@ -47,7 +48,7 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 		const snapshotDescriptor: PropertyDescriptor = { value, enumerable: descriptor.enumerable, configurable: true };
 
 		if (typeof value === "object" && value !== null) {
-			if (refSet.has(value)) {
+			if (admissionLane(value) === "leaf") {
 				markToTrack(value, false);
 			} else {
 				const childState = proxyStateMap.get(value);

@@ -981,7 +981,7 @@ describe("scope", () => {
 		expect(() => structuredClone(createMutableState({ n: 1 }))).toThrow();
 	});
 
-	it("rejects preventExtensions, freeze, and seal through a readProxy while writes through it keep working", () => {
+	it("completes preventExtensions, freeze, and seal through a readProxy while writes through it keep working", () => {
 		interface Shape {
 			count: number;
 			items: Array<number>;
@@ -1007,24 +1007,20 @@ describe("scope", () => {
 
 		if (wrapped === undefined) throw new Error("missing readProxy");
 
-		expect(() => Object.preventExtensions(wrapped)).toThrow(
-			"opshot: preventExtensions is not supported on tracked state",
-		);
-		expect(() => Object.freeze(wrapped)).toThrow("opshot: preventExtensions is not supported on tracked state");
-		expect(() => Object.seal(wrapped)).toThrow("opshot: preventExtensions is not supported on tracked state");
-		expect(() => Object.freeze(wrapped.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
-		expect(() => Object.seal(wrapped.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
-
-		expect(Object.isExtensible(wrapped)).toBe(true);
-		expect(Object.isExtensible(wrapped.items)).toBe(true);
+		Object.preventExtensions(wrapped);
+		Object.seal(wrapped.items);
 
 		act(() => {
 			wrapped.count = 1;
-			wrapped.items.push(3);
+			wrapped.items[0] = 9;
 		});
 
 		expect(screen.getByTestId("count").textContent).toBe("1");
-		expect([...wrapped.items]).toEqual([1, 2, 3]);
+		expect([...wrapped.items]).toEqual([9, 2]);
+
+		Object.freeze(wrapped);
+
+		expect(Object.isFrozen(wrapped)).toBe(true);
 	});
 });
 

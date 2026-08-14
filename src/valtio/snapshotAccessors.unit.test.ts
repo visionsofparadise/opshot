@@ -51,6 +51,18 @@ describe("snapshotAccessors: accessor preservation", () => {
 		expect(state.fahrenheit).toBe(68);
 	});
 
+	it("carries a live-frozen child by reference like an admission-time freeze", () => {
+		const state = createMutableState({ child: { n: 1 } });
+
+		Object.freeze(state.child);
+
+		expect(snapshot(state).child).toBe(state.child);
+
+		const frozen = Object.freeze({ n: 1 });
+
+		expect(snapshot(createMutableState({ child: frozen })).child).toBe(frozen);
+	});
+
 	it("preserves snapshot cache identity and untouched-subtree structural sharing", () => {
 		const state = createTemperature();
 		const emissions = recordEmissions(state);

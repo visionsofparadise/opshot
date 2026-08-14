@@ -47,18 +47,6 @@ export function classifyValue(value: object): ValueKind {
 	return classifyChain(value.constructor);
 }
 
-export function hasOwnEnumerableFunction(value: object): boolean {
-	for (const key of Reflect.ownKeys(value)) {
-		const descriptor = Object.getOwnPropertyDescriptor(value, key);
-
-		if (!descriptor?.enumerable || !("value" in descriptor)) continue;
-
-		if (typeof descriptor.value === "function") return true;
-	}
-
-	return false;
-}
-
 export type AdmissionLane = "track" | "leaf" | "reject";
 
 export type AdmissionDecision =
@@ -70,20 +58,13 @@ export function admissionDecision(value: unknown): AdmissionDecision {
 
 	if (refSet.has(value)) return { lane: "leaf" };
 
+	if (Object.isFrozen(value)) return { lane: "leaf" };
+
 	if (isUnsafeTracked(value)) return { lane: "track" };
 
 	const kind = classifyValue(value);
 
-	if ((kind === "plain" || kind === "plainArray" || kind === "cleanClass") && Object.isFrozen(value))
-		return { lane: "leaf" };
-
-	if (kind === "plain" || kind === "plainArray") return { lane: "track" };
-
-	if (kind === "cleanClass") {
-		if (!hasOwnEnumerableFunction(value)) return { lane: "track" };
-
-		return { lane: "reject", kind: "cleanClass" };
-	}
+	if (kind === "plain" || kind === "plainArray" || kind === "cleanClass") return { lane: "track" };
 
 	return { lane: "reject", kind };
 }

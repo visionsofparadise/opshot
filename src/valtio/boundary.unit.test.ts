@@ -11,8 +11,10 @@ import { isPossiblyShared } from "../ops/commitWalk";
 import { type Operation } from "../ops/operation";
 import { getOptions } from "../settings";
 import { ignore } from "../ignore";
+import { isState } from "../isState";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { shapeOps } from "../ops/operationShape";
+import { admissionLane } from "./classify";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -194,7 +196,7 @@ describe("boundary: snapshot donation", () => {
 });
 
 describe("boundary: throws at entry", () => {
-	it("rejects a __proto__ data key wherever it is placed", () => {
+	it("admits a __proto__ data key wherever it is placed", () => {
 		const withOwnProto = () => {
 			const carrier = {};
 
@@ -203,19 +205,16 @@ describe("boundary: throws at entry", () => {
 			return carrier;
 		};
 
-		expect(() => createMutableState(withOwnProto())).toThrow("own __proto__ key is not supported on tracked state");
-		expect(() => createMutableState({ held: withOwnProto() })).toThrow(
-			"own __proto__ key is not supported on tracked state",
-		);
+		expect(() => createMutableState(withOwnProto())).not.toThrow();
+		expect(() => createMutableState({ held: withOwnProto() })).not.toThrow();
 
 		const state = createMutableState<{ value: unknown }>({ value: null });
 
-		expect(() => {
-			transact(state, () => {
-				state.value = { deep: withOwnProto() };
-			});
-		}).toThrow("own __proto__ key is not supported on tracked state");
-		expect(state.value).toBeNull();
+		transact(state, () => {
+			state.value = { deep: withOwnProto() };
+		});
+
+		expect(state.value).not.toBeNull();
 		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 
@@ -293,25 +292,13 @@ describe("boundary: throws at entry", () => {
 		expect(() => createMutableState({ carrier })).toThrow("opshot: Map at /carrier/first/hidden cannot be tracked");
 	});
 
-	it("rejects a __proto__ write through the trap under default strictness", () => {
+	it("completes a __proto__ write through the trap under default strictness", () => {
 		const state = createMutableState<{ value: unknown }>({ value: null });
-		const carrier = {};
 
-		Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		(state as any).__proto__ = {};
 
-		expect(() => {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(state as any).__proto__ = {};
-		}).toThrow("own __proto__ key is not supported on tracked state");
-
-		expect(() => {
-			transact(state, () => {
-				state.value = carrier;
-			});
-		}).toThrow("own __proto__ key is not supported on tracked state");
-
-		expect(state.value).toBeNull();
-		expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
+		expect(Object.prototype).not.toHaveProperty("polluted");
 	});
 
 	it("tracks a clean class instance with fine-grained interior ops", () => {
@@ -661,6 +648,37 @@ describe("boundary: admitted by rule", () => {
 		]);
 		expect(state.run).toBe(second);
 	});
+
+	it("throws at a later enumerable function assignment onto a tracked class", () => {
+		class Point {
+			x = 1;
+		}
+
+		type PointHolder = { point: Point & { fn?: () => number } };
+
+		const state = createMutableState<PointHolder>({ point: new Point() });
+
+		expect(() => {
+			state.point.fn = () => 1;
+		}).toThrow("opshot: Point at /fn cannot be tracked (arrow-method writes won't be tracked)");
+		expect(Object.hasOwn(state.point, "fn")).toBe(false);
+
+		const loose = createMutableState<PointHolder>({ point: new Point() }, { strict: false });
+
+		loose.point.fn = () => 1;
+		expect(typeof loose.point.fn).toBe("function");
+
+		const marked = createMutableState<PointHolder>({ point: unsafeTrack(new Point()) });
+
+		marked.point.fn = () => 1;
+		expect(typeof marked.point.fn).toBe("function");
+
+		const symbol = Symbol("fn");
+		const withSymbol = state.point as Point & { fn?: () => number } & Record<symbol, () => number>;
+
+		withSymbol[symbol] = () => 1;
+		expect(typeof withSymbol[symbol]).toBe("function");
+	});
 });
 
 describe("boundary: ignore lane", () => {
@@ -710,71 +728,49 @@ describe("boundary: ignore lane", () => {
 });
 
 describe("boundary: meta-mutation trap gates", () => {
-	it("throws when a consumer calls Object.defineProperty on tracked state", () => {
+	it("completes Object.defineProperty on tracked state", () => {
+		const state = createMutableState<{ count: number; extra?: number }>({ count: 0 });
+
+		Object.defineProperty(state, "extra", { value: 1 });
+
+		expect(state.extra).toBe(1);
+	});
+
+	it("completes Object.setPrototypeOf on tracked state", () => {
 		const state = createMutableState({ count: 0 });
 
-		expect(() => Object.defineProperty(state, "extra", { value: 1 })).toThrow(
-			"opshot: defineProperty is not supported on tracked state; define properties in the createMutableState input (meta-mutation has no faithful operation representation)",
-		);
+		Object.setPrototypeOf(state, null);
+
+		expect(Object.getPrototypeOf(state)).toBeNull();
 	});
 
-	it("throws when a consumer calls Object.setPrototypeOf on tracked state", () => {
-		const state = createMutableState({ count: 0 });
-
-		expect(() => Object.setPrototypeOf(state, null)).toThrow(
-			"opshot: setPrototypeOf is not supported on tracked state; set the prototype before the value enters state (meta-mutation has no faithful operation representation)",
-		);
-	});
-
-	it("keeps defineProperty rejection local to each proxy handler", () => {
-		const second = createMutableState({ count: 0 });
-		const first = createMutableState({
-			get trigger(): number {
-				return 0;
-			},
-			set trigger(value: number) {
-				Object.defineProperty(second, "injected", { value });
-			},
-		});
-
-		expect(() => {
-			transact(first, () => {
-				first.trigger = 1;
-			});
-		}).toThrow("opshot: defineProperty is not supported on tracked state");
-		expect(Object.hasOwn(second, "injected")).toBe(false);
-	});
-
-	it("throws when a consumer calls Object.preventExtensions, freeze, or seal, leaving no side effect behind", () => {
-		const state = createMutableState<{ count: number; items: Array<number>; added?: number }>({
+	it("completes Object.preventExtensions, freeze, or seal", () => {
+		const sealed = createMutableState<{ count: number; items: Array<number> }>({
 			count: 0,
 			items: [1, 2],
 		});
-		const emissions = recordEmissions(state);
+		const emissions = recordEmissions(sealed);
 
-		expect(() => Object.preventExtensions(state)).toThrow(
-			"opshot: preventExtensions is not supported on tracked state; freeze the value before it enters state (meta-mutation has no faithful operation representation)",
-		);
-		expect(() => Object.freeze(state)).toThrow("opshot: preventExtensions is not supported on tracked state");
-		expect(() => Object.seal(state)).toThrow("opshot: preventExtensions is not supported on tracked state");
-		expect(() => Object.preventExtensions(state.items)).toThrow(
-			"opshot: preventExtensions is not supported on tracked state",
-		);
-		expect(() => Object.freeze(state.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
-		expect(() => Object.seal(state.items)).toThrow("opshot: preventExtensions is not supported on tracked state");
+		Object.preventExtensions(sealed);
+		Object.seal(sealed.items);
 
-		expect(Object.isExtensible(state)).toBe(true);
-		expect(Object.isExtensible(state.items)).toBe(true);
+		expect(isState(sealed)).toBe(true);
+		expect(isState(sealed.items)).toBe(true);
 
-		transact(state, () => {
-			state.added = 1;
-			state.items.push(3);
+		transact(sealed, () => {
+			sealed.count = 1;
+			sealed.items[0] = 9;
 		});
 
-		expect(state.added).toBe(1);
-		expect(state.items).toEqual([1, 2, 3]);
-		expect(2 in state.items).toBe(true);
+		expect(sealed.count).toBe(1);
+		expect(sealed.items[0]).toBe(9);
 		expect(emissions).toHaveLength(1);
+
+		const frozen = createMutableState({ n: 1 });
+
+		Object.freeze(frozen);
+
+		expect(admissionLane(frozen)).toBe("leaf");
 	});
 
 	it("leaves freezing a snapshot and an op's recorded value untouched", () => {
@@ -1139,16 +1135,6 @@ describe("boundary: strict false", () => {
 		expect(nonStrictHeard.map((emission) => emission.ops)).toEqual(strictHeard.map((emission) => emission.ops));
 	});
 
-	it("still auto-ignores a frozen plain object while marking a frozen Map", () => {
-		const frozenPlain = Object.freeze({ x: 1 });
-		const frozenMap = Object.freeze(new Map<string, number>());
-		const state = createMutableState({ box: frozenPlain, lookup: frozenMap }, { strict: false });
-
-		expect(isUnsafeTracked(frozenPlain)).toBe(false);
-		expect(isUnsafeTracked(frozenMap)).toBe(true);
-		expect(() => state.lookup.set("a", 1)).toThrow();
-	});
-
 	it("still leaves a refSet member as a leaf", () => {
 		const element = ignore({ node: "dom" });
 		const state = createMutableState({ element }, { strict: false });
@@ -1190,54 +1176,6 @@ describe("boundary: strict false", () => {
 		expect(() => (state.box as Map<string, number>).set("a", 1)).toThrow();
 	});
 
-	it("keeps the reserved-path guard running on both paths", () => {
-		const withOwnProto = () => {
-			const carrier = {};
-
-			Object.defineProperty(carrier, "__proto__", { value: { polluted: true }, enumerable: true, writable: true });
-
-			return carrier;
-		};
-
-		expect(() => createMutableState({ held: withOwnProto() }, { strict: false })).toThrow(
-			"own __proto__ key is not supported on tracked state",
-		);
-
-		const state = createMutableState<{ value: unknown }>({ value: null }, { strict: false });
-
-		expect(() => {
-			transact(state, () => {
-				state.value = { deep: withOwnProto() };
-			});
-		}).toThrow("own __proto__ key is not supported on tracked state");
-		expect(state.value).toBeNull();
-	});
-
-	it("keeps every non-admission loud site under strict false", () => {
-		const state = createMutableState({ count: 0 }, { strict: false });
-
-		expect(() => {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(state as any).__proto__ = {};
-		}).toThrow("own __proto__ key is not supported");
-
-		expect(() => {
-			Object.defineProperty(state, "extra", { value: 1 });
-		}).toThrow("defineProperty is not supported");
-
-		expect(() => {
-			Object.setPrototypeOf(state, {});
-		}).toThrow("setPrototypeOf is not supported");
-
-		const source = createMutableState({ item: { value: 1 } }, { strict: false });
-		const snap = snapshot(source);
-
-		expect(() => {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(state as any).donated = (snap as any).item;
-		}).toThrow(/snapshot|donation|registered/i);
-	});
-
 	it("gives a rejectable value nested below a replayed property no location at all", () => {
 		const carrier = (): object => {
 			const holder = {};
@@ -1270,15 +1208,14 @@ describe("boundary: strictness join", () => {
 	const joinMessage =
 		'opshot: cannot join a strict and a non-strict graph at "box" (admission stamps disagree and the value is not marked unsafeTrack). Options:\n- unsafeTrack(value) to declare the caveat lane\n- re-create the value as plain data in the receiving state';
 
-	it("throws when a strict state receives a live unmarked node from a non-strict graph", () => {
+	it("admits a live unmarked node from a non-strict graph into a strict state", () => {
 		const loose = createMutableState({ shared: { n: 1 } }, { strict: false });
 		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
 
-		expect(() => {
-			strict.box = loose.shared;
-		}).toThrow(joinMessage);
+		strict.box = loose.shared;
 
-		expect(strict.box).toBeNull();
+		expect(strict.box).toBe(loose.shared);
+		expect(getOptions(rawTargetOf(loose.shared))?.strict).toBe(false);
 	});
 
 	it("throws when a non-strict state receives a live unmarked node from a strict graph", () => {
@@ -1292,40 +1229,12 @@ describe("boundary: strictness join", () => {
 		expect(loose.box).toBeNull();
 	});
 
-	it("throws when a detached unmarked loose-stamped node enters a strict graph", () => {
-		const loose = createMutableState<{ shared: { n: number } | null }>({ shared: { n: 1 } }, { strict: false });
-		const detached = loose.shared!;
-
-		loose.shared = null;
-
-		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
-
-		expect(() => {
-			strict.box = detached;
-		}).toThrow(joinMessage);
-
-		expect(strict.box).toBeNull();
-	});
-
-	it("throws when a detached unmarked strict-stamped node enters a loose graph", () => {
-		const strict = createMutableState<{ shared: { n: number } | null }>({ shared: { n: 1 } });
-		const detached = strict.shared!;
-
-		strict.shared = null;
-
-		const loose = createMutableState<{ box: { n: number } | null }>({ box: null }, { strict: false });
-
-		expect(() => {
-			loose.box = detached;
-		}).toThrow(joinMessage);
-
-		expect(loose.box).toBeNull();
-	});
-
-	it("throws from createMutableState when the initializer carries a live foreign proxy of differing strictness", () => {
+	it("admits an initializer that carries a live foreign proxy of loose strictness", () => {
 		const loose = createMutableState({ shared: { n: 1 } }, { strict: false });
+		const strict = createMutableState({ box: loose.shared });
 
-		expect(() => createMutableState({ box: loose.shared })).toThrow(joinMessage);
+		expect(strict.box).toBe(loose.shared);
+		expect(getOptions(rawTargetOf(loose.shared))?.strict).toBe(false);
 	});
 
 	it("shares a live node between two strict graphs", () => {
@@ -1396,11 +1305,11 @@ describe("boundary: strictness join", () => {
 	});
 
 	it("names the stamp-join remedies in the join error", () => {
-		const loose = createMutableState({ shared: { n: 1 } }, { strict: false });
-		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
+		const strict = createMutableState({ shared: { n: 1 } });
+		const loose = createMutableState<{ box: { n: number } | null }>({ box: null }, { strict: false });
 
 		expect(() => {
-			strict.box = loose.shared;
+			loose.box = strict.shared;
 		}).toThrow(joinMessage);
 
 		expect(joinMessage).toContain("unsafeTrack(value) to declare the caveat lane");
@@ -1664,28 +1573,6 @@ describe("boundary: bare references and the sharing hint", () => {
 
 		transact(state, () => {
 			state.hub.n = 2;
-		});
-
-		for (const emission of heard) {
-			for (const pair of shapeOps(emission.ops)) expect(pair.do.verb).not.toBe("link");
-		}
-	});
-
-	it("leaves the sharing hint unflagged when the strictness join throws", () => {
-		const loose = createMutableState({ node: { n: 1 } }, { strict: false });
-		const strict = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } });
-
-		expect(() => {
-			strict.slot = loose.node;
-		}).toThrow("strict");
-
-		expect(isPossiblyShared(loose.node)).toBe(false);
-		expect(isPossiblyShared(strict.hub)).toBe(false);
-
-		const heard = recordEmissions(strict);
-
-		transact(strict, () => {
-			strict.hub.n = 2;
 		});
 
 		for (const emission of heard) {

@@ -389,14 +389,22 @@ describe("createMutableState: root certification", () => {
 		}
 
 		expect(() => createMutableState(new Arrow())).toThrow(
-			"opshot: Arrow cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
+			"opshot: Arrow at /bump cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
 		);
 	});
 
-	it("rejects a frozen plain root through the leaf arm", () => {
-		expect(() => createMutableState(Object.freeze({ count: 0 }))).toThrow(
-			"opshot: Object cannot be tracked (a frozen root would half-attach, keeping the freeze where it is inert and dropping it where it counts). Options:\n- pass the root unfrozen (tracked state cannot be frozen)\n- hold the frozen value as an auto-ignored leaf field inside a plain root",
-		);
+	it("returns a frozen plain root as that node", () => {
+		const frozen = Object.freeze({ count: 0 });
+
+		expect(createMutableState(frozen)).toBe(frozen);
+		expect(isState(frozen)).toBe(false);
+	});
+
+	it("returns an ignore()d factory argument as that node", () => {
+		const object = { count: 0 };
+
+		expect(createMutableState(ignore(object))).toBe(object);
+		expect(isState(object)).toBe(false);
 	});
 
 	it("admits a plain object carrying ordinary methods", () => {
@@ -477,12 +485,6 @@ describe("createMutableState: root certification", () => {
 		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
-	});
-
-	it("still rejects a frozen root under strict false", () => {
-		expect(() => createMutableState(Object.freeze({ count: 0 }), { strict: false })).toThrow(
-			"a frozen root would half-attach",
-		);
 	});
 });
 
