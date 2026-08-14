@@ -324,8 +324,7 @@ const mintAssignment = (
 		const live = liveOf(after);
 		const ancestorPath = context.ancestorPaths.get(live);
 
-		if (ancestorPath !== undefined && ancestorPath.length > 0)
-			return commitLink(context, path, ancestorPath, before, beforePresent);
+		if (ancestorPath !== undefined) return commitLink(context, path, ancestorPath, before, beforePresent);
 
 		if (isPossiblyShared(live)) {
 			const ref = refForMint(context, live, path);

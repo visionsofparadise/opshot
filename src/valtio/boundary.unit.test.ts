@@ -1317,106 +1317,56 @@ describe("boundary: strictness join", () => {
 	});
 });
 
-describe("boundary: state root is not a tracked value", () => {
-	const rootMessage = (path?: string): string =>
-		path === undefined
-			? "opshot: a state root cannot be a tracked value"
-			: `opshot: a state root at ${path} cannot be a tracked value`;
-
-	it("rejects assigning a state root into its own graph at the set trap", () => {
+describe("boundary: the factory return is an ordinary tracked node", () => {
+	it("assigns the factory return into its own graph", () => {
 		const state = createMutableState<{ self?: object; n: number }>({ n: 1 });
 
-		expect(() => {
-			state.self = state;
-		}).toThrow(rootMessage("/self"));
+		state.self = state;
 
-		expect(state).not.toHaveProperty("self");
+		expect(state.self).toBe(state);
 	});
 
-	it("rejects a root-pointing back-edge through a child", () => {
+	it("assigns a back-edge to the factory return through a child", () => {
 		const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
 
-		expect(() => {
-			state.child.back = state;
-		}).toThrow(rootMessage("/back"));
+		state.child.back = state;
 
-		expect(state.child).not.toHaveProperty("back");
+		expect(state.child.back).toBe(state);
 	});
 
-	it("rejects assigning a foreign state root at the set trap", () => {
+	it("assigns a foreign factory return at the set trap", () => {
 		const foreign = createMutableState({ n: 1 });
 		const state = createMutableState<{ held?: object }>({});
 
-		expect(() => {
-			state.held = foreign;
-		}).toThrow(rootMessage("/held"));
+		state.held = foreign;
 
-		expect(state).not.toHaveProperty("held");
+		expect(state.held).toBe(foreign);
 	});
 
-	it("rejects a state root in the createMutableState pre-walk", () => {
-		const foreign = createMutableState({ n: 1 });
+	it("admits a factory return in the createMutableState pre-walk", () => {
+		const strictForeign = createMutableState({ n: 1 });
+		const looseForeign = createMutableState({ n: 1 }, { strict: false });
+		const strict = createMutableState({ held: strictForeign });
+		const loose = createMutableState({ held: looseForeign }, { strict: false });
 
-		expect(() => createMutableState({ held: foreign })).toThrow(rootMessage("/held"));
-		expect(() => createMutableState({ held: foreign }, { strict: false })).toThrow(rootMessage("/held"));
+		expect(strict.held).toBe(strictForeign);
+		expect(loose.held).toBe(looseForeign);
 	});
 
-	it("rejects a foreign state root nested under a reachable track edge in the loose pre-walk", () => {
-		const foreign = createMutableState({ n: 1 });
-
-		expect(() => createMutableState({ outer: { inner: foreign } }, { strict: false })).toThrow(
-			rootMessage("/outer/inner"),
-		);
-	});
-
-	it("admits a state root inside a frozen container under the loose factory, matching the trap", () => {
+	it("admits a nested factory return under the loose factory", () => {
 		const foreign = createMutableState({ n: 1 }, { strict: false });
-		const frozen = Object.freeze({ held: foreign });
+		const state = createMutableState({ outer: { inner: foreign } }, { strict: false });
 
-		expect(() => createMutableState({ box: frozen }, { strict: false })).not.toThrow();
-
-		const state = createMutableState<{ box?: object }>({}, { strict: false });
-
-		expect(() => {
-			state.box = Object.freeze({ held: foreign });
-		}).not.toThrow();
+		expect(state.outer.inner).toBe(foreign);
 	});
 
-	it("admits a state root behind a non-writable property under the loose factory, matching the trap", () => {
-		const foreign = createMutableState({ n: 1 }, { strict: false });
-		const holder: Record<string, unknown> = {};
-
-		Object.defineProperty(holder, "sealed", {
-			value: foreign,
-			writable: false,
-			enumerable: true,
-			configurable: true,
-		});
-
-		expect(() => createMutableState(holder, { strict: false })).not.toThrow();
-
-		const state = createMutableState<{ box?: object }>({}, { strict: false });
-		const payload: Record<string, unknown> = {};
-
-		Object.defineProperty(payload, "sealed", {
-			value: foreign,
-			writable: false,
-			enumerable: true,
-			configurable: true,
-		});
-
-		expect(() => {
-			state.box = payload;
-		}).not.toThrow();
-	});
-
-	it("rejects a state root nested in a fresh subtree at the set trap", () => {
+	it("assigns a factory return nested in a fresh subtree", () => {
 		const foreign = createMutableState({ n: 1 });
-		const state = createMutableState<{ box?: object }>({});
+		const state = createMutableState<{ box?: { inner: object } }>({});
 
-		expect(() => {
-			state.box = { inner: foreign };
-		}).toThrow(rootMessage("/box/inner"));
+		state.box = { inner: foreign };
+
+		expect(state.box.inner).toBe(foreign);
 	});
 
 	it("still admits subtree sharing across states", () => {
@@ -1446,21 +1396,6 @@ describe("boundary: state root is not a tracked value", () => {
 		state.held = ignore(foreign);
 
 		expect(state.held).toBe(foreign);
-	});
-
-	it("names group, one-level-down, and ignore in the error", () => {
-		const state = createMutableState<{ self?: object }>({});
-		let message = "";
-
-		try {
-			state.self = state;
-		} catch (error) {
-			message = (error as Error).message;
-		}
-
-		expect(message).toContain("createGroup for composition across states");
-		expect(message).toContain("point one level down for a parent pointer");
-		expect(message).toContain("ignore(value) for a bare reference");
 	});
 });
 
@@ -1540,11 +1475,14 @@ describe("boundary: bare references and the sharing hint", () => {
 		expect(() => createMutableState({ held: ignore(foreign) }, { strict: false })).not.toThrow();
 	});
 
-	it("still rejects an unignored state root under both strictness settings", () => {
-		const foreign = createMutableState({ q: 1 });
+	it("admits an unignored factory return under both strictness settings", () => {
+		const strictForeign = createMutableState({ q: 1 });
+		const looseForeign = createMutableState({ q: 1 }, { strict: false });
+		const strict = createMutableState({ held: strictForeign });
+		const loose = createMutableState({ held: looseForeign }, { strict: false });
 
-		expect(() => createMutableState({ held: foreign })).toThrow("a state root");
-		expect(() => createMutableState({ held: foreign }, { strict: false })).toThrow("a state root");
+		expect(strict.held).toBe(strictForeign);
+		expect(loose.held).toBe(looseForeign);
 	});
 
 	it("admits an ignored state root assigned at the set trap", () => {

@@ -4,16 +4,9 @@ import { getRegisteredTarget } from "../identity";
 import { flagPossiblyShared } from "../ops/commitWalk";
 import { peelReadProxy } from "../peelReadProxy";
 import { getOptions, inheritOptions } from "../settings";
-import { isStateRoot } from "../stateRoots";
 import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
-import {
-	nonWritablePropertyError,
-	rejectionError,
-	snapshotDonationError,
-	stateRootValueError,
-	strictnessJoinError,
-} from "./boundaryErrors";
+import { nonWritablePropertyError, rejectionError, snapshotDonationError, strictnessJoinError } from "./boundaryErrors";
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
@@ -55,8 +48,6 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 
 	if (refSet.has(value)) return;
 
-	if (isStateRoot(rawTargetOf(value))) throw stateRootValueError(path);
-
 	for (const entry of walkDataEntries(value)) {
 		const child: unknown = entry.value;
 
@@ -82,8 +73,6 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		if (refSet.has(child)) continue;
 
 		if (proxyStateMap.has(child)) {
-			if (isStateRoot(rawTargetOf(child))) throw stateRootValueError(childPath);
-
 			continue;
 		}
 
@@ -261,9 +250,6 @@ export function installBoundary(): void {
 					}
 
 					if (typeof resolved === "object" && resolved !== null && !refSet.has(resolved)) {
-						if (isStateRoot(rawTargetOf(resolved)))
-							throw stateRootValueError(isInitializing() ? undefined : location);
-
 						if (proxyStateMap.has(resolved)) {
 							assertStrictnessJoin(resolved, strict, prop);
 						} else {

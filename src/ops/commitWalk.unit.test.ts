@@ -42,11 +42,54 @@ describe("createRouteIndex", () => {
 		expect(index.routesOf(stateA.held as object)).toEqual([]);
 	});
 
-	it("gives the root no addressable route, the empty path not being one", () => {
+	it("publishes the empty path as the tracked factory return's route", () => {
 		const state = createMutableState({ a: { n: 1 } });
 		const index = createRouteIndex(state);
 
+		expect(index.routesOf(state)).toEqual([createOperationPath([])]);
+	});
+
+	it("publishes no routes when the factory return is frozen", () => {
+		const state = createMutableState({ a: { n: 1 } });
+
+		Object.freeze(state);
+
+		const index = createRouteIndex(state);
+
 		expect(index.routesOf(state)).toEqual([]);
+		expect(index.routesOf(state.a)).toEqual([]);
+	});
+
+	it("publishes no routes when the factory return is ignored", () => {
+		const state = createMutableState({ a: { n: 1 } });
+		const child = state.a;
+
+		ignore(state);
+
+		const index = createRouteIndex(rawTargetOf(state));
+
+		expect(index.routesOf(rawTargetOf(state))).toEqual([]);
+		expect(index.routesOf(rawTargetOf(child))).toEqual([]);
+	});
+
+	it("records the empty path and the self segment after a self assignment", () => {
+		const state = createMutableState<{ self?: object }>({});
+
+		state.self = state;
+
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(state)).toEqual([createOperationPath([]), createOperationPath(["self"])]);
+	});
+
+	it("records the empty path and the back-edge after a child back-edge", () => {
+		const state = createMutableState<{ child: { back?: object } }>({ child: {} });
+
+		state.child.back = state;
+
+		const index = createRouteIndex(state);
+
+		expect(index.routesOf(state)).toEqual([createOperationPath([]), createOperationPath(["child", "back"])]);
 	});
 
 	it("is cycle-safe and records every simple route to the cycle node", () => {

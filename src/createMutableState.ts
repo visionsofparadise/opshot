@@ -1,8 +1,8 @@
 import { proxy } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { mintGroupedEmitter } from "./emit/emitterBare";
+import { registerHandle } from "./handle";
 import { getOptions, stampOptions, type MutableNodeOptions } from "./settings";
-import { markStateRoot } from "./stateRoots";
 import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";
 import { assertInitializerStrictnessJoins, assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 import { rejectionError } from "./valtio/boundaryErrors";
@@ -53,9 +53,13 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	const receiverOptions = getOptions(base);
 
 	assertInitializerStrictnessJoins(properties, receiverOptions?.strict !== false);
-	markStateRoot(base);
 
-	const proxied = proxy(base);
+	const handle = { root: base };
+	const proxiedHandle = proxy(handle);
+
+	registerHandle(base, proxiedHandle);
+
+	const proxied = proxiedHandle.root;
 
 	if (options?.group !== undefined) {
 		mintGroupedEmitter(proxied, getGroupChain(options.group));

@@ -144,14 +144,14 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 	});
 
-	it("refuses root operations with the named message", () => {
+	it("assign and delete at the empty path do not resolve", () => {
 		const state = createMutableState({ count: 0 });
 
 		expect(() => applyOperations(state, [asPair(createAssignMutation([], { count: 1 }))], "do")).toThrow(
-			"opshot: root operations are not supported",
+			"opshot: / does not resolve to a supported operation address",
 		);
 		expect(() => applyOperations(state, [asPair(createDeleteMutation([]))], "do")).toThrow(
-			"opshot: root operations are not supported",
+			"opshot: / does not resolve to a supported operation address",
 		);
 		expect(state.count).toBe(0);
 	});
@@ -1008,12 +1008,14 @@ describe("applyOperations: link halves", () => {
 		expect(() => resolveRefValue(state, ["shared", "n"], link)).toThrow("resolves to a non-object");
 	});
 
-	it("refuses a root-addressing empty ref, naming both paths", () => {
-		const state = createMutableState({ shared: { n: 1 } });
+	it("resolves an empty ref to the apply write-proxy", () => {
+		const state = createMutableState<{ shared: { n: number }; alias?: object }>({ shared: { n: 1 } });
 
-		expect(() => resolveRefValue(state, [], ["alias"])).toThrow(
-			"opshot: link at /alias with ref / does not address a supported operation target",
-		);
+		expect(resolveRefValue(state, [], ["alias"])).toBe(state);
+
+		applyOperations(state, [{ do: createLinkMutation(["alias"], []), undo: createDeleteMutation(["alias"]) }], "do");
+
+		expect(state.alias).toBe(state);
 	});
 
 	it("establishes sharing on a plain target", () => {

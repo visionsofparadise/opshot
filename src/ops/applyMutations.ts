@@ -149,7 +149,7 @@ const resolveTraversalSegment = (parent: unknown, segment: unknown, path: Operat
 };
 
 const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal => {
-	if (path.length === 0) throw new Error("opshot: root operations are not supported");
+	if (path.length === 0) throw unresolvedError(path);
 
 	let parent: unknown = root;
 
@@ -161,7 +161,7 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 };
 
 export const resolveRefValue = (root: object, ref: OperationPath, linkPath: OperationPath): object => {
-	if (ref.length === 0) throw linkError(linkPath, ref, "does not address a supported operation target");
+	if (ref.length === 0) return root;
 
 	let current: unknown = root;
 

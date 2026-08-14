@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
+import { peelReadProxy } from "../peelReadProxy";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
 import { isReadProxy } from "./readTracker";
@@ -495,7 +496,7 @@ describe("useMutableState", () => {
 		expect(controlSaves).toEqual(["hello"]);
 	});
 
-	it("rejects assigning a state-root readProxy into another state", () => {
+	it("assigns a factory-return read-proxy into another state", () => {
 		interface Held {
 			nested: { n: number };
 		}
@@ -522,15 +523,13 @@ describe("useMutableState", () => {
 
 		const assigned = readProxy;
 
-		expect(() => {
-			act(() => {
-				transact(holder, () => {
-					holder.current = assigned;
-				});
+		act(() => {
+			transact(holder, () => {
+				holder.current = assigned;
 			});
-		}).toThrow("a state root");
+		});
 
-		expect(holder).not.toHaveProperty("current");
+		expect(holder.current).toBe(peelReadProxy(assigned));
 	});
 
 	it("resolves a nested readProxy assigned into another state to its writeProxy", () => {

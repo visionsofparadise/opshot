@@ -1,4 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { handleOf } from "../handle";
 import { walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { isPlainArray } from "./cloneValue";
@@ -38,12 +39,28 @@ export const createRouteIndex = (root: object): RouteIndex => {
 	const firstRouteMemo = new Map<object, OperationPath>();
 	const routesMemo = new Map<object, ReadonlyArray<OperationPath>>();
 	const shared = new Set<object>();
-	const rootLive = rawTargetOf(root);
-
-	inEdges.set(rootLive, []);
+	const handle = handleOf(root);
+	const publishedOrigin = rawTargetOf(root);
+	const publishedFromHandle: unknown = handle !== undefined ? (handle as { root: unknown }).root : undefined;
+	const publishedOriginTracked =
+		handle !== undefined
+			? typeof publishedFromHandle === "object" &&
+				publishedFromHandle !== null &&
+				admissionLane(publishedFromHandle) !== "untracked"
+			: admissionLane(root) !== "untracked";
 
 	const visit = (node: object): void => {
 		const live = rawTargetOf(node);
+
+		if (handle !== undefined && live === rawTargetOf(handle)) {
+			const published: unknown = (node as { root: unknown }).root;
+
+			if (typeof published === "object" && published !== null && admissionLane(published) !== "untracked") {
+				visit(published);
+			}
+
+			return;
+		}
 
 		if (expanded.has(live)) return;
 
@@ -72,9 +89,15 @@ export const createRouteIndex = (root: object): RouteIndex => {
 		}
 	};
 
-	visit(root);
+	if (handle !== undefined) {
+		visit(handle);
+	} else if (publishedOriginTracked) {
+		visit(root);
+	}
 
 	const firstRouteOf = (live: object): OperationPath => {
+		if (live === publishedOrigin && publishedOriginTracked) return createOperationPath([]);
+
 		const memoized = firstRouteMemo.get(live);
 
 		if (memoized !== undefined) return memoized;
@@ -96,6 +119,24 @@ export const createRouteIndex = (root: object): RouteIndex => {
 			const memoized = routesMemo.get(key);
 
 			if (memoized !== undefined) return memoized;
+
+			if (key === publishedOrigin) {
+				if (!publishedOriginTracked) {
+					routesMemo.set(key, NO_ROUTES);
+
+					return NO_ROUTES;
+				}
+
+				const originEdges = inEdges.get(key) ?? [];
+				const routes = [
+					createOperationPath([]),
+					...originEdges.map((edge) => createOperationPath([...firstRouteOf(edge.parentLive), edge.segment])),
+				];
+
+				routesMemo.set(key, routes);
+
+				return routes;
+			}
 
 			const edges = inEdges.get(key);
 

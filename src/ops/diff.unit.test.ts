@@ -817,24 +817,54 @@ describe("diffObjects: cyclic values", () => {
 		},
 	];
 
-	it("rejects a root self-cycle at formation time", () => {
+	it("mints a self-cycle as a link with an empty ref", () => {
 		const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
+		const heard = record(state);
 
-		expect(() => {
+		transact(state, () => {
 			state.self = state;
-		}).toThrow("a state root");
+		});
 
-		expect(state).not.toHaveProperty("self");
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["self"], ref: [] });
+		expect(state.self).toBe(state);
+
+		const delivered = heard[0] ?? [];
+		const replica = createMutableState<{ n: number; self?: object }>({ n: 1 });
+
+		expect(() => applyOperations(replica, projectTransport(delivered), "do")).not.toThrow();
+		expect(replica.self).toBe(replica);
+
+		replayUndo(state, delivered);
+		expect(state.self).toBeUndefined();
+
+		replayDo(state, delivered);
+		expect(state.self).toBe(state);
 	});
 
-	it("rejects a back-link to the root at formation time", () => {
+	it("mints a back-edge to the factory return as a link with an empty ref", () => {
 		const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
+		const heard = record(state);
 
-		expect(() => {
+		transact(state, () => {
 			state.child.back = state;
-		}).toThrow("a state root");
+		});
 
-		expect(state.child).not.toHaveProperty("back");
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["child", "back"], ref: [] });
+		expect(state.child.back).toBe(state);
+
+		const delivered = heard[0] ?? [];
+		const replica = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
+
+		expect(() => applyOperations(replica, projectTransport(delivered), "do")).not.toThrow();
+		expect(replica.child.back).toBe(replica);
+
+		replayUndo(state, delivered);
+		expect(state.child.back).toBeUndefined();
+
+		replayDo(state, delivered);
+		expect(state.child.back).toBe(state);
 	});
 
 	it.each(formations.map((formation) => [formation.name, formation] as const))(
