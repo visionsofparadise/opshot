@@ -222,10 +222,8 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		const state = createMutableState({ count: 0 });
 		const copied = { ...createAssignMutation(["count"], 2) };
 
-		expect(() =>
-			applyOperations(state, [asPair(createAssignMutation(["count"], 1)), asPair(copied as Mutation)], "do"),
-		).toThrow("this op is a copy");
-		expect(state.count).toBe(0);
+		applyOperations(state, [asPair(createAssignMutation(["count"], 1)), asPair(copied as Mutation)], "do");
+		expect(state.count).toBe(2);
 	});
 
 	it("rejects bare halves; accepts branded-half Operation pairs", () => {
@@ -239,7 +237,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		applyOperations(state, [{ do: half, undo: createDeleteMutation(["count"]) }], "do");
 		expect(state.count).toBe(1);
 
-		expect(() => applyOperations(state, [{ do: half } as unknown as Operation], "do")).toThrow("this op is a copy");
+		expect(() => applyOperations(state, [{ do: half } as unknown as Operation], "do")).toThrow(
+			"opshot: applyOperations applies well-formed { do, undo } pairs",
+		);
 	});
 
 	it("restores Map membership through plain index/slots/count ops", () => {
@@ -347,9 +347,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		held.extra = true;
 		shared.count = 9;
 
-		const op = heard[0]?.[0];
-		if (!op) throw new Error("missing undo");
-		applyOperations(state, [op], "undo");
+		const ops = heard[0] ?? [];
+		if (ops.length === 0) throw new Error("missing undo");
+		applyOperations(state, ops, "undo");
 
 		const restored = state.item;
 		if (!restored) throw new Error("missing restored item");
@@ -1151,7 +1151,7 @@ describe("applyOperations: link halves", () => {
 		).toThrow("link at /list/length with ref /shared cannot address array length");
 	});
 
-	it("still refuses a spread assign half while accepting a well-formed unbranded link half", () => {
+	it("applies a spread assign half and a well-formed unbranded link half", () => {
 		const state = createMutableState<{ shared: { n: number }; count: number; alias?: { n: number } }>({
 			shared: { n: 1 },
 			count: 0,
@@ -1159,12 +1159,21 @@ describe("applyOperations: link halves", () => {
 		const copiedAssign = { ...createAssignMutation(["count"], 2) };
 		const copiedLink = { ...createLinkMutation(["alias"], ["shared"]) };
 
-		expect(() =>
-			applyOperations(state, [{ do: copiedAssign as Mutation, undo: createDeleteMutation(["count"]) }], "do"),
-		).toThrow("this op is a copy");
-		expect(state.count).toBe(0);
-
+		applyOperations(state, [{ do: copiedAssign as Mutation, undo: createDeleteMutation(["count"]) }], "do");
 		applyOperations(state, [{ do: copiedLink as LinkMutation, undo: createDeleteMutation(["alias"]) }], "do");
+		expect(state.count).toBe(2);
 		expect(state.alias).toBe(state.shared);
+	});
+
+	it("applies JSON.parse of JSON.stringify of a branded assign and delete pair", () => {
+		const state = createMutableState<{ count: number; gone?: number }>({ count: 0, gone: 1 });
+		const ops = [
+			{ do: createAssignMutation(["count"], 2), undo: createAssignMutation(["count"], 0) },
+			{ do: createDeleteMutation(["gone"]), undo: createAssignMutation(["gone"], 1) },
+		];
+
+		applyOperations(state, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
+		expect(state.count).toBe(2);
+		expect(Object.hasOwn(state, "gone")).toBe(false);
 	});
 });

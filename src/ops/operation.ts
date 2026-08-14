@@ -105,19 +105,15 @@ abstract class OperationHalf {
 
 Object.defineProperty(OperationHalf.prototype, operationBrand, { value: true });
 
-abstract class ValueHalf extends OperationHalf {
-	get value(): unknown {
-		return cloneValue(valueOriginals.get(this), new WeakMap(), this.path);
-	}
-
-	constructor(path: OperationPath, value: unknown) {
-		super(path);
-		valueOriginals.set(this, value);
-	}
-}
-
-class AssignHalf extends ValueHalf {
+class AssignHalf extends OperationHalf {
 	readonly verb = "assign";
+	readonly value: unknown;
+
+	constructor(path: OperationPath, value: unknown, original: unknown = value) {
+		super(path);
+		valueOriginals.set(this, original);
+		this.value = cloneValue(value, new WeakMap(), this.path);
+	}
 }
 
 class DeleteHalf extends OperationHalf {
@@ -139,8 +135,11 @@ export const isMutation = (value: unknown): value is Mutation =>
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
-export const createAssignMutation = (path: OperationPath, value: unknown): AssignMutation =>
-	new AssignHalf(path, value);
+export const createAssignMutation = (
+	path: OperationPath,
+	value: unknown,
+	original: unknown = value,
+): AssignMutation => new AssignHalf(path, value, original);
 
 export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);
 

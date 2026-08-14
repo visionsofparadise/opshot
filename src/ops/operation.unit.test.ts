@@ -18,24 +18,31 @@ import { shapeHalf } from "./operationShape";
 const readValue = (half: Mutation): unknown => ("value" in half ? half.value : undefined);
 
 describe("operation", () => {
-	it("mints a fresh equal clone on every read of a cloneable value", () => {
+	it("stores an own enumerable clone and keeps the original in the side table", () => {
 		const original = { nested: { x: 1 }, list: [1, 2] };
 		const half = createAssignMutation(["node"], original);
+		const descriptor = Object.getOwnPropertyDescriptor(half, "value");
 
-		expect(readValue(half)).not.toBe(readValue(half));
-		expect(readValue(half)).toEqual(original);
+		expect(descriptor).toEqual({ value: half.value, writable: true, enumerable: true, configurable: true });
+		expect(half.value).toEqual(original);
+		expect(half.value).not.toBe(original);
+		expect(half.value).toBe(readValue(half));
 		expect(getValueOriginal(half)).toBe(original);
+		expect(JSON.parse(JSON.stringify(half))).toEqual({
+			verb: "assign",
+			path: ["node"],
+			value: { nested: { x: 1 }, list: [1, 2] },
+		});
 	});
 
-	it("reads non-cloneable values through the prototype accessor with no own value descriptor", () => {
+	it("stores a non-cloneable as own enumerable data", () => {
 		const run = (): string => "a";
 		const half = createAssignMutation(["run"], run);
+		const descriptor = Object.getOwnPropertyDescriptor(half, "value");
 
-		expect(half.value).toBe(run);
-		expect(Object.getOwnPropertyDescriptor(half, "value")).toBeUndefined();
-		expect("value" in half).toBe(true);
-		expect({ ...half }).not.toHaveProperty("value");
-		expect(JSON.parse(JSON.stringify(half))).not.toHaveProperty("value");
+		expect(descriptor?.value).toBe(run);
+		expect(descriptor?.enumerable).toBe(true);
+		expect({ ...half }).toHaveProperty("value", run);
 	});
 
 	it("stores a frozen copied path on every half", () => {
@@ -92,15 +99,6 @@ describe("operation", () => {
 		expect(publicValue).not.toBe(state.value);
 		if (typeof publicValue !== "object" || publicValue === null) throw new Error("expected cloned value");
 		expect(getRegisteredTarget(publicValue)).toBeUndefined();
-	});
-
-	it("brands originals and rejects spread, JSON, and structuredClone copies", () => {
-		const half = createAssignMutation(["node"], { nested: true });
-
-		expect(isMutation(half)).toBe(true);
-		expect(isMutation({ ...half })).toBe(false);
-		expect(isMutation(JSON.parse(JSON.stringify(half)))).toBe(false);
-		expect(isMutation(structuredClone(half))).toBe(false);
 	});
 
 	it("keeps halves branded through an envelope spread", () => {

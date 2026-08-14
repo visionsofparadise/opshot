@@ -1419,6 +1419,7 @@ describe("diffObjects: cyclic values", () => {
 			state.node = node;
 		});
 
+		const held = state.node;
 		const heard = record(state);
 
 		transact(state, () => {
@@ -1435,6 +1436,7 @@ describe("diffObjects: cyclic values", () => {
 		]);
 
 		applyOperations(state, heard[0] ?? [], "undo");
+		expect(state.node).toBe(held);
 		expect(state.node?.self).toBe(state.node);
 	});
 
@@ -1518,24 +1520,42 @@ describe("diffObjects: cyclic values", () => {
 			state.b = state.a;
 		});
 
-		const wire = JSON.stringify(shapeOps(heard[0] ?? []));
-		const revived = (
-			JSON.parse(wire) as Array<{ do: ReturnType<typeof shapeHalf>; undo: ReturnType<typeof shapeHalf> }>
-		).map((pair) => {
-			const project = (half: ReturnType<typeof shapeHalf>): Mutation => {
-				if (half.verb === "link") return createLinkMutation(half.path, half.ref ?? []);
-
-				if (half.verb === "delete") return createDeleteMutation(half.path);
-
-				return createAssignMutation(half.path, half.value);
-			};
-
-			return { do: project(pair.do), undo: project(pair.undo) };
-		});
+		const revived = JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>;
 		const replica = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: { n: 1 } });
 
 		applyOperations(replica, revived, "do");
 		expect(replica.b).toBe(replica.a);
+	});
+
+	it("JSON-round-trips a JSON-serializable state's assign, delete, and cycle stream", () => {
+		const state = createMutableState<{
+			a: { n: number };
+			b?: { n: number };
+			extra?: number;
+			cycle?: { self?: object };
+		}>({ a: { n: 1 }, extra: 1 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.b = state.a;
+			delete state.extra;
+			const cycle: { self?: object } = {};
+
+			cycle.self = cycle;
+			state.cycle = cycle;
+		});
+
+		const replica = createMutableState<{
+			a: { n: number };
+			b?: { n: number };
+			extra?: number;
+			cycle?: { self?: object };
+		}>({ a: { n: 1 }, extra: 1 });
+
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+		expect(replica.b).toBe(replica.a);
+		expect(Object.hasOwn(replica, "extra")).toBe(false);
+		expect(replica.cycle?.self).toBe(replica.cycle);
 	});
 
 	it("mints a link undo for an init-time alias overwrite", () => {

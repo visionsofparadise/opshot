@@ -1,5 +1,6 @@
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { walkDataEntries } from "../utils/dataEntries";
+import { cloneValue } from "./cloneValue";
 import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndex, isCanonicalArrayIndexString, isObjectLike, MAX_ARRAY_LENGTH } from "./predicates";
@@ -71,16 +72,15 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 };
 
 const getValuePayload = (operation: AssignMutation): ValuePayload => {
-	const original = getValueOriginal(operation);
+	const original = getValueOriginal(operation) ?? operation.value;
 
-	if (original !== undefined) {
-		if (isObjectLike(original) && getRegisteredTarget(original) !== undefined)
-			return { recorded: original, fallback: undefined };
+	if (isObjectLike(original) && getRegisteredTarget(original) !== undefined)
+		return { recorded: original, fallback: undefined };
 
-		return { recorded: original, fallback: operation.value };
-	}
-
-	return { recorded: operation.value, fallback: operation.value };
+	return {
+		recorded: original,
+		fallback: isObjectLike(original) ? cloneValue(original, new WeakMap(), operation.path) : original,
+	};
 };
 
 const restoreValue = (payload: ValuePayload, attach: (value: unknown) => void, readAttached: () => unknown): void => {

@@ -350,7 +350,16 @@ const recordFirstMint = (context: DiffContext, live: object, path: OperationPath
 
 const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): DiffResult =>
 	mergeResults([
-		commitOperation(context, context.ops.length, path, additionPair(path, emptyContainerOf(after)), weighCarried),
+		commitOperation(
+			context,
+			context.ops.length,
+			path,
+			{
+				do: createAssignMutation(path, emptyContainerOf(after), after),
+				undo: createDeleteMutation(path),
+			},
+			weighCarried,
+		),
 		mintDecomposedContents(context, path, after),
 	]);
 
@@ -374,7 +383,16 @@ const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before
 	}
 
 	results.push(
-		commitOperation(context, context.ops.length, path, removalPair(path, emptyContainerOf(before)), weighCarried),
+		commitOperation(
+			context,
+			context.ops.length,
+			path,
+			{
+				do: createDeleteMutation(path),
+				undo: createAssignMutation(path, emptyContainerOf(before), before),
+			},
+			weighCarried,
+		),
 	);
 
 	return mergeResults(results);
@@ -394,7 +412,10 @@ const mintDecomposedChange = (context: DiffContext, path: OperationPath, before:
 			context,
 			context.ops.length,
 			path,
-			changePair(path, before, emptyContainerOf(after)),
+			{
+				do: createAssignMutation(path, emptyContainerOf(after), after),
+				undo: createAssignMutation(path, before),
+			},
 			weighCarried,
 		),
 		mintDecomposedContents(context, path, after),

@@ -17,7 +17,25 @@ const isWellFormedLinkHalf = (value: unknown): boolean =>
 	isFrozenCopyablePath(value.path) &&
 	isFrozenCopyablePath(value.ref);
 
-const isApplicableHalf = (value: unknown): boolean => isMutation(value) || isWellFormedLinkHalf(value);
+const isWellFormedDeleteHalf = (value: unknown): boolean =>
+	typeof value === "object" &&
+	value !== null &&
+	"verb" in value &&
+	value.verb === "delete" &&
+	"path" in value &&
+	isFrozenCopyablePath(value.path);
+
+const isWellFormedAssignHalf = (value: unknown): boolean =>
+	typeof value === "object" &&
+	value !== null &&
+	"verb" in value &&
+	value.verb === "assign" &&
+	"value" in value &&
+	"path" in value &&
+	isFrozenCopyablePath(value.path);
+
+const isApplicableHalf = (value: unknown): boolean =>
+	isMutation(value) || isWellFormedLinkHalf(value) || isWellFormedDeleteHalf(value) || isWellFormedAssignHalf(value);
 
 const assertApplicable: (operation: unknown) => asserts operation is Operation = (operation) => {
 	if (isMutation(operation)) {
@@ -32,9 +50,7 @@ const assertApplicable: (operation: unknown) => asserts operation is Operation =
 		!isApplicableHalf(operation.do) ||
 		!isApplicableHalf(operation.undo)
 	) {
-		throw new Error(
-			"opshot: this op is a copy (spread, JSON, or structuredClone) and has lost its value. Apply the op objects the listener delivered; never copy them.",
-		);
+		throw new Error("opshot: applyOperations applies well-formed { do, undo } pairs");
 	}
 };
 
