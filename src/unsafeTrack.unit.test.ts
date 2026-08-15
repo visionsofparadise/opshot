@@ -1,10 +1,10 @@
 import { subscribe } from "./subscribe";
 import { transact } from "./transact/transact";
 import { createMutableState } from "./createMutableState";
+import { isSameIdentity } from "./identity";
 import { ignore } from "./ignore";
-import { applyOperations } from "./ops/applyOperations";
 import { type Operation } from "./ops/operation";
-import { isUnsafeTracked, unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
+import { unsafeTrack, type UnsafeTracked } from "./unsafeTrack";
 import { admissionLane } from "./valtio/classify";
 import { shapeOps } from "./ops/operationShape";
 
@@ -19,15 +19,11 @@ const recordOwned = <T extends object>(state: T): Array<Array<Operation>> => {
 };
 
 describe("unsafeTrack", () => {
-	it("registers a value so isUnsafeTracked reads it, and returns the same reference", () => {
+	it("returns the same reference", () => {
 		const value = { x: 1 };
 		const tracked = unsafeTrack(value);
 
 		expect(tracked).toBe(value);
-		expect(isUnsafeTracked(tracked)).toBe(true);
-		expect(isUnsafeTracked(value)).toBe(true);
-		expect(isUnsafeTracked({ x: 1 })).toBe(false);
-		expect(isUnsafeTracked(null)).toBe(false);
 	});
 
 	it("UnsafeTracked<T> types a field in an explicit interface without erasing the marker", () => {
@@ -38,16 +34,15 @@ describe("unsafeTrack", () => {
 		const payload = unsafeTrack({ x: 1 });
 		const holder: Holder = { payload };
 
-		expect(isUnsafeTracked(holder.payload)).toBe(true);
 		expect(holder.payload.x).toBe(1);
 
 		// @ts-expect-error a bare T is not UnsafeTracked
 		const erased: Holder = { payload: { x: 2 } };
 
-		expect(isUnsafeTracked(erased.payload)).toBe(false);
+		expect(erased.payload.x).toBe(2);
 	});
 
-	it("marks the value tracked without putting it in refSet", () => {
+	it("does not change classify because a wrap is pending", () => {
 		class PrivateBox {
 			#secret = 1;
 			public x = 0;
@@ -62,8 +57,74 @@ describe("unsafeTrack", () => {
 
 		unsafeTrack(box);
 
-		expect(admissionLane(box)).toBe("tracked");
-		expect(admissionLane(ignore({ y: 1 }))).toBe("untracked");
+		expect(admissionLane(box)).toBe("dangerous");
+		expect(admissionLane(ignore({ y: 1 }))).toBe("tracked");
+	});
+});
+
+describe("unsafeTrack occupancy", () => {
+	it("A.foo = unsafeTrack(map) then B.foo = map refuses on strict B", async () => {
+		const map = new Map<string, number>();
+		const stateA = createMutableState<{ foo: Map<string, number> | null }>({ foo: null });
+		const errors = new Array<unknown>();
+		const emitOn = (flush: () => void): void => {
+			try {
+				flush();
+			} catch (error) {
+				errors.push(error);
+			}
+		};
+
+		stateA.foo = unsafeTrack(map);
+		await Promise.resolve();
+
+		const stateB = createMutableState<{ foo: Map<string, number> | null }>({ foo: null }, { emitOn });
+
+		stateB.foo = map;
+		await Promise.resolve();
+
+		expect(isSameIdentity(stateA.foo, map)).toBe(true);
+		expect(stateB.foo).toBe(map);
+		expect(errors[0]).toBeInstanceOf(Error);
+		expect(String(errors[0])).toContain("Map at /foo cannot be tracked");
+	});
+
+	it("leave-and-return needs a new wrap", async () => {
+		const map = new Map<string, number>();
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ foo: Map<string, number> | unknown }>(
+			{ foo: null },
+			{
+				emitOn: (flush) => {
+					try {
+						flush();
+					} catch (error) {
+						errors.push(error);
+					}
+				},
+			},
+		);
+
+		state.foo = unsafeTrack(map);
+		await Promise.resolve();
+		expect(errors).toHaveLength(0);
+
+		state.foo = { n: 1 };
+		await Promise.resolve();
+		expect(errors).toHaveLength(0);
+
+		state.foo = map;
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+		expect(String(errors[0])).toContain("Map at /foo cannot be tracked");
+
+		errors.length = 0;
+		state.foo = unsafeTrack(map);
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(0);
+		expect(typeof state.foo === "object" && state.foo !== null && isSameIdentity(state.foo, map)).toBe(true);
 	});
 });
 
@@ -103,7 +164,7 @@ describe("unsafeTrack stories", () => {
 		expect(arrow.count).toBe(6);
 	});
 
-	it("attaches an unsafeTrack'd #private class; whole-instance undo drops private state", () => {
+	it("attaches an unsafeTrack'd #private class and writes public fields", () => {
 		class Vault {
 			#secret = 7;
 			public label = "a";
@@ -118,39 +179,13 @@ describe("unsafeTrack stories", () => {
 		expect(vault.reveal()).toBe(7);
 
 		const state = createMutableState({ vault });
-		const heard = recordOwned(state);
 
 		transact(state, () => {
 			state.vault.label = "b";
 		});
 
-		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["vault", "label"], value: "b" });
 		expect(state.vault.label).toBe("b");
 		expect(() => state.vault.reveal()).toThrow();
 		expect(vault.reveal()).toBe(7);
-
-		heard.length = 0;
-
-		const replacement = unsafeTrack(new Vault());
-
-		transact(state, () => {
-			state.vault = replacement;
-		});
-
-		expect(heard).toHaveLength(1);
-
-		const replaceOp = heard[0]![0]!;
-
-		expect(replaceOp.do.verb).toBe("assign");
-		expect(replaceOp.do.path).toEqual(["vault"]);
-
-		applyOperations(state, [replaceOp], "undo");
-
-		const restored = state.vault;
-
-		expect(restored).toBeInstanceOf(Vault);
-		expect(restored.label).toBe("b");
-		expect(() => restored.reveal()).toThrow();
 	});
 });

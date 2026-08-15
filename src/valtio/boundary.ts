@@ -1,12 +1,14 @@
 import { getUntracked } from "proxy-compare";
-import { unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
+import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
+import { handlesOf } from "../handle";
 import { getRegisteredTarget } from "../identity";
+import { pendingIgnore } from "../ignore";
+import { recordPendingOccupancy } from "../occupancy";
 import { flagPossiblyShared } from "../ops/commitWalk";
 import { peelReadProxy } from "../peelReadProxy";
-import { getOptions, inheritOptions } from "../settings";
-import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
+import { pendingUnsafe } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
-import { nonWritablePropertyError, rejectionError, snapshotDonationError, strictnessJoinError } from "./boundaryErrors";
+import { nonWritablePropertyError, rejectionError, snapshotDonationError } from "./boundaryErrors";
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
@@ -14,7 +16,13 @@ const { proxyStateMap, proxyCache, refSet } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
+const setTargetStack = new Array<object>();
+
+const currentSetParentOf = (): object | undefined => setTargetStack[setTargetStack.length - 1];
+
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>): AdmissionLane => {
+	if (pendingIgnore.has(value) || pendingUnsafe.has(value)) return admissionDecision(value).lane;
+
 	const decision = admissionDecision(value);
 
 	if (decision.lane === "dangerous") throw rejectionError(value, decision.kind, path);
@@ -46,7 +54,7 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 
 	visits.add(value);
 
-	if (refSet.has(value)) return;
+	if (refSet.has(value) || pendingIgnore.has(value)) return;
 
 	for (const entry of walkDataEntries(value)) {
 		const child: unknown = entry.value;
@@ -54,7 +62,7 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		if (
 			mode === "admission" &&
 			classifyValue(value) === "cleanClass" &&
-			!isUnsafeTracked(value) &&
+			!pendingUnsafe.has(value) &&
 			typeof child === "function"
 		)
 			throw rejectionError(value, "cleanClass", [...path, entry.key]);
@@ -64,19 +72,25 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 		const childPath = [...path, entry.key];
 
 		if (!entry.writable) {
-			if (mode === "admission" && admissionLane(child) !== "untracked")
+			if (mode === "admission" && !pendingIgnore.has(child) && admissionLane(child) !== "untracked")
 				throw nonWritablePropertyError(child, childPath);
 
 			continue;
 		}
 
-		if (refSet.has(child)) continue;
+		if (refSet.has(child) || pendingIgnore.has(child)) continue;
 
 		if (proxyStateMap.has(child)) {
 			continue;
 		}
 
 		if (mode === "admission") {
+			if (pendingUnsafe.has(child)) {
+				walkDataPaths(child, childPath, visits, mode);
+
+				continue;
+			}
+
 			if (certifyAdmission(child, childPath) === "tracked") walkDataPaths(child, childPath, visits, mode);
 
 			continue;
@@ -95,48 +109,6 @@ export const assertSafeDataPaths = (
 	mode: DataPathWalkMode = "admission",
 ): void => {
 	walkDataPaths(value, path, visits, mode);
-};
-
-const stampedStrictOf = (target: object): boolean => getOptions(target)?.strict !== false;
-
-const isMarkedUnsafe = (value: object): boolean => isUnsafeTracked(value) || isUnsafeTracked(rawTargetOf(value));
-
-const assertStrictnessJoin = (resolved: object, receiverStrict: boolean, key: string | symbol): void => {
-	const incomingTarget = rawTargetOf(resolved);
-
-	if (stampedStrictOf(incomingTarget) === receiverStrict) return;
-
-	if (isMarkedUnsafe(resolved)) return;
-
-	if (!stampedStrictOf(incomingTarget)) return;
-
-	throw strictnessJoinError(key);
-};
-
-export const assertInitializerStrictnessJoins = (value: unknown, receiverStrict: boolean): void => {
-	const visits = new Set<object>();
-
-	const walk = (current: unknown, path: Array<string>): void => {
-		if (typeof current !== "object" || current === null) return;
-
-		if (visits.has(current)) return;
-
-		visits.add(current);
-
-		if (refSet.has(current)) return;
-
-		if (proxyStateMap.has(current)) {
-			assertStrictnessJoin(current, receiverStrict, path[path.length - 1] ?? "");
-
-			return;
-		}
-
-		for (const entry of walkDataEntries(current)) {
-			walk(entry.value, [...path, entry.key]);
-		}
-	};
-
-	walk(value, []);
 };
 
 const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
@@ -197,6 +169,24 @@ const refusesWrite = (target: object, property: string | symbol, value: unknown)
 	return !Object.isExtensible(target);
 };
 
+export function canProxy(value: unknown, parentTarget?: object): boolean {
+	if (typeof value !== "object" || value === null) return false;
+
+	if (pendingIgnore.has(value)) return false;
+
+	if (admissionLane(value) === "tracked") return true;
+
+	if (pendingUnsafe.has(value)) return true;
+
+	if (proxyStateMap.has(value)) return true;
+
+	if (parentTarget === undefined) return false;
+
+	const handles = handlesOf(parentTarget);
+
+	return handles.length === 1 && handles[0]?.strict === false && admissionLane(value) === "dangerous";
+}
+
 let installed = false;
 
 export function installBoundary(): void {
@@ -204,11 +194,7 @@ export function installBoundary(): void {
 
 	installed = true;
 
-	unstable_replaceInternalFunction("canProxy", () => (value) => {
-		if (typeof value !== "object" || value === null) return false;
-
-		return certifyAdmission(value) === "tracked";
-	});
+	unstable_replaceInternalFunction("canProxy", () => (value) => canProxy(value, currentSetParentOf()));
 
 	unstable_replaceInternalFunction("createSnapshot", () => createSnapshotPreservingAccessors);
 
@@ -229,58 +215,53 @@ export function installBoundary(): void {
 
 					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 
-					const location = typeof prop === "string" ? [prop] : [];
-					const receiverOptions = getOptions(target);
-					const strict = receiverOptions?.strict !== false;
-					const receiverKind = classifyValue(target);
+					const previous: unknown = Reflect.get(target, prop, receiver);
 
-					if (
-						!isInitializing() &&
-						strict &&
-						!isMarkedUnsafe(target) &&
-						receiverKind !== "plain" &&
-						receiverKind !== "plainArray" &&
-						typeof resolved === "function" &&
-						typeof prop === "string"
-					) {
-						const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
+					setTargetStack.push(target);
 
-						if (descriptor === undefined || descriptor.enumerable === true)
-							throw rejectionError(target, receiverKind, [prop]);
-					}
-
-					if (typeof resolved === "object" && resolved !== null && !refSet.has(resolved)) {
-						if (proxyStateMap.has(resolved)) {
-							assertStrictnessJoin(resolved, strict, prop);
-						} else {
-							const decision = admissionDecision(resolved);
-
-							if (strict && !isInitializing() && decision.lane === "tracked")
-								assertSafeDataPaths(resolved, location, new Set());
-
+					try {
+						if (typeof resolved === "object" && resolved !== null) {
 							if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
-							inheritOptions(target, resolved);
+							const ignoreWrap = pendingIgnore.has(resolved);
+							const unsafeWrap = !ignoreWrap && pendingUnsafe.has(resolved);
+							const alreadyTracked = proxyStateMap.has(resolved) || proxyCache.has(resolved);
 
-							if (decision.lane === "dangerous") {
-								if (receiverOptions?.strict === false) unsafeTrack(resolved);
-								else throw rejectionError(resolved, decision.kind, isInitializing() ? undefined : location);
+							if (refusesWrite(target, prop, resolved)) return false;
+
+							const instrumented = !alreadyTracked && canProxy(resolved, target) ? proxy(resolved) : resolved;
+
+							const result = defaultSet(target, prop, instrumented, receiver);
+
+							if (ignoreWrap || unsafeWrap) {
+								const stored: unknown = Reflect.get(target, prop);
+
+								if (typeof stored === "object" && stored !== null) {
+									recordPendingOccupancy(target, prop, rawTargetOf(stored), ignoreWrap ? "ignore" : "unsafe");
+								}
+
+								if (ignoreWrap) pendingIgnore.delete(resolved);
+
+								if (unsafeWrap) pendingUnsafe.delete(resolved);
+
+								if (Object.is(previous, stored) || Object.is(previous, resolved)) {
+									notifyUpdate(["set", [prop], resolved, previous]);
+								}
 							}
+
+							if (!refSet.has(resolved) && alreadyTracked) {
+								flagPossiblyShared(resolved);
+							}
+
+							return result;
 						}
+
+						if (refusesWrite(target, prop, resolved)) return false;
+
+						return defaultSet(target, prop, resolved, receiver);
+					} finally {
+						setTargetStack.pop();
 					}
-
-					if (refusesWrite(target, prop, resolved)) return false;
-
-					if (
-						typeof resolved === "object" &&
-						resolved !== null &&
-						!refSet.has(resolved) &&
-						(proxyStateMap.has(resolved) || proxyCache.has(resolved))
-					) {
-						flagPossiblyShared(resolved);
-					}
-
-					return defaultSet(target, prop, resolved, receiver);
 				},
 				deleteProperty(target, prop) {
 					return defaultDelete(target, prop);

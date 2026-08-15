@@ -8,8 +8,8 @@ describe("admissionLane", () => {
 		expect(admissionLane(() => 1)).toBe("leaf");
 	});
 
-	it("classifies ignore() and freeze as untracked", () => {
-		expect(admissionLane(ignore({ a: 1 }))).toBe("untracked");
+	it("classifies freeze as untracked and does not treat ignore() as untracked", () => {
+		expect(admissionLane(ignore({ a: 1 }))).toBe("tracked");
 		expect(admissionLane(Object.freeze({ a: 1 }))).toBe("untracked");
 	});
 });

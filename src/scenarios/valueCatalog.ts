@@ -157,7 +157,7 @@ const autoIgnoredFrozen = {
 
 const dangerous = {
 	attachesAtCreate: false,
-	attachesByBareWrite: false,
+	attachesByBareWrite: true,
 	readBackIsRawReference: false,
 	readBackResolvesToSameIdentity: false,
 	emitsOnInteriorMutation: false,

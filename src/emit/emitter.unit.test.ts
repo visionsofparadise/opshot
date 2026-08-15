@@ -3,11 +3,9 @@ import { createMutableState } from "../createMutableState";
 import { handleOf } from "../handle";
 import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
-import { stampOptions } from "../settings";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
 import { emitWrites, scheduleFlush } from "./emitter";
-import { targetOf } from "./emitterRegistry";
 import { shapeOps } from "../ops/operationShape";
 
 type CyclicNode = { n: number; self?: CyclicNode };
@@ -35,8 +33,7 @@ const manualScheduler = (): {
 };
 
 describe("emitter", () => {
-	it("scheduleFlush uses the handle emitOn when stamped root options are stale or absent", async () => {
-		const stamped = manualScheduler();
+	it("scheduleFlush uses the handle emitOn", async () => {
 		const bag = manualScheduler();
 		const state = createMutableState({ count: 0 });
 		const handle = handleOf(state);
@@ -44,13 +41,11 @@ describe("emitter", () => {
 		expect(handle).toBeDefined();
 
 		handle!.emitOn = bag.emitOn;
-		stampOptions(targetOf(handle!.proxy.root), { emitOn: stamped.emitOn });
 
 		scheduleFlush(handle!);
 
 		await Promise.resolve();
 
-		expect(stamped.pending).toHaveLength(0);
 		expect(bag.pending).toHaveLength(1);
 	});
 

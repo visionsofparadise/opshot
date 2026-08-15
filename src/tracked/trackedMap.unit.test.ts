@@ -333,9 +333,12 @@ describe("TrackedMap", () => {
 			["b", 2],
 		]);
 
-		expect(() => freshProxy({ member: new Map() })).toThrow("opshot: Map cannot be tracked");
+		expect(() => freshProxy({ member: new Map() })).not.toThrow();
 
 		const { createMutableState: freshCreate } = await import("../createMutableState");
+
+		expect(() => freshCreate({ member: new Map() })).toThrow("opshot: Map at /member cannot be tracked");
+
 		const state = freshCreate({ map });
 
 		state.map.set("c", 3);

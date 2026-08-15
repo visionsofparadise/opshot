@@ -1,4 +1,5 @@
 import { getRegisteredTarget, isSameIdentity } from "../identity";
+import { isUnderIgnoredOccupancy, occupancyOmissionsOf } from "../occupancy";
 import { walkDataEntries } from "../utils/dataEntries";
 import { isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import {
@@ -16,9 +17,10 @@ import {
 	getValueOriginal,
 	type Operation,
 } from "./operation";
-import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
+import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
+import type { Handle } from "../handle";
 
 type RootKind = "plainObject" | "plainArray";
 type Ancestors = Map<object, Set<object>>;
@@ -38,6 +40,8 @@ interface DiffContext {
 	readonly beforeRoot: object;
 	readonly afterRoot: object;
 	readonly linksEnabled: boolean;
+	readonly handle: Handle | undefined;
+	readonly omissions: ReadonlySet<string>;
 	routeIndex: RouteIndex | undefined;
 }
 
@@ -434,8 +438,20 @@ const mintAssignment = (
 	after: unknown,
 	beforePresent: boolean,
 ): DiffResult => {
-	if (isObjectLike(after) && context.linksEnabled) {
-		const live = liveOf(after);
+	if (isSkippedPath(context, path)) {
+		if (isOmittedPath(context, path)) return emptyResult();
+
+		if (beforePresent) {
+			return commitOperation(context, context.ops.length, path, changePair(path, before, after), weighCarried);
+		}
+
+		return commitOperation(context, context.ops.length, path, additionPair(path, after), weighCarried);
+	}
+
+	const assigned = withoutOmittedChildren(context, after, path);
+
+	if (isObjectLike(assigned) && context.linksEnabled) {
+		const live = liveOf(assigned);
 		const ancestorPath = context.ancestorPaths.get(live);
 
 		if (ancestorPath !== undefined) return commitLink(context, path, ancestorPath, before, beforePresent);
@@ -453,30 +469,32 @@ const mintAssignment = (
 		}
 
 		if (
-			(isPlainObject(after) || isPlainArray(after)) &&
-			(payloadEmbedsEscape(context, after, path) || payloadHasInteriorSharing(after))
+			(isPlainObject(assigned) || isPlainArray(assigned)) &&
+			(payloadEmbedsEscape(context, assigned, path) || payloadHasInteriorSharing(assigned))
 		) {
 			recordFirstMint(context, live, path);
 
-			if (!beforePresent) return mintDecomposedAddition(context, path, after);
+			if (!beforePresent) return mintDecomposedAddition(context, path, assigned);
 
-			return mintDecomposedChange(context, path, before, after);
+			return mintDecomposedChange(context, path, before, assigned);
 		}
 
 		recordFirstMint(context, live, path);
 	}
 
 	if (beforePresent) {
-		return commitOperation(context, context.ops.length, path, changePair(path, before, after), weighCarried);
+		return commitOperation(context, context.ops.length, path, changePair(path, before, assigned), weighCarried);
 	}
 
-	return commitOperation(context, context.ops.length, path, additionPair(path, after), weighCarried);
+	return commitOperation(context, context.ops.length, path, additionPair(path, assigned), weighCarried);
 };
 
 const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult =>
 	mintAssignment(context, path, undefined, after, false);
 
 const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult => {
+	if (isSkippedPath(context, path) && isOmittedPath(context, path)) return emptyResult();
+
 	if (isObjectLike(before) && context.linksEnabled) {
 		const live = liveOf(before);
 		const recorded = context.firstMintRoute.get(live);
@@ -591,6 +609,65 @@ const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): 
 
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
+
+const isOmittedPath = (context: DiffContext, path: OperationPath): boolean => {
+	if (context.omissions.size === 0) return false;
+
+	const pathKey = formatOperationPath(path);
+
+	if (context.omissions.has(pathKey)) return true;
+
+	for (const omitted of context.omissions) {
+		if (omitted === "/") return true;
+
+		if (pathKey.startsWith(`${omitted}/`)) return true;
+	}
+
+	return false;
+};
+
+const isSkippedPath = (context: DiffContext, path: OperationPath): boolean => {
+	if (isOmittedPath(context, path)) return true;
+
+	if (context.handle === undefined || path.length === 0) return false;
+
+	return isUnderIgnoredOccupancy(context.handle, path);
+};
+
+const withoutOmittedChildren = (context: DiffContext, value: unknown, path: OperationPath): unknown => {
+	if (!isObjectLike(value) || context.omissions.size === 0) return value;
+
+	let clone: Record<string, unknown> | Array<unknown> | undefined;
+
+	const written = (): Record<string, unknown> | Array<unknown> => {
+		if (clone !== undefined) return clone;
+
+		clone = isPlainArray(value) ? value.slice() : { ...(value as Record<string, unknown>) };
+
+		return clone;
+	};
+
+	for (const entry of walkDataEntries(value)) {
+		const childPath = appendOperationPath(path, entry.key);
+
+		if (isOmittedPath(context, childPath)) {
+			const next = written();
+
+			if (Array.isArray(next)) Reflect.deleteProperty(next, Number(entry.key));
+			else Reflect.deleteProperty(next, entry.key);
+
+			continue;
+		}
+
+		const stripped = withoutOmittedChildren(context, entry.value, childPath);
+
+		if (stripped === entry.value) continue;
+
+		(written() as Record<string, unknown>)[entry.key] = stripped;
+	}
+
+	return clone ?? value;
+};
 
 const dataEntryValuesOf = (value: object, ignoreArrayIndexes: boolean): Map<string, unknown> => {
 	const entries = new Map<string, unknown>();
@@ -707,6 +784,14 @@ const walkContainer = (
 };
 
 const diffValue = (context: DiffContext, before: unknown, after: unknown, path: OperationPath): DiffResult => {
+	if (isSkippedPath(context, path)) {
+		if (isOmittedPath(context, path) || Object.is(before, after)) return emptyResult();
+
+		if (isObjectLike(before) && isObjectLike(after) && sharesStorageIdentity(before, after)) return emptyResult();
+
+		return pushChange(context, path, before, after);
+	}
+
 	if (Object.is(before, after)) return emptyResult();
 
 	if (path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after)) {
@@ -810,7 +895,7 @@ const rewriteSurvivingUndos = (context: DiffContext): void => {
  * @param after - Later value.
  * @returns Ops from before to after.
  */
-export function diffObjects(before: object, after: object): Array<Operation> {
+export function diffObjects(before: object, after: object, handle?: Handle): Array<Operation> {
 	const beforeKind = getRootKind(before);
 	const afterKind = getRootKind(after);
 
@@ -829,6 +914,8 @@ export function diffObjects(before: object, after: object): Array<Operation> {
 		beforeRoot: before,
 		afterRoot: after,
 		linksEnabled,
+		handle,
+		omissions: handle === undefined ? new Set() : occupancyOmissionsOf(handle),
 		routeIndex: undefined,
 	};
 

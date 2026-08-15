@@ -137,12 +137,14 @@ describe("createGroup", () => {
 			first.count = 1;
 		});
 
-		expect(diffObjects).not.toHaveBeenCalled();
+		expect(diffObjects).toHaveBeenCalled();
 
 		const emissions = new Array<Array<Operation>>();
 		const remove = subscribe(group, (_state, ops) => {
 			emissions.push([...ops]);
 		});
+
+		vi.mocked(diffObjects).mockClear();
 
 		transact(first, () => {
 			first.count = 2;
@@ -155,12 +157,13 @@ describe("createGroup", () => {
 		expect(emissions).toHaveLength(2);
 
 		remove();
+		vi.mocked(diffObjects).mockClear();
 
 		transact(first, () => {
 			first.count = 3;
 		});
 
-		expect(diffObjects).toHaveBeenCalledTimes(2);
+		expect(diffObjects).toHaveBeenCalled();
 		expect(emissions).toHaveLength(2);
 		expect(first.count).toBe(3);
 	});

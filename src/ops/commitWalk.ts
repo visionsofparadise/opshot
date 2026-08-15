@@ -1,5 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { handleOf } from "../handle";
+import { pendingIgnore } from "../ignore";
 import { walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { isPlainArray } from "./cloneValue";
@@ -42,12 +43,26 @@ export const createRouteIndex = (root: object): RouteIndex => {
 	const handle = handleOf(root);
 	const publishedOrigin = rawTargetOf(root);
 	const publishedFromHandle: unknown = handle !== undefined ? handle.proxy.root : undefined;
+	const isUntrackedNode = (value: object): boolean => {
+		if (pendingIgnore.has(value) || admissionLane(value) === "untracked") return true;
+
+		if (handle === undefined) return false;
+
+		const live = rawTargetOf(value);
+
+		for (const occupant of handle.ignoredAt.values()) {
+			if (occupant === live) return true;
+		}
+
+		return false;
+	};
+
 	const publishedOriginTracked =
 		handle !== undefined
 			? typeof publishedFromHandle === "object" &&
 				publishedFromHandle !== null &&
-				admissionLane(publishedFromHandle) !== "untracked"
-			: admissionLane(root) !== "untracked";
+				!isUntrackedNode(publishedFromHandle)
+			: !isUntrackedNode(root);
 
 	const visit = (node: object): void => {
 		const live = rawTargetOf(node);
@@ -55,7 +70,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 		if (handle !== undefined && live === rawTargetOf(handle.proxy)) {
 			const published: unknown = (node as { root: unknown }).root;
 
-			if (typeof published === "object" && published !== null && admissionLane(published) !== "untracked") {
+			if (typeof published === "object" && published !== null && !isUntrackedNode(published)) {
 				visit(published);
 			}
 
@@ -71,7 +86,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 
 			if (typeof child !== "object" || child === null) continue;
 
-			if (admissionLane(child) === "untracked") continue;
+			if (isUntrackedNode(child)) continue;
 
 			const childLive = rawTargetOf(child);
 			const segment = segmentFor(node, entry.key);

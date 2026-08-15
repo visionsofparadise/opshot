@@ -89,7 +89,12 @@ const scenarios = {
 
 	attachesByBareWrite: (create) => {
 		try {
-			const state = createMutableState<{ value?: unknown }>({});
+			const state = createMutableState<{ value?: unknown }>(
+				{},
+				{
+					onError: () => undefined,
+				},
+			);
 
 			state.value = create();
 

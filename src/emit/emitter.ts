@@ -1,10 +1,12 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
+import { copyOccupancyTables, occupancyRefusalsOf, reconcileOccupancies, restoreOccupancyTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
+import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery } from "./emitterDeliver";
-import { hasListeners, targetOf } from "./emitterRegistry";
+import { targetOf } from "./emitterRegistry";
 import { requireObjectSnapshot } from "./requireObjectSnapshot";
 import type { Handle } from "../handle";
 
@@ -131,7 +133,22 @@ const reconcileUntracked = (snap: object, live: object, seen: WeakSet<object>): 
 	return result ?? snap;
 };
 
-const emitRange = (handle: Handle, meta: unknown, channelId: object | undefined): void => {
+const combinedRefusalOf = (refusals: ReadonlyArray<Error>): Error => {
+	if (refusals.length === 1) {
+		const only = refusals[0];
+
+		if (only !== undefined) return only;
+	}
+
+	return new AggregateError(refusals, "opshot: dangerous occupancies were refused");
+};
+
+const emitRange = (
+	handle: Handle,
+	meta: unknown,
+	channelId: object | undefined,
+	kind: "write" | "transaction",
+): void => {
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
@@ -143,29 +160,45 @@ const emitRange = (handle: Handle, meta: unknown, channelId: object | undefined)
 		return;
 	}
 
-	if (!hasListeners(handle)) {
-		handle.lastSnapshot = to;
+	const occupancyBaseline = copyOccupancyTables(handle);
 
-		return;
+	reconcileOccupancies(handle, handle.proxy.root, from);
+
+	const refusals = occupancyRefusalsOf(handle);
+
+	if (kind === "transaction" && refusals.length > 0) {
+		restoreOccupancyTables(handle, occupancyBaseline.ignoredAt, occupancyBaseline.unsafeAt);
+		rollbackTransaction(handle);
+		reconcileOccupancies(handle, handle.proxy.root, handle.lastSnapshot);
+
+		throw combinedRefusalOf(refusals);
 	}
 
 	const ops = diffObjects(
 		requireObjectSnapshot(reconcileUntracked(from, handle.proxy.root, new WeakSet())),
 		requireObjectSnapshot(to),
+		handle,
 	);
 
 	handle.lastSnapshot = to;
 
-	if (ops.length === 0) return;
+	if (ops.length > 0) {
+		enqueueDelivery(prepareDelivery(handle, ops, meta, channelId));
+		drainDeliveries();
+	}
 
-	enqueueDelivery(prepareDelivery(handle, ops, meta, channelId));
-	drainDeliveries();
+	if (kind === "write" && refusals.length > 0) {
+		const error = combinedRefusalOf(refusals);
+
+		if (handle.onError !== undefined) handle.onError(error);
+		else throw error;
+	}
 };
 
 export function emitWrites(handle: Handle): void {
-	emitRange(handle, undefined, undefined);
+	emitRange(handle, undefined, undefined, "write");
 }
 
 export function emitTransactionWrites(handle: Handle, meta: unknown, channelId: object | undefined): void {
-	emitRange(handle, meta, channelId);
+	emitRange(handle, meta, channelId, "transaction");
 }

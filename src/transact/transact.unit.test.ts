@@ -1086,4 +1086,84 @@ describe("transact", () => {
 			},
 		]);
 	});
+
+	it("rolls back and throws when a transaction assigns a dangerous occupancy", () => {
+		const state = createMutableState<{ box: unknown; tick: number }>({ box: null, tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		expect(() => {
+			transact(state, () => {
+				state.box = new Map<string, number>();
+				state.tick = 1;
+			});
+		}).toThrow("opshot: Map at /box cannot be tracked");
+
+		expect(state.box).toBeNull();
+		expect(state.tick).toBe(0);
+		expect(heard).toHaveLength(0);
+	});
+});
+
+describe("write-window occupancy refusal", () => {
+	it("omits a refused edge, emits a sibling assign, then calls onError", async () => {
+		const errors = new Array<unknown>();
+		const heard = new Array<Array<Operation>>();
+		const state = createMutableState<{ box: unknown; tick: number }>(
+			{ box: null, tick: 0 },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		state.box = new Map<string, number>();
+		state.tick = 1;
+
+		expect(errors).toHaveLength(0);
+		expect(heard).toHaveLength(0);
+
+		await Promise.resolve();
+
+		expect(state.box).toBeInstanceOf(Map);
+		expect(state.tick).toBe(1);
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } }],
+		]);
+		expect(String(errors[0])).toContain("opshot: Map at /box cannot be tracked");
+	});
+
+	it("raises after emit when a Write window has no onError", async () => {
+		const thrown = new Array<unknown>();
+		const heard = new Array<Array<Operation>>();
+		const state = createMutableState<{ box: unknown; tick: number }>(
+			{ box: null, tick: 0 },
+			{
+				emitOn: (flush) => {
+					try {
+						flush();
+					} catch (error) {
+						thrown.push(error);
+					}
+				},
+			},
+		);
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		state.box = new Map<string, number>();
+		state.tick = 1;
+		await Promise.resolve();
+
+		expect(state.box).toBeInstanceOf(Map);
+		expect(state.tick).toBe(1);
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } }],
+		]);
+		expect(String(thrown[0])).toContain("opshot: Map at /box cannot be tracked");
+	});
 });

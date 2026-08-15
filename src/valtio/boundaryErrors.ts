@@ -59,11 +59,6 @@ export const snapshotDonationError = (key: string | symbol): Error =>
 		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
 	);
 
-export const strictnessJoinError = (key: string | symbol): Error =>
-	new Error(
-		`opshot: cannot join a strict and a non-strict graph at "${String(key)}" (admission stamps disagree and the value is not marked unsafeTrack). Options:\n- unsafeTrack(value) to declare the caveat lane\n- re-create the value as plain data in the receiving state`,
-	);
-
 const inheritsFromPrototype = (value: object, prototype: object): boolean => {
 	for (let current = Reflect.getPrototypeOf(value); current !== null; current = Reflect.getPrototypeOf(current))
 		if (current === prototype) return true;

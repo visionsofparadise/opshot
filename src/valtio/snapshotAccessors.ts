@@ -1,7 +1,6 @@
 import { markToTrack } from "proxy-compare";
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
-import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "./classify";
 
@@ -85,8 +84,6 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 	if (Array.isArray(target) && (snap as Array<unknown>).length !== (target as Array<unknown>).length) {
 		(snap as Array<unknown>).length = (target as Array<unknown>).length;
 	}
-
-	if (isUnsafeTracked(target)) unsafeTrack(snap);
 
 	return snap as T;
 };

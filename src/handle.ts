@@ -21,6 +21,8 @@ export interface Handle {
 	emitOn?: EmissionScheduler;
 	strict: boolean;
 	onError?: (error: unknown) => void;
+	unsafeAt: Map<string, object>;
+	ignoredAt: Map<string, object>;
 }
 
 export function registerHandle(target: object, handle: Handle): void {
@@ -31,7 +33,25 @@ export function registerHandle(target: object, handle: Handle): void {
 		occupancies.set(target, occupants);
 	}
 
+	for (const reference of occupants) {
+		if (reference.deref() === handle) return;
+	}
+
 	occupants.add(new WeakRef(handle));
+}
+
+export function unregisterHandle(target: object, handle: Handle): void {
+	const occupants = occupancies.get(target);
+
+	if (occupants === undefined) return;
+
+	for (const reference of occupants) {
+		const occupant = reference.deref();
+
+		if (occupant === undefined || occupant === handle) occupants.delete(reference);
+	}
+
+	if (occupants.size === 0) occupancies.delete(target);
 }
 
 export function handlesOf(node: object): Array<Handle> {

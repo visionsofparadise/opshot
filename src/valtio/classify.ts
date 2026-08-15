@@ -1,5 +1,4 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { isUnsafeTracked } from "../unsafeTrack";
 
 const { refSet } = unstable_getInternalStates();
 
@@ -59,8 +58,6 @@ export function admissionDecision(value: unknown): AdmissionDecision {
 	if (refSet.has(value)) return { lane: "untracked" };
 
 	if (Object.isFrozen(value)) return { lane: "untracked" };
-
-	if (isUnsafeTracked(value)) return { lane: "tracked" };
 
 	const kind = classifyValue(value);
 

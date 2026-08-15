@@ -1,4 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { pendingIgnore } from "../ignore";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
 import { classifyValue } from "../valtio/classify";
@@ -34,7 +35,7 @@ const isSearchableContainer = (value: unknown): value is object => {
 
 	if ("$$typeof" in value) return false;
 
-	if (refSet.has(value)) return false;
+	if (refSet.has(value) || pendingIgnore.has(value)) return false;
 
 	const kind = classifyValue(value);
 

@@ -22,6 +22,8 @@ describe("handleOf", () => {
 			flushGeneration: 0,
 			subscribers: new Map(),
 			strict: true,
+			unsafeAt: new Map(),
+			ignoredAt: new Map(),
 		};
 
 		registerHandle(target, registered);

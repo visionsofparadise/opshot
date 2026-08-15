@@ -207,7 +207,7 @@ const witnesses: ReadonlyArray<Witness> = [
 		kind: "cleanClass",
 		lane: "untracked",
 	},
-	{ name: "ignoredValue", create: () => ignore({ a: 1 }), kind: "plain", lane: "untracked" },
+	{ name: "ignoredValue", create: () => ignore({ a: 1 }), kind: "plain", lane: "tracked" },
 	{
 		name: "unsafeTrackedCleanArrowClass",
 		create: () => unsafeTrack(new ArrowPoint()),
@@ -218,7 +218,7 @@ const witnesses: ReadonlyArray<Witness> = [
 		name: "unsafeTrackedPrivateClass",
 		create: () => unsafeTrack(new PrivateBox()),
 		kind: "privateClass",
-		lane: "tracked",
+		lane: "dangerous",
 	},
 	{
 		name: "frozenMap",

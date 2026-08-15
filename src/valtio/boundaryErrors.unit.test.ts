@@ -38,7 +38,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		);
 	});
 
-	it("throws at the assigning line inside mutate, leaving the state unchanged", () => {
+	it("throws from transact on a dangerous assign, leaving the state unchanged", () => {
 		interface Box {
 			box: unknown;
 		}

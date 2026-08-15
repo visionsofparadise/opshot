@@ -1,4 +1,4 @@
-import { ref } from "valtio/vanilla";
+export const pendingIgnore = new WeakSet<object>();
 
 declare const ignoredMarker: unique symbol;
 
@@ -16,4 +16,8 @@ export type Ignored<T extends object> = T & { readonly [ignoredMarker]: true };
  * @param value - Value to ignore.
  * @returns The same value.
  */
-export const ignore = ref as <T extends object>(value: T) => Ignored<T>;
+export function ignore<T extends object>(value: T): Ignored<T> {
+	pendingIgnore.add(value);
+
+	return value as Ignored<T>;
+}

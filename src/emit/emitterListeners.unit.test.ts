@@ -11,7 +11,7 @@ import { shapeOps } from "../ops/operationShape";
 vi.mock(import("../ops/diff"), { spy: true });
 
 describe("emitterListeners", () => {
-	it("stays silent with no subscriber: no record, no diff", () => {
+	it("stays silent with no subscriber: no record, still diffs", () => {
 		const state = createMutableState({ count: 0 });
 
 		vi.mocked(diffObjects).mockClear();
@@ -21,7 +21,7 @@ describe("emitterListeners", () => {
 		});
 
 		expect(handleOf(state)).toBeDefined();
-		expect(diffObjects).not.toHaveBeenCalled();
+		expect(diffObjects).toHaveBeenCalled();
 		expect(state.count).toBe(1);
 	});
 

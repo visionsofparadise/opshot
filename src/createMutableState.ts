@@ -2,11 +2,13 @@ import { proxy, snapshot } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { armWatch } from "./emit/emitter";
 import { registerHandle, type Handle } from "./handle";
-import { getOptions, stampOptions, type MutableNodeOptions } from "./settings";
-import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";
-import { assertInitializerStrictnessJoins, assertSafeDataPaths, installBoundary } from "./valtio/boundary";
+import { pendingIgnore } from "./ignore";
+import { seedOccupancies } from "./occupancy";
+import { pendingUnsafe } from "./unsafeTrack";
+import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 import { rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
+import type { MutableNodeOptions } from "./settings";
 
 /**
  * Options for `createMutableState`.
@@ -34,27 +36,22 @@ export interface MutableStateOptions extends MutableNodeOptions {
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {
 	installBoundary();
 
+	if (Object.isFrozen(properties) || pendingIgnore.has(properties)) return properties;
+
 	const decision = admissionDecision(properties);
+	const strict = options?.strict !== false;
 
-	if (decision.lane === "leaf" || decision.lane === "untracked") return properties;
+	if (decision.lane === "leaf") return properties;
 
-	if (decision.lane === "dangerous") {
-		if (options?.strict !== false) throw rejectionError(properties, decision.kind);
+	if (decision.lane === "dangerous" && strict && !pendingUnsafe.has(properties)) {
+		throw rejectionError(properties, decision.kind);
 	}
 
-	assertSafeDataPaths(properties, [], new Set(), options?.strict !== false ? "admission" : "rootsOnly");
+	assertSafeDataPaths(properties, [], new Set(), strict ? "admission" : "rootsOnly");
 
 	const base = Object.create(Reflect.getPrototypeOf(properties)) as T;
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(properties));
-
-	if (decision.lane === "dangerous" || isUnsafeTracked(properties)) unsafeTrack(base);
-
-	stampOptions(base, options);
-
-	const receiverOptions = getOptions(base);
-
-	assertInitializerStrictnessJoins(properties, receiverOptions?.strict !== false);
 
 	const handle: Handle = {
 		proxy: { root: base },
@@ -66,9 +63,19 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		subscribers: new Map(),
 		groups: options?.group !== undefined ? getGroupChain(options.group) : undefined,
 		emitOn: options?.emitOn,
-		strict: options?.strict !== false,
+		strict,
 		onError: options?.onError,
+		unsafeAt: new Map(),
+		ignoredAt: new Map(),
 	};
+
+	if (pendingUnsafe.has(properties)) {
+		handle.unsafeAt.set("/", base);
+		pendingUnsafe.delete(properties);
+		pendingUnsafe.add(base);
+	} else if (decision.lane === "dangerous") {
+		pendingUnsafe.add(base);
+	}
 
 	registerHandle(base, handle);
 
@@ -83,6 +90,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	}
 
 	handle.lastSnapshot = lastSnapshot;
+	seedOccupancies(handle);
 	armWatch(handle);
 
 	return instrumented.root;

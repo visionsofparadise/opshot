@@ -207,16 +207,14 @@ describe("sharing hint", () => {
 		expect(isPossiblyShared(state.hub)).toBe(false);
 	});
 
-	it("leaves the hint unflagged when the strictness join throws", () => {
+	it("flags the hint when a live node is shared across strictness", () => {
 		const strict = createMutableState({ node: { n: 1 } });
 		const loose = createMutableState<{ hub: { n: number }; slot?: unknown }>({ hub: { n: 1 } }, { strict: false });
 
-		expect(() => {
-			loose.slot = strict.node;
-		}).toThrow("strict");
+		loose.slot = strict.node;
 
-		expect(isPossiblyShared(strict.node)).toBe(false);
-		expect(isPossiblyShared(loose.hub)).toBe(false);
+		expect(loose.slot).toBe(strict.node);
+		expect(isPossiblyShared(strict.node)).toBe(true);
 	});
 });
 

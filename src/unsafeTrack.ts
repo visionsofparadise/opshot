@@ -1,4 +1,4 @@
-const unsafeTrackedSet = new WeakSet();
+export const pendingUnsafe = new WeakSet<object>();
 
 declare const unsafeTrackedBrand: unique symbol;
 
@@ -17,11 +17,7 @@ export type UnsafeTracked<T extends object> = T & { readonly [unsafeTrackedBrand
  * @returns The same value.
  */
 export function unsafeTrack<T extends object>(value: T): UnsafeTracked<T> {
-	unsafeTrackedSet.add(value);
+	pendingUnsafe.add(value);
 
 	return value as UnsafeTracked<T>;
-}
-
-export function isUnsafeTracked(value: unknown): boolean {
-	return typeof value === "object" && value !== null && unsafeTrackedSet.has(value);
 }

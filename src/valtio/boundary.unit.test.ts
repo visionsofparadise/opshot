@@ -9,10 +9,9 @@ import { peelIdentityLayer } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
 import { isPossiblyShared } from "../ops/commitWalk";
 import { type Operation } from "../ops/operation";
-import { getOptions } from "../settings";
 import { ignore } from "../ignore";
 import { isState } from "../isState";
-import { isUnsafeTracked, unsafeTrack } from "../unsafeTrack";
+import { unsafeTrack } from "../unsafeTrack";
 import { shapeOps } from "../ops/operationShape";
 import { admissionLane } from "./classify";
 
@@ -496,16 +495,7 @@ describe("boundary: certification descends only where valtio proxies", () => {
 		});
 
 		for (const carrier of [nested, symbolKeyed]) {
-			let message = "";
-
-			try {
-				createMutableState({ a: { b: carrier } });
-			} catch (error) {
-				message = error instanceof Error ? error.message : String(error);
-			}
-
-			expect(message).toContain("opshot: Map cannot be tracked");
-			expect(message).not.toContain(" at /");
+			expect(() => createMutableState({ a: { b: carrier } })).not.toThrow();
 		}
 	});
 
@@ -649,19 +639,34 @@ describe("boundary: admitted by rule", () => {
 		expect(state.run).toBe(second);
 	});
 
-	it("throws at a later enumerable function assignment onto a tracked class", () => {
+	it("refuses a later enumerable function assignment onto a tracked class at the Write flush", async () => {
 		class Point {
 			x = 1;
 		}
 
 		type PointHolder = { point: Point & { fn?: () => number } };
 
-		const state = createMutableState<PointHolder>({ point: new Point() });
+		const errors = new Array<unknown>();
+		const state = createMutableState<PointHolder>(
+			{ point: new Point() },
+			{
+				emitOn: (flush) => {
+					try {
+						flush();
+					} catch (error) {
+						errors.push(error);
+					}
+				},
+			},
+		);
 
-		expect(() => {
-			state.point.fn = () => 1;
-		}).toThrow("opshot: Point at /fn cannot be tracked (arrow-method writes won't be tracked)");
-		expect(Object.hasOwn(state.point, "fn")).toBe(false);
+		state.point.fn = () => 1;
+		await Promise.resolve();
+
+		expect(Object.hasOwn(state.point, "fn")).toBe(true);
+		expect(String(errors[0])).toContain(
+			"opshot: Point at /point/fn cannot be tracked (arrow-method writes won't be tracked)",
+		);
 
 		const loose = createMutableState<PointHolder>({ point: new Point() }, { strict: false });
 
@@ -1148,11 +1153,9 @@ describe("boundary: strict false", () => {
 		expect(state.element.node).toBe("changed");
 	});
 
-	it("a detached loose-admitted value enters a strict state with its unsafeTrack mark honoured", () => {
+	it("a detached loose-admitted value assigned into a strict factory without a new wrap stays a live share", () => {
 		const map = new Map<string, number>();
 		const nonStrict = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
-
-		expect(isUnsafeTracked(map)).toBe(true);
 
 		const detached = nonStrict.lookup!;
 
@@ -1161,8 +1164,6 @@ describe("boundary: strict false", () => {
 		const strict = createMutableState({ lookup: detached });
 
 		expect(strict.lookup).toBe(detached);
-		expect(isUnsafeTracked(map)).toBe(true);
-		expect(() => strict.lookup.set("a", 1)).toThrow();
 	});
 
 	it("skips certification on the write path, deferring the throw to first use", () => {
@@ -1190,24 +1191,23 @@ describe("boundary: strict false", () => {
 			return holder;
 		};
 
-		expect(() => createMutableState({ a: carrier() })).toThrow("opshot: Map cannot be tracked");
-		expect(() => createMutableState({ a: carrier() })).not.toThrow(/ at \//);
-		expect(() => createMutableState({ outer: { a: carrier() } })).not.toThrow(/ at \//);
+		expect(() => createMutableState({ a: carrier() })).not.toThrow();
+		expect(() => createMutableState({ outer: { a: carrier() } })).not.toThrow();
 	});
 
 	it("still names the key and the relative path beneath a consumer's own assignment", () => {
 		const state = createMutableState<{ a: { b: object } }>({ a: { b: {} } });
 
 		expect(() => {
-			state.a.b = { hidden: { m: new Map() } };
-		}).toThrow("opshot: Map at /b/hidden/m cannot be tracked");
+			transact(state, () => {
+				state.a.b = { hidden: { m: new Map() } };
+			});
+		}).toThrow("opshot: Map at /a/b/hidden/m cannot be tracked");
+		expect(state.a.b).toEqual({});
 	});
 });
 
-describe("boundary: strictness join", () => {
-	const joinMessage =
-		'opshot: cannot join a strict and a non-strict graph at "box" (admission stamps disagree and the value is not marked unsafeTrack). Options:\n- unsafeTrack(value) to declare the caveat lane\n- re-create the value as plain data in the receiving state';
-
+describe("boundary: sharing is ordinary", () => {
 	it("admits a live unmarked node from a non-strict graph into a strict state", () => {
 		const loose = createMutableState({ shared: { n: 1 } }, { strict: false });
 		const strict = createMutableState<{ box: { n: number } | null }>({ box: null });
@@ -1215,18 +1215,15 @@ describe("boundary: strictness join", () => {
 		strict.box = loose.shared;
 
 		expect(strict.box).toBe(loose.shared);
-		expect(getOptions(rawTargetOf(loose.shared))?.strict).toBe(false);
 	});
 
-	it("throws when a non-strict state receives a live unmarked node from a strict graph", () => {
+	it("admits a live unmarked node from a strict graph into a non-strict state", () => {
 		const strict = createMutableState({ shared: { n: 1 } });
 		const loose = createMutableState<{ box: { n: number } | null }>({ box: null }, { strict: false });
 
-		expect(() => {
-			loose.box = strict.shared;
-		}).toThrow(joinMessage);
+		loose.box = strict.shared;
 
-		expect(loose.box).toBeNull();
+		expect(loose.box).toBe(strict.shared);
 	});
 
 	it("admits an initializer that carries a live foreign proxy of loose strictness", () => {
@@ -1234,7 +1231,6 @@ describe("boundary: strictness join", () => {
 		const strict = createMutableState({ box: loose.shared });
 
 		expect(strict.box).toBe(loose.shared);
-		expect(getOptions(rawTargetOf(loose.shared))?.strict).toBe(false);
 	});
 
 	it("shares a live node between two strict graphs", () => {
@@ -1263,57 +1259,27 @@ describe("boundary: strictness join", () => {
 		expect(right.box.n).toBe(2);
 	});
 
-	it("admits a marked value still live in a loose graph into a strict one", () => {
+	it("refuses a loose-admitted Map assigned into a strict state without a new wrap", async () => {
 		const map = new Map<string, number>();
 		const loose = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
-		const strict = createMutableState<{ box: Map<string, number> | null }>({ box: null });
+		const errors = new Array<unknown>();
+		const strict = createMutableState<{ box: Map<string, number> | null }>(
+			{ box: null },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+				emitOn: (flush) => {
+					flush();
+				},
+			},
+		);
 
 		strict.box = loose.lookup;
+		await Promise.resolve();
 
 		expect(strict.box).toBe(loose.lookup);
-		expect(isUnsafeTracked(map)).toBe(true);
-	});
-
-	it("admits a detached marked loose-admitted subtree into a strict state on assignment", () => {
-		const map = new Map<string, number>();
-		const loose = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
-		const detached = loose.lookup!;
-
-		loose.lookup = null;
-
-		const strict = createMutableState<{ box: Map<string, number> | null }>({ box: null });
-
-		strict.box = detached;
-
-		expect(strict.box).toBe(detached);
-		expect(isUnsafeTracked(map)).toBe(true);
-		expect(() => strict.box!.set("a", 1)).toThrow();
-	});
-
-	it("does not restamp options on marked admission into a differing-strictness graph", () => {
-		const map = new Map<string, number>();
-		const loose = createMutableState<{ lookup: Map<string, number> | null }>({ lookup: map }, { strict: false });
-		const detached = loose.lookup!;
-
-		loose.lookup = null;
-
-		const strict = createMutableState<{ box: Map<string, number> | null }>({ box: null });
-
-		strict.box = detached;
-
-		expect(getOptions(rawTargetOf(detached))?.strict).toBe(false);
-	});
-
-	it("names the stamp-join remedies in the join error", () => {
-		const strict = createMutableState({ shared: { n: 1 } });
-		const loose = createMutableState<{ box: { n: number } | null }>({ box: null }, { strict: false });
-
-		expect(() => {
-			loose.box = strict.shared;
-		}).toThrow(joinMessage);
-
-		expect(joinMessage).toContain("unsafeTrack(value) to declare the caveat lane");
-		expect(joinMessage).toContain("re-create the value as plain data in the receiving state");
+		expect(String(errors[0])).toContain("Map at /box cannot be tracked");
 	});
 });
 
