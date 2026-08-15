@@ -76,7 +76,7 @@ describe("deliver", () => {
 		expect(order).toEqual(["first hears cause", "second hears cause", "hears effect"]);
 	});
 
-	it("orders cause before effect for an observer of two records reported in one transaction", () => {
+	it("emits a write on another state after the transacted state's listener transact", async () => {
 		const transacted = createMutableState<Counter>({ n: 0 });
 		const cause = createMutableState<Counter>({ n: 0 });
 		const effect = createMutableState<Counter>({ n: 0 });
@@ -95,15 +95,18 @@ describe("deliver", () => {
 			cause.n += 1;
 		});
 
-		expect(observed).toEqual(["cause", "effect"]);
+		expect(observed).toEqual(["effect"]);
+
+		await Promise.resolve();
+
+		expect(observed).toEqual(["effect", "cause"]);
 	});
 
-	it("runs a second record's listeners when the first record's listener throws, aggregating both failures", () => {
+	it("raises the transacted state's listener failure without waiting for another state's Write", () => {
 		const transacted = createMutableState<Counter>({ n: 0 });
 		const other = createMutableState<Counter>({ n: 0 });
 		const heard = new Array<string>();
 		const transactedFailure = new Error("transacted listener failure");
-		const otherFailure = new Error("other listener failure");
 
 		subscribe(transacted, () => {
 			heard.push("transacted");
@@ -112,27 +115,18 @@ describe("deliver", () => {
 		});
 		subscribe(other, () => {
 			heard.push("other");
-
-			throw otherFailure;
 		});
 
-		let raised: unknown;
-
-		try {
+		expect(() =>
 			transact(transacted, () => {
 				transacted.n += 1;
 				other.n += 1;
-			});
-		} catch (error) {
-			raised = error;
-		}
-
-		expect([...heard].sort()).toEqual(["other", "transacted"]);
-		expect(raised).toBeInstanceOf(AggregateError);
-		expect((raised as AggregateError).errors).toEqual([transactedFailure, otherFailure]);
+			}),
+		).toThrow(transactedFailure);
+		expect(heard).toEqual(["transacted"]);
 	});
 
-	it("does not deliver a transaction's later record to a listener subscribed while an earlier record delivered", () => {
+	it("a listener that joins another state before that state's Write flushes hears the Write", async () => {
 		const transacted = createMutableState<Counter>({ n: 0 });
 		const other = createMutableState<Counter>({ n: 0 });
 		const heard = new Array<string>();
@@ -147,7 +141,11 @@ describe("deliver", () => {
 			other.n += 1;
 		});
 
-		expect(heard).toEqual(["subscribed before the frame"]);
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual(["subscribed before the frame", "subscribed mid-frame"]);
 	});
 
 	it("delivers both emissions before the outermost transact returns", () => {

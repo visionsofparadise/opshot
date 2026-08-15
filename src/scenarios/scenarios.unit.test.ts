@@ -314,7 +314,7 @@ describe("scenarios", () => {
 		expect(b.box.x).toBe(2);
 	});
 
-	it("completes the stream under entanglement: the sharer hears a transaction elsewhere with its meta", async () => {
+	it("completes the stream under entanglement: the sharer hears a write on the other state as a Write", async () => {
 		const shared = { x: 1 };
 		const a = createMutableState({ box: shared });
 		const b = createMutableState({ box: shared });
@@ -336,25 +336,24 @@ describe("scenarios", () => {
 			{ transactionKey: "drag" },
 		);
 
-		const shape = [
+		const ops = [
 			{
-				ops: [
-					{
-						do: { verb: "assign", path: ["box", "x"], value: 2 },
-						undo: { verb: "assign", path: ["box", "x"], value: 1 },
-					},
-				],
-				meta: { transactionKey: "drag" },
+				do: { verb: "assign", path: ["box", "x"], value: 2 },
+				undo: { verb: "assign", path: ["box", "x"], value: 1 },
 			},
 		];
 
-		expect(aHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(shape);
-		expect(bHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(shape);
+		expect(aHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{ ops, meta: { transactionKey: "drag" } },
+		]);
+		expect(bHeard).toEqual([]);
 
 		await Promise.resolve();
 
 		expect(aHeard).toHaveLength(1);
-		expect(bHeard).toHaveLength(1);
+		expect(bHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{ ops, meta: undefined },
+		]);
 		expect(b.box.x).toBe(2);
 	});
 

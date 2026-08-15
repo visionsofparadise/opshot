@@ -1,7 +1,9 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
+import { isState } from "../isState";
 import { applyMutations } from "../ops/applyMutations";
 import { diffObjects } from "../ops/diff";
 import { getOptions } from "../settings";
+import { walkDataEntries } from "../utils/dataEntries";
 import {
 	drainDeliveries,
 	enqueueDelivery,
@@ -25,8 +27,8 @@ interface Claim {
 }
 
 export interface Transaction {
+	readonly state: object;
 	readonly claimed: Array<Claim>;
-	readonly openSnapshots: ReadonlyMap<EmitterRecord, object>;
 }
 
 const requireObjectSnapshot = (value: unknown): object => {
@@ -73,6 +75,37 @@ let currentTransaction: Transaction | undefined;
 
 export const isTransactionOpen = (): boolean => currentTransaction !== undefined;
 
+const reaches = (from: object, goal: object): boolean => {
+	const seen = new Set<object>();
+
+	const visit = (node: object): boolean => {
+		if (node === goal) return true;
+
+		const live = targetOf(node);
+
+		if (seen.has(live)) return false;
+
+		seen.add(live);
+
+		for (const entry of walkDataEntries(node)) {
+			const child = entry.value;
+
+			if (typeof child !== "object" || child === null) continue;
+
+			if (!isState(child)) continue;
+
+			if (visit(child)) return true;
+		}
+
+		return false;
+	};
+
+	return visit(from);
+};
+
+const isInSameState = (left: object, right: object): boolean =>
+	left === right || reaches(left, right) || reaches(right, left);
+
 const claimFor = (transaction: Transaction, record: EmitterRecord, wasDirty: boolean): void => {
 	if (record.claimed) return;
 
@@ -80,14 +113,14 @@ const claimFor = (transaction: Transaction, record: EmitterRecord, wasDirty: boo
 	transaction.claimed.push({ record, wasDirty, baseline: record.lastReported });
 };
 
-export const openTransaction = (): Transaction => {
-	const openSnapshots = new Map<EmitterRecord, object>();
-
-	for (const record of unreportedRecords) {
-		openSnapshots.set(record, snapshot(record.writeProxy));
+export const flushPendingWritesOfState = (state: object): void => {
+	for (const record of [...unreportedRecords]) {
+		if (isInSameState(record.writeProxy, state)) reportBareDiff(record);
 	}
+};
 
-	const transaction: Transaction = { claimed: [], openSnapshots };
+export const openTransaction = (state: object): Transaction => {
+	const transaction: Transaction = { state, claimed: [] };
 
 	currentTransaction = transaction;
 
@@ -112,7 +145,7 @@ export const armEmitter = (record: EmitterRecord): void => {
 
 			const open = currentTransaction;
 
-			if (open === undefined) {
+			if (open === undefined || !isInSameState(record.writeProxy, open.state)) {
 				scheduleFlush(record);
 
 				return;
@@ -187,20 +220,6 @@ export const prepareTransactionReport = (
 
 	for (const claim of transaction.claimed) {
 		try {
-			const openSnapshot = transaction.openSnapshots.get(claim.record);
-
-			if (claim.wasDirty && openSnapshot !== undefined) {
-				const pendingWrite = reportRange(
-					claim.record,
-					claim.record.lastReported,
-					openSnapshot,
-					undefined,
-					undefined,
-				);
-
-				if (pendingWrite !== undefined) prepared.push(pendingWrite);
-			}
-
 			const pending = reportRange(
 				claim.record,
 				claim.record.lastReported,
@@ -252,12 +271,10 @@ export const rollbackTransaction = (transaction: Transaction): void => {
 
 	for (const claim of [...transaction.claimed]) {
 		try {
-			const { record, baseline, wasDirty } = claim;
-			const openSnapshot = transaction.openSnapshots.get(record);
-			const target = wasDirty && openSnapshot !== undefined ? openSnapshot : baseline;
+			const { record, baseline } = claim;
 			const operations = diffObjects(
 				requireObjectSnapshot(snapshot(record.writeProxy)),
-				requireObjectSnapshot(target),
+				requireObjectSnapshot(baseline),
 			);
 
 			if (operations.length > 0) {
@@ -265,12 +282,7 @@ export const rollbackTransaction = (transaction: Transaction): void => {
 			}
 
 			record.lastReported = baseline;
-
-			if (wasDirty && openSnapshot !== undefined) {
-				markUnreported(record);
-			} else {
-				clearUnreported(record);
-			}
+			clearUnreported(record);
 		} catch (error) {
 			failures.push(error);
 		}

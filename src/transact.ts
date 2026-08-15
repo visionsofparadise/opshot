@@ -2,15 +2,14 @@ import {
 	closeTransaction,
 	deliverPreparedReport,
 	failedRecords,
+	flushPendingWritesOfState,
 	isTransactionOpen,
 	openTransaction,
 	prepareTransactionReport,
 	releaseTransactionToWindows,
-	reportBareDiff,
 	restoreDirtyLedgers,
 	rollbackTransaction,
 } from "./emit/emitterBare";
-import { getEmitter } from "./emit/emitterRegistry";
 
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
@@ -42,13 +41,9 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		);
 	}
 
-	const record = getEmitter(state);
+	flushPendingWritesOfState(state);
 
-	if (record !== undefined) {
-		reportBareDiff(record);
-	}
-
-	const transaction = openTransaction();
+	const transaction = openTransaction(state);
 
 	let completed = false;
 	let mutateError: unknown;
@@ -99,4 +94,5 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 	}
 
 	deliverPreparedReport(report);
+	flushPendingWritesOfState(state);
 }

@@ -313,7 +313,7 @@ describe("createGroup", () => {
 		expect(heard).toEqual(["cause", "effect"]);
 	});
 
-	it("delivers a transaction's later record to a group listener removed while an earlier record delivered", () => {
+	it("does not deliver another state's later Write to a group listener removed during the transact emission", async () => {
 		const group = createGroup();
 		const transacted = group.createMutableState({ name: "transacted", n: 0 });
 		const other = group.createMutableState({ name: "other", n: 0 });
@@ -327,7 +327,11 @@ describe("createGroup", () => {
 			other.n += 1;
 		});
 
-		expect(heard).toEqual(["transacted", "other"]);
+		expect(heard).toEqual(["transacted"]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual(["transacted"]);
 	});
 
 	it("does not invert the inner tier when an outer-tier listener writes beneath it", () => {

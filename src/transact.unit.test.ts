@@ -210,7 +210,7 @@ describe("transact", () => {
 		expect(state.child).toEqual({ a: 1, b: 2, c: 3, d: 4, e: 5 });
 	});
 
-	it("rolls a dirty covering ancestor back to the frame-open snapshot and later emits the pending Write", async () => {
+	it("flushes a covering ancestor's pending Writes before a throwing transact and rolls the transaction back", async () => {
 		const state = createMutableState({ a: { n: 0 }, bare: 0 });
 		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
@@ -234,10 +234,6 @@ describe("transact", () => {
 
 		expect(state.a.n).toBe(0);
 		expect(state.bare).toBe(1);
-		expect(heard).toEqual([]);
-
-		await Promise.resolve();
-
 		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [
@@ -249,6 +245,10 @@ describe("transact", () => {
 				meta: undefined,
 			},
 		]);
+
+		await Promise.resolve();
+
+		expect(heard).toHaveLength(1);
 		expect(state.bare).toBe(1);
 	});
 
@@ -272,7 +272,7 @@ describe("transact", () => {
 		expect(bag.x).toBe(99);
 	});
 
-	it("delivers every claim when a multi-claim transaction forms a cycle", async () => {
+	it("delivers the transacted state immediately and another state's cycle as a Write", async () => {
 		const clean = createMutableState({ n: 0 });
 		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
 		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
@@ -291,14 +291,16 @@ describe("transact", () => {
 
 		expect(clean.n).toBe(1);
 		expect(cyclic.box.self).toBe(cyclic.box);
-		expect(heard.map((entry) => entry.side).sort()).toEqual(["clean", "cyclic"]);
+		expect(heard.map((entry) => entry.side)).toEqual(["clean"]);
+		expect(heard[0]?.meta).toEqual({ tag: "kept" });
 
 		await Promise.resolve();
 
-		expect(heard).toHaveLength(2);
+		expect(heard.map((entry) => entry.side)).toEqual(["clean", "cyclic"]);
+		expect(heard[1]?.meta).toBeUndefined();
 	});
 
-	it("emits a dirty co-claim's pending Write then its Transaction write when a sibling forms a cycle", async () => {
+	it("emits another state's writes as Writes when they happen during a transact", async () => {
 		const dirty = createMutableState({ n: 0 });
 		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
 		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
@@ -319,6 +321,8 @@ describe("transact", () => {
 
 		expect(dirty.n).toBe(2);
 		expect(cyclic.box.self).toBe(cyclic.box);
+		expect(heard.filter((entry) => entry.side === "cyclic").map((entry) => entry.meta)).toEqual([{ tag: "kept" }]);
+		expect(heard.filter((entry) => entry.side === "dirty")).toEqual([]);
 
 		await Promise.resolve();
 
@@ -328,29 +332,24 @@ describe("transact", () => {
 				.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta })),
 		).toEqual([
 			{
-				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				ops: [{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 				meta: undefined,
 			},
-			{
-				ops: [{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 1 } }],
-				meta: { tag: "kept" },
-			},
 		]);
-		expect(heard.filter((entry) => entry.side === "cyclic").map((entry) => entry.meta)).toEqual([{ tag: "kept" }]);
 	});
 
-	it("never flushes a claimed record bare when a listener transacts it", () => {
+	it("flushes another state's pending Writes before a listener transact on that state", () => {
 		const transacted = createMutableState({ x: 0 });
-		const claimed = createMutableState({ n: 0 });
+		const other = createMutableState({ n: 0 });
 		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 		let listenerTransactCompleted = false;
 
-		subscribe(claimed, (ops, meta) => heard.push({ ops: [...ops], meta }));
+		subscribe(other, (ops, meta) => heard.push({ ops: [...ops], meta }));
 		subscribe(transacted, () => {
 			transact(
-				claimed,
+				other,
 				() => {
-					claimed.n += 10;
+					other.n += 10;
 				},
 				{ tag: "tap" },
 			);
@@ -361,7 +360,7 @@ describe("transact", () => {
 			transacted,
 			() => {
 				transacted.x = 1;
-				claimed.n = 5;
+				other.n = 5;
 			},
 			{ tag: "outer" },
 		);
@@ -370,7 +369,7 @@ describe("transact", () => {
 		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [{ do: { verb: "assign", path: ["n"], value: 5 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
-				meta: { tag: "outer" },
+				meta: undefined,
 			},
 			{
 				ops: [{ do: { verb: "assign", path: ["n"], value: 15 }, undo: { verb: "assign", path: ["n"], value: 5 } }],
@@ -379,20 +378,18 @@ describe("transact", () => {
 		]);
 	});
 
-	it("never files a replicator's write as a user edit when a listener transacts the claimed record", () => {
+	it("does not attach the outer transact meta to a write on another state", () => {
 		const transacted = createMutableState({ x: 0 });
-		const claimed = createMutableState({ n: 0 });
-		const recorded = new Array<Operation>();
+		const other = createMutableState({ n: 0 });
+		const recorded = new Array<{ ops: Array<Operation>; meta: unknown }>();
 		let listenerTransactCompleted = false;
 
-		subscribe(claimed, (ops, meta) => {
-			if ((meta as { replay?: boolean } | undefined)?.replay === true) return;
-
-			recorded.push(...ops);
+		subscribe(other, (ops, meta) => {
+			recorded.push({ ops: [...ops], meta });
 		});
 		subscribe(transacted, () => {
-			transact(claimed, () => {
-				claimed.n += 10;
+			transact(other, () => {
+				other.n += 10;
 			});
 			listenerTransactCompleted = true;
 		});
@@ -401,18 +398,25 @@ describe("transact", () => {
 			transacted,
 			() => {
 				transacted.x = 1;
-				claimed.n = 5;
+				other.n = 5;
 			},
 			{ replay: true },
 		);
 
 		expect(listenerTransactCompleted).toBe(true);
-		expect(shapeOps(recorded)).toEqual([
-			{ do: { verb: "assign", path: ["n"], value: 15 }, undo: { verb: "assign", path: ["n"], value: 5 } },
+		expect(recorded.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 5 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				meta: undefined,
+			},
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 15 }, undo: { verb: "assign", path: ["n"], value: 5 } }],
+				meta: undefined,
+			},
 		]);
 	});
 
-	it("carries meta on a cross-state write made inside the transaction", () => {
+	it("emits a write on another state as a Write after the transact returns", async () => {
 		const first = createMutableState({ x: 0 });
 		const second = createMutableState({ n: 0 });
 		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
@@ -428,10 +432,14 @@ describe("transact", () => {
 			{ tag: "outer" },
 		);
 
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
 		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
 				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
-				meta: { tag: "outer" },
+				meta: undefined,
 			},
 		]);
 	});
@@ -448,24 +456,24 @@ describe("transact", () => {
 		expect(state.n).toBe(0);
 	});
 
-	it("never flushes a claimed record bare when a listener unsubscribes its listener", () => {
+	it("settles another state's pending Write when a listener unsubscribes that state", () => {
 		const transacted = createMutableState({ x: 0 });
-		const claimed = createMutableState({ n: 0 });
+		const other = createMutableState({ n: 0 });
 		const heard = new Array<unknown>();
-		const stopClaimed = subscribe(claimed, (_ops, meta) => heard.push(meta));
+		const stopOther = subscribe(other, (_ops, meta) => heard.push(meta));
 
-		subscribe(transacted, () => stopClaimed());
+		subscribe(transacted, () => stopOther());
 
 		transact(
 			transacted,
 			() => {
 				transacted.x = 1;
-				claimed.n = 5;
+				other.n = 5;
 			},
 			{ tag: "outer" },
 		);
 
-		expect(heard).toEqual([{ tag: "outer" }]);
+		expect(heard).toEqual([undefined]);
 	});
 
 	it("reports every covering node exactly once, in no promised order", () => {
@@ -533,7 +541,7 @@ describe("transact", () => {
 		expect(heard).toEqual([{ tag: "kept" }]);
 	});
 
-	it("still bare-delivers a dirty co-claim after a cyclic formation in the same transaction", async () => {
+	it("keeps another state's write on its own window after a cyclic formation in the transacted state", async () => {
 		const dirty = createMutableState({ n: 0 });
 		const cyclic = createMutableState<{ box: { self?: object } }>({ box: {} });
 		const heard = new Array<{ side: string; ops: Array<Operation>; meta: unknown }>();
@@ -554,6 +562,8 @@ describe("transact", () => {
 
 		expect(dirty.n).toBe(2);
 		expect(cyclic.box.self).toBe(cyclic.box);
+		expect(heard.filter((entry) => entry.side === "cyclic").map((entry) => entry.meta)).toEqual([{ tag: "kept" }]);
+		expect(heard.filter((entry) => entry.side === "dirty")).toEqual([]);
 
 		await Promise.resolve();
 
@@ -563,15 +573,10 @@ describe("transact", () => {
 				.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta })),
 		).toEqual([
 			{
-				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				ops: [{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 				meta: undefined,
 			},
-			{
-				ops: [{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 1 } }],
-				meta: { tag: "kept" },
-			},
 		]);
-		expect(heard.filter((entry) => entry.side === "cyclic").map((entry) => entry.meta)).toEqual([{ tag: "kept" }]);
 	});
 
 	it("delivers through a dirty record that already holds a cycle", async () => {
@@ -604,14 +609,17 @@ describe("transact", () => {
 
 		expect(state.n).toBe(2);
 		expect(state.box.self).toBe(state.box);
+		expect(heard).toEqual([]);
+
+		expect(() => {
+			for (const flush of scheduled.splice(0)) flush();
+		}).not.toThrow();
+
+		expect(state.n).toBe(2);
 		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{
-				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
-				meta: undefined,
-			},
-			{
 				ops: [
-					{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 1 } },
+					{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 0 } },
 					{
 						do: { verb: "link", path: ["box", "self"], ref: ["box"] },
 						undo: { verb: "delete", path: ["box", "self"] },
@@ -620,13 +628,6 @@ describe("transact", () => {
 				meta: undefined,
 			},
 		]);
-
-		expect(() => {
-			for (const flush of scheduled.splice(0)) flush();
-		}).not.toThrow();
-
-		expect(state.n).toBe(2);
-		expect(heard).toHaveLength(2);
 	});
 
 	it.each([
@@ -646,7 +647,7 @@ describe("transact", () => {
 				first.n = 99;
 			},
 		},
-	])("unwinds every rollable claim when the callback aborts ($order)", ({ write }) => {
+	])("rolls back only the transacted state when the callback aborts ($order)", ({ write }) => {
 		const absorb = (_flush: () => void): void => undefined;
 		const rollableA = createMutableState({ n: 0 }, { emitOn: absorb });
 		const rollableB = createMutableState({ n: 0 }, { emitOn: absorb });
@@ -667,8 +668,8 @@ describe("transact", () => {
 		).toThrow(callbackError);
 
 		expect(rollableA.n).toBe(0);
-		expect(rollableB.n).toBe(0);
-		expect(alsoRollable.n).toBe(0);
+		expect(rollableB.n).toBe(1);
+		expect(alsoRollable.n).toBe(99);
 	});
 
 	it("attaches a prepare failure as a non-enumerable cause when rollback also fails", () => {
@@ -823,7 +824,7 @@ describe("transact", () => {
 		expect(stateA.map.get("k")?.n).toBe(9);
 	});
 
-	it("delivers a shared write per-route in both states' streams", () => {
+	it("delivers a shared write per-route in both states' streams", async () => {
 		const shared: { n: number } = { n: 1 };
 		const stateA = createMutableState({ map: new TrackedMap<string, { n: number }>() });
 		const stateB = createMutableState({ map: new TrackedMap<string, { n: number }>() });
@@ -853,21 +854,26 @@ describe("transact", () => {
 			{ tag: "shared" },
 		);
 
-		const expected = [
-			{
-				ops: [
-					{
-						do: { verb: "assign", path: ["map", "slots", 0, 1, "n"], value: 5 },
-						undo: { verb: "assign", path: ["map", "slots", 0, 1, "n"], value: 1 },
-					},
-				],
-				meta: { tag: "shared" },
-			},
-		];
+		const sharedWrite = {
+			ops: [
+				{
+					do: { verb: "assign", path: ["map", "slots", 0, 1, "n"], value: 5 },
+					undo: { verb: "assign", path: ["map", "slots", 0, 1, "n"], value: 1 },
+				},
+			],
+		};
 
-		expect(heardA.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(expected);
-		expect(heardB.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual(expected);
+		expect(heardA.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{ ...sharedWrite, meta: { tag: "shared" } },
+		]);
+		expect(heardB).toEqual([]);
 		expect(stateB.map.get("k")?.n).toBe(5);
+
+		await Promise.resolve();
+
+		expect(heardB.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{ ...sharedWrite, meta: undefined },
+		]);
 	});
 
 	it("mints a link-undo removal in one state that ignores the other graph's routes and applies onto that state's replica alone", () => {
@@ -940,7 +946,7 @@ describe("transact", () => {
 		expect(heardB).toEqual([]);
 	});
 
-	it("rolls a dirty sibling back to the frame-open snapshot and later emits its pending Write", async () => {
+	it("leaves another state's write standing when the transacted state rolls back", async () => {
 		const shared = { n: 1 };
 		const stateA = createMutableState({ box: shared });
 		const stateB = createMutableState({ box: shared, bare: 0 });
@@ -967,7 +973,7 @@ describe("transact", () => {
 
 		expect(stateA.box.n).toBe(1);
 		expect(stateB.box.n).toBe(1);
-		expect(stateB.bare).toBe(1);
+		expect(stateB.bare).toBe(2);
 		expect(heardA).toEqual([]);
 		expect(heardB).toEqual([]);
 
@@ -978,7 +984,7 @@ describe("transact", () => {
 			{
 				ops: [
 					{
-						do: { verb: "assign", path: ["bare"], value: 1 },
+						do: { verb: "assign", path: ["bare"], value: 2 },
 						undo: { verb: "assign", path: ["bare"], value: 0 },
 					},
 				],
