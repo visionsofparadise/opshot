@@ -26,6 +26,7 @@ interface Claim {
 
 export interface Transaction {
 	readonly claimed: Array<Claim>;
+	readonly openSnapshots: ReadonlyMap<EmitterRecord, object>;
 }
 
 const requireObjectSnapshot = (value: unknown): object => {
@@ -56,6 +57,18 @@ const scheduleFlush = (record: EmitterRecord): void => {
 	});
 };
 
+const unreportedRecords = new Set<EmitterRecord>();
+
+const markUnreported = (record: EmitterRecord): void => {
+	record.hasUnreported = true;
+	unreportedRecords.add(record);
+};
+
+const clearUnreported = (record: EmitterRecord): void => {
+	record.hasUnreported = false;
+	unreportedRecords.delete(record);
+};
+
 let currentTransaction: Transaction | undefined;
 
 export const isTransactionOpen = (): boolean => currentTransaction !== undefined;
@@ -68,7 +81,13 @@ const claimFor = (transaction: Transaction, record: EmitterRecord, wasDirty: boo
 };
 
 export const openTransaction = (): Transaction => {
-	const transaction: Transaction = { claimed: [] };
+	const openSnapshots = new Map<EmitterRecord, object>();
+
+	for (const record of unreportedRecords) {
+		openSnapshots.set(record, snapshot(record.writeProxy));
+	}
+
+	const transaction: Transaction = { claimed: [], openSnapshots };
 
 	currentTransaction = transaction;
 
@@ -89,7 +108,7 @@ export const armEmitter = (record: EmitterRecord): void => {
 		() => {
 			const wasDirty = record.hasUnreported;
 
-			record.hasUnreported = true;
+			markUnreported(record);
 
 			const open = currentTransaction;
 
@@ -110,29 +129,34 @@ export const disarmEmitter = (record: EmitterRecord): void => {
 	record.disarmEmission = undefined;
 };
 
-const reportRecord = (
+const reportRange = (
 	record: EmitterRecord,
+	from: object,
+	to: object,
 	meta: unknown,
 	channelId: object | undefined,
 ): PendingDelivery | undefined => {
-	const current = snapshot(record.writeProxy);
+	clearUnreported(record);
 
-	record.hasUnreported = false;
+	if (from === to) return undefined;
 
-	if (current === record.lastReported) return undefined;
-
-	const previous = record.lastReported;
-
-	record.lastReported = current;
+	record.lastReported = to;
 
 	if (!hasListeners(record)) return undefined;
 
-	const ops = diffObjects(requireObjectSnapshot(previous), requireObjectSnapshot(current));
+	const ops = diffObjects(requireObjectSnapshot(from), requireObjectSnapshot(to));
 
 	if (ops.length === 0) return undefined;
 
 	return prepareDelivery(record, ops, meta, channelId);
 };
+
+const reportRecord = (
+	record: EmitterRecord,
+	meta: unknown,
+	channelId: object | undefined,
+): PendingDelivery | undefined =>
+	reportRange(record, record.lastReported, snapshot(record.writeProxy), meta, channelId);
 
 export const reportBareDiff = (record: EmitterRecord): void => {
 	const pending = reportRecord(record, undefined, undefined);
@@ -163,10 +187,26 @@ export const prepareTransactionReport = (
 
 	for (const claim of transaction.claimed) {
 		try {
-			const pending = reportRecord(
+			const openSnapshot = transaction.openSnapshots.get(claim.record);
+
+			if (claim.wasDirty && openSnapshot !== undefined) {
+				const pendingWrite = reportRange(
+					claim.record,
+					claim.record.lastReported,
+					openSnapshot,
+					undefined,
+					undefined,
+				);
+
+				if (pendingWrite !== undefined) prepared.push(pendingWrite);
+			}
+
+			const pending = reportRange(
 				claim.record,
-				claim.wasDirty ? undefined : meta,
-				claim.wasDirty ? undefined : channelId,
+				claim.record.lastReported,
+				snapshot(claim.record.writeProxy),
+				meta,
+				channelId,
 			);
 
 			if (pending !== undefined) prepared.push(pending);
@@ -194,7 +234,7 @@ export const restoreDirtyLedgers = (transaction: Transaction): void => {
 		if (!claim.wasDirty) continue;
 
 		claim.record.lastReported = claim.baseline;
-		claim.record.hasUnreported = true;
+		markUnreported(claim.record);
 		claim.record.pending = false;
 	}
 };
@@ -211,25 +251,26 @@ export const rollbackTransaction = (transaction: Transaction): void => {
 	const failures: Array<unknown> = [];
 
 	for (const claim of [...transaction.claimed]) {
-		if (claim.wasDirty) continue;
-
 		try {
-			const { record, baseline } = claim;
+			const { record, baseline, wasDirty } = claim;
+			const openSnapshot = transaction.openSnapshots.get(record);
+			const target = wasDirty && openSnapshot !== undefined ? openSnapshot : baseline;
 			const operations = diffObjects(
 				requireObjectSnapshot(snapshot(record.writeProxy)),
-				requireObjectSnapshot(baseline),
+				requireObjectSnapshot(target),
 			);
 
-			if (operations.length === 0) {
-				record.lastReported = baseline;
-				record.hasUnreported = false;
-
-				continue;
+			if (operations.length > 0) {
+				applyMutations(record.writeProxy, operations, "do");
 			}
 
-			applyMutations(record.writeProxy, operations, "do");
 			record.lastReported = baseline;
-			record.hasUnreported = false;
+
+			if (wasDirty && openSnapshot !== undefined) {
+				markUnreported(record);
+			} else {
+				clearUnreported(record);
+			}
 		} catch (error) {
 			failures.push(error);
 		}

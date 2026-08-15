@@ -171,7 +171,7 @@ describe("createChannel", () => {
 		expect(heard[0]).toBe(bag);
 	});
 
-	it("a bare-reporting record inside a channel transaction reaches the channel as isTransaction false", () => {
+	it("a dirty covering record reaches the channel as a Write then a Transaction write", () => {
 		const channel = createChannel<{ actor: string }>();
 		const state = createMutableState({ a: { n: 0 }, bare: 0 });
 		const heard = new Array<{ isTransaction: boolean; meta: unknown }>();
@@ -191,6 +191,9 @@ describe("createChannel", () => {
 			{ actor: "me" },
 		);
 
-		expect(heard).toEqual([{ isTransaction: false, meta: undefined }]);
+		expect(heard).toEqual([
+			{ isTransaction: false, meta: undefined },
+			{ isTransaction: true, meta: { actor: "me" } },
+		]);
 	});
 });
