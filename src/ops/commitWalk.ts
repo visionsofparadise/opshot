@@ -41,7 +41,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 	const shared = new Set<object>();
 	const handle = handleOf(root);
 	const publishedOrigin = rawTargetOf(root);
-	const publishedFromHandle: unknown = handle !== undefined ? (handle as { root: unknown }).root : undefined;
+	const publishedFromHandle: unknown = handle !== undefined ? handle.proxy.root : undefined;
 	const publishedOriginTracked =
 		handle !== undefined
 			? typeof publishedFromHandle === "object" &&
@@ -52,7 +52,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 	const visit = (node: object): void => {
 		const live = rawTargetOf(node);
 
-		if (handle !== undefined && live === rawTargetOf(handle)) {
+		if (handle !== undefined && live === rawTargetOf(handle.proxy)) {
 			const published: unknown = (node as { root: unknown }).root;
 
 			if (typeof published === "object" && published !== null && admissionLane(published) !== "untracked") {
@@ -90,7 +90,7 @@ export const createRouteIndex = (root: object): RouteIndex => {
 	};
 
 	if (handle !== undefined) {
-		visit(handle);
+		visit(handle.proxy);
 	} else if (publishedOriginTracked) {
 		visit(root);
 	}

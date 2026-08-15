@@ -1,7 +1,7 @@
-import { proxy } from "valtio/vanilla";
+import { proxy, snapshot } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
-import { mintGroupedEmitter } from "./emit/emitterBare";
-import { registerHandle } from "./handle";
+import { armWatch } from "./emit/emitterBare";
+import { registerHandle, type Handle } from "./handle";
 import { getOptions, stampOptions, type MutableNodeOptions } from "./settings";
 import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";
 import { assertInitializerStrictnessJoins, assertSafeDataPaths, installBoundary } from "./valtio/boundary";
@@ -54,16 +54,26 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	assertInitializerStrictnessJoins(properties, receiverOptions?.strict !== false);
 
-	const handle = { root: base };
-	const proxiedHandle = proxy(handle);
+	const instrumented = proxy({ root: base });
+	const lastSnapshot: unknown = snapshot(instrumented.root);
 
-	registerHandle(base, proxiedHandle);
-
-	const proxied = proxiedHandle.root;
-
-	if (options?.group !== undefined) {
-		mintGroupedEmitter(proxied, getGroupChain(options.group));
+	if (lastSnapshot === null || (typeof lastSnapshot !== "object" && typeof lastSnapshot !== "function")) {
+		throw new Error("opshot: state snapshots must have an object root");
 	}
 
-	return proxied;
+	const handle: Handle = {
+		proxy: instrumented,
+		lastSnapshot,
+		hasPendingWrites: false,
+		isFlushScheduled: false,
+		isFlushHeld: false,
+		flushGeneration: 0,
+		subscribers: new Map(),
+		groups: options?.group !== undefined ? getGroupChain(options.group) : undefined,
+	};
+
+	registerHandle(base, handle);
+	armWatch(handle);
+
+	return instrumented.root;
 }

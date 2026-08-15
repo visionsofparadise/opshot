@@ -1,5 +1,5 @@
-import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
-import { resolveWriteProxy } from "./resolveWriteProxy";
+import { unstable_getInternalStates } from "valtio/vanilla";
+import type { Handle } from "../handle";
 import type { Operation } from "../ops/operation";
 
 /**
@@ -30,54 +30,13 @@ export type GroupDeliver = (
 	channelId: object | undefined,
 ) => void;
 
-type StateListeners = Map<Function, Map<object | undefined, StateDeliver>>;
+export type StateListeners = Map<Function, Map<object | undefined, StateDeliver>>;
 
 export type GroupListeners = Map<Function, Map<object | undefined, GroupDeliver>>;
-
-export interface EmitterRecord {
-	listeners: StateListeners;
-	groupChain?: ReadonlyArray<GroupListeners>;
-	lastReported: object;
-	disarmEmission?: () => void;
-	readonly writeProxy: object;
-	pending: boolean;
-	hasUnreported: boolean;
-	claimed: boolean;
-}
-
-const emitters = new WeakMap<object, EmitterRecord>();
 
 const { proxyStateMap } = unstable_getInternalStates();
 
 export const targetOf = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
 
-export function getEmitter(state: object): EmitterRecord | undefined {
-	return emitters.get(resolveWriteProxy(state));
-}
-
-export const hasListeners = (record: EmitterRecord): boolean =>
-	record.listeners.size > 0 || (record.groupChain?.some((map) => map.size > 0) ?? false);
-
-export function getOrCreateEmitter(writeProxy: object, groupChain?: ReadonlyArray<GroupListeners>): EmitterRecord {
-	const existing = emitters.get(writeProxy);
-
-	if (existing !== undefined) return existing;
-
-	const record: EmitterRecord = {
-		listeners: new Map(),
-		groupChain,
-		lastReported: snapshot(writeProxy),
-		writeProxy,
-		pending: false,
-		hasUnreported: false,
-		claimed: false,
-	};
-
-	emitters.set(writeProxy, record);
-
-	return record;
-}
-
-export function deleteEmitter(writeProxy: object): void {
-	emitters.delete(writeProxy);
-}
+export const hasListeners = (handle: Handle): boolean =>
+	handle.subscribers.size > 0 || (handle.groups?.some((map) => map.size > 0) ?? false);

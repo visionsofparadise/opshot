@@ -1,6 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { createMutableState } from "./createMutableState";
-import { handleOf, registerHandle } from "./handle";
+import { handleOf, registerHandle, type Handle } from "./handle";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -13,7 +13,15 @@ describe("handleOf", () => {
 
 	it("returns the registered object for that target", () => {
 		const target = {};
-		const registered = { root: target };
+		const registered: Handle = {
+			proxy: { root: target },
+			lastSnapshot: target,
+			hasPendingWrites: false,
+			isFlushScheduled: false,
+			isFlushHeld: false,
+			flushGeneration: 0,
+			subscribers: new Map(),
+		};
 
 		registerHandle(target, registered);
 
@@ -24,8 +32,10 @@ describe("handleOf", () => {
 describe("createMutableState registration", () => {
 	it("registers the raw target of a tracked factory return and does not put root on it", () => {
 		const state = createMutableState({ n: 1 });
+		const handle = handleOf(rawTargetOf(state));
 
-		expect(handleOf(rawTargetOf(state))).toBeDefined();
+		expect(handle).toBeDefined();
+		expect(handle?.proxy.root).toBe(state);
 		expect(Object.hasOwn(state, "root")).toBe(false);
 	});
 

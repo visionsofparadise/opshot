@@ -1,11 +1,10 @@
 import { createGroup } from "../createGroup";
 import { createMutableState } from "../createMutableState";
+import { handleOf } from "../handle";
 import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
-import { emitBareFlush } from "./emitterBare";
-import { getEmitter } from "./emitterRegistry";
 import { addStateListener, holdsBinding } from "./emitterListeners";
 import { shapeOps } from "../ops/operationShape";
 
@@ -21,7 +20,7 @@ describe("emitterListeners", () => {
 			state.count = 1;
 		});
 
-		expect(getEmitter(state)).toBeUndefined();
+		expect(handleOf(state)).toBeDefined();
 		expect(diffObjects).not.toHaveBeenCalled();
 		expect(state.count).toBe(1);
 	});
@@ -238,7 +237,7 @@ describe("emitterListeners", () => {
 		);
 	});
 
-	it("delivers a bare write pending at teardown before unsubscribe returns", () => {
+	it("delivers a bare write pending at teardown before unsubscribe returns", async () => {
 		const state = createMutableState({ count: 0 });
 		const firstHeard = new Array<ReadonlyArray<Operation>>();
 		const firstListener = (ops: ReadonlyArray<Operation>): void => {
@@ -261,7 +260,7 @@ describe("emitterListeners", () => {
 		addStateListener(state, secondListener, undefined, secondListener);
 
 		state.count = 2;
-		emitBareFlush(state);
+		await Promise.resolve();
 
 		expect(secondHeard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],

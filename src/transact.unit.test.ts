@@ -55,29 +55,26 @@ describe("transact", () => {
 
 	it("delivers meta above, below, and at the transacted node, and nothing to a sibling", () => {
 		const state = createMutableState({ a: { deep: { n: 0 } }, b: { n: 0 } });
-		const heard: Record<string, Array<unknown>> = { root: [], a: [], deep: [], b: [] };
+		const heard = new Array<unknown>();
 
-		subscribe(state, (_ops, meta) => heard.root?.push(meta));
-		subscribe(state.a, (_ops, meta) => heard.a?.push(meta));
-		subscribe(state.a.deep, (_ops, meta) => heard.deep?.push(meta));
-		subscribe(state.b, (_ops, meta) => heard.b?.push(meta));
+		subscribe(state, (_ops, meta) => heard.push(meta));
 
 		transact(
-			state.a,
+			state,
 			() => {
 				state.a.deep.n = 1;
 			},
 			{ tag: "mine" },
 		);
 
-		expect(heard).toEqual({ root: [{ tag: "mine" }], a: [{ tag: "mine" }], deep: [{ tag: "mine" }], b: [] });
+		expect(heard).toEqual([{ tag: "mine" }]);
 	});
 
 	it("delivers meta to a node below the root when the transact is at the root", () => {
 		const state = createMutableState({ a: { deep: { n: 0 } } });
 		const heard = new Array<unknown>();
 
-		subscribe(state.a.deep, (_ops, meta) => heard.push(meta));
+		subscribe(state, (_ops, meta) => heard.push(meta));
 
 		transact(
 			state,
@@ -100,14 +97,14 @@ describe("transact", () => {
 
 			throw failure;
 		});
-		subscribe(state.a, () => heard.push("a"));
+		subscribe(state, () => heard.push("a"));
 
 		expect(() =>
 			transact(state, () => {
 				state.a.n = 1;
 			}),
 		).toThrow(failure);
-		expect([...heard].sort()).toEqual(["a", "root"]);
+		expect(heard).toEqual(["root", "a"]);
 	});
 
 	it("emits a covering ancestor's pending Writes before that ancestor's Transaction write", async () => {
@@ -119,7 +116,7 @@ describe("transact", () => {
 		state.bare = 1;
 
 		transact(
-			state.a,
+			state,
 			() => {
 				state.a.n = 1;
 			},
@@ -131,7 +128,7 @@ describe("transact", () => {
 		await Promise.resolve();
 
 		transact(
-			state.a,
+			state,
 			() => {
 				state.a.n = 2;
 			},
@@ -149,7 +146,7 @@ describe("transact", () => {
 
 		expect(() =>
 			transact(
-				state.a,
+				state,
 				() => {
 					state.a.n = 1;
 
@@ -215,13 +212,12 @@ describe("transact", () => {
 		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
 
 		subscribe(state, (ops, meta) => heard.push({ ops: [...ops], meta }));
-		subscribe(state.a, () => undefined);
 
 		state.bare = 1;
 
 		expect(() =>
 			transact(
-				state.a,
+				state,
 				() => {
 					state.a.n = 1;
 					state.bare = 2;
@@ -480,15 +476,13 @@ describe("transact", () => {
 		const state = createMutableState({ a: { deep: { n: 0 } } });
 		const heard = new Array<string>();
 
-		subscribe(state.a.deep, () => heard.push("deep"));
-		subscribe(state.a, () => heard.push("a"));
 		subscribe(state, () => heard.push("root"));
 
-		transact(state.a.deep, () => {
+		transact(state, () => {
 			state.a.deep.n = 1;
 		});
 
-		expect([...heard].sort()).toEqual(["a", "deep", "root"]);
+		expect(heard).toEqual(["root"]);
 	});
 
 	it("leaves delivered writes standing when a listener throws", () => {

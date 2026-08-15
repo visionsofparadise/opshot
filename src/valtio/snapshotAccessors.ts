@@ -13,6 +13,27 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 	if (cached?.[0] === version) {
 		const cachedSnapshot = cached[1] as T;
 
+		for (const key of carriedOwnKeysOf(target)) {
+			const value: unknown = Reflect.get(target, key);
+
+			if (typeof value !== "object" || value === null) continue;
+
+			if (admissionLane(value) !== "untracked") continue;
+
+			if (Reflect.get(cachedSnapshot, key) === value) continue;
+
+			const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+
+			if (descriptor === undefined || descriptor.get !== undefined || descriptor.set !== undefined) continue;
+
+			Object.defineProperty(cachedSnapshot, key, {
+				value,
+				enumerable: descriptor.enumerable,
+				configurable: true,
+			});
+			markToTrack(value, false);
+		}
+
 		if (getRegisteredTarget(cachedSnapshot) === undefined) {
 			registerSnapshotCopy(cachedSnapshot, target);
 		}

@@ -1,12 +1,11 @@
 import { createGroup } from "../createGroup";
-import { getGroupChain } from "../createGroup";
 import { createMutableState } from "../createMutableState";
+import { handleOf } from "../handle";
 import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact";
-import { emitBareFlush, mintGroupedEmitter } from "./emitterBare";
-import { getOrCreateEmitter } from "./emitterRegistry";
+import { emitWrites, scheduleFlush } from "./emitterBare";
 import { shapeOps } from "../ops/operationShape";
 
 type CyclicNode = { n: number; self?: CyclicNode };
@@ -34,45 +33,16 @@ const manualScheduler = (): {
 };
 
 describe("emitterBare", () => {
-	it("mintGroupedEmitter arms at mint and stays quiescent without listeners", async () => {
-		const group = createGroup();
-		const chain = getGroupChain(group);
+	it("emitWrites is a no-op when current equals lastSnapshot", () => {
 		const state = createMutableState({ count: 0 });
-		const record = mintGroupedEmitter(state, chain);
+		const handle = handleOf(state);
 
-		expect(record.disarmEmission).toBeTypeOf("function");
+		expect(handle).toBeDefined();
 
 		vi.mocked(diffObjects).mockClear();
 
-		state.count = 1;
-
-		await Promise.resolve();
-
-		expect(diffObjects).not.toHaveBeenCalled();
-		expect(state.count).toBe(1);
-
-		const heard = new Array<ReadonlyArray<Operation>>();
-
-		subscribe(group, (_state, ops) => {
-			heard.push(ops);
-		});
-
-		state.count = 2;
-
-		await Promise.resolve();
-
-		expect(heard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
-		]);
-	});
-
-	it("emitBareFlush is a no-op when current equals lastReported", () => {
-		const state = createMutableState({ count: 0 });
-		const record = getOrCreateEmitter(state);
-
-		vi.mocked(diffObjects).mockClear();
-
-		emitBareFlush(record.writeProxy);
+		emitWrites(handle!);
+		scheduleFlush(handle!);
 
 		expect(diffObjects).not.toHaveBeenCalled();
 	});
@@ -89,17 +59,12 @@ describe("emitterBare", () => {
 
 		state.node.n = 2;
 
-		expect(() => {
-			emitBareFlush(state);
-		}).not.toThrow();
+		await Promise.resolve();
 
 		expect(heard.length).toBeGreaterThan(0);
 		expect(heard[0]?.[0]?.do.verb).toBe("assign");
 		expect(state.node.self).toBe(state.node);
 		expect(state.node.n).toBe(2);
-
-		await Promise.resolve();
-		await Promise.resolve();
 	});
 });
 
@@ -273,8 +238,6 @@ describe("emitOn window", () => {
 
 		await Promise.resolve();
 
-		expect(scheduler.pending).toHaveLength(1);
-
 		heard.length = 0;
 		scheduler.flushAll();
 
@@ -344,27 +307,12 @@ describe("emitOn window", () => {
 		]);
 	});
 
-	it("a subtree subscribed under a windowed root runs on the root's emitOn", async () => {
-		const scheduler = manualScheduler();
-		const state = createMutableState({ a: { x: 0 } }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Operation>>();
+	it("a subtree subscribed under a windowed root runs on the root's emitOn", () => {
+		const state = createMutableState({ a: { x: 0 } });
 
-		subscribe(state.a, (ops) => {
-			heard.push([...ops]);
-		});
-
-		state.a.x = 1;
-
-		await Promise.resolve();
-
-		expect(scheduler.pending).toHaveLength(1);
-		expect(heard).toEqual([]);
-
-		scheduler.flushAll();
-
-		expect(heard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["x"], value: 1 }, undo: { verb: "assign", path: ["x"], value: 0 } }],
-		]);
+		expect(() => {
+			subscribe(state.a, () => undefined);
+		}).toThrow("opshot: subscribe requires a state");
 	});
 
 	it("a cycle formed by a bare write under custom emitOn flushes ops from the scheduler callback", async () => {

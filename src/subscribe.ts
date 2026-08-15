@@ -22,7 +22,7 @@ export function subscribe(group: Group, listener: GroupListener): () => void;
 /**
  * Listens for changes to a state.
  *
- * @param state - State (or nested object) to listen to.
+ * @param state - State to listen to.
  * @param listener - Called on each change.
  * @returns Unsubscribe function.
  */

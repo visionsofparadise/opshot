@@ -1,15 +1,13 @@
 import {
 	closeTransaction,
-	deliverPreparedReport,
-	failedRecords,
-	flushPendingWritesOfState,
+	emitTransactionWrites,
+	emitWrites,
 	isTransactionOpen,
 	openTransaction,
-	prepareTransactionReport,
-	releaseTransactionToWindows,
-	restoreDirtyLedgers,
+	releaseHold,
 	rollbackTransaction,
 } from "./emit/emitterBare";
+import { requireHandle } from "./handle";
 
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
@@ -41,58 +39,56 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		);
 	}
 
-	flushPendingWritesOfState(state);
+	const handle = requireHandle(state, "opshot: transact requires a state");
 
-	const transaction = openTransaction(state);
+	handle.flushGeneration += 1;
+	handle.isFlushScheduled = false;
 
-	let completed = false;
-	let mutateError: unknown;
+	const ownsHold = !handle.isFlushHeld;
+
+	handle.isFlushHeld = true;
 
 	try {
-		mutate();
-		completed = true;
-	} catch (error) {
-		mutateError = error;
+		emitWrites(handle);
 
-		throw error;
-	} finally {
-		closeTransaction(transaction);
+		const transaction = openTransaction(handle);
 
-		if (!completed) {
+		let completed = false;
+		let mutateError: unknown;
+
+		try {
+			mutate();
+			completed = true;
+		} catch (error) {
+			mutateError = error;
+
+			throw error;
+		} finally {
+			closeTransaction(transaction);
+
+			if (!completed) {
+				try {
+					rollbackTransaction(transaction);
+				} catch (rollbackError) {
+					attachRollbackCause(mutateError, rollbackError);
+				}
+			}
+		}
+
+		try {
+			emitTransactionWrites(handle, meta, channelId);
+		} catch (error) {
 			try {
 				rollbackTransaction(transaction);
 			} catch (rollbackError) {
-				attachRollbackCause(mutateError, rollbackError);
+				attachRollbackCause(error, rollbackError);
 			}
 
-			releaseTransactionToWindows(transaction);
-		}
-	}
-
-	const report = prepareTransactionReport(transaction, meta, channelId);
-
-	if (report.failures.length > 0) {
-		const [soleFailure, ...otherFailures] = report.failures;
-		const raised: unknown =
-			soleFailure !== undefined && otherFailures.length === 0
-				? soleFailure.error
-				: new AggregateError(
-						report.failures.map((failure) => failure.error),
-						"opshot: failures during reporting",
-					);
-
-		try {
-			rollbackTransaction(transaction);
-		} catch (rollbackError) {
-			attachRollbackCause(raised, rollbackError);
+			throw error;
 		}
 
-		restoreDirtyLedgers(transaction);
-		releaseTransactionToWindows(transaction, failedRecords(report));
-
-		throw raised;
+		emitWrites(handle);
+	} finally {
+		releaseHold(handle, ownsHold);
 	}
-
-	deliverPreparedReport(report);
-	flushPendingWritesOfState(state);
 }

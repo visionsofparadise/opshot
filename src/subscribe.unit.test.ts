@@ -242,72 +242,16 @@ describe("subscribe", () => {
 		expect(order).toEqual(["A", "B", "C"]);
 	});
 
-	it("node subscription delivers node-relative paths and is silent for sibling writes", async () => {
-		const state = createMutableState({ a: { x: 0 }, b: { y: 0 } });
-		const nodeHeard = new Array<ReadonlyArray<Operation>>();
-		const rootHeard = new Array<ReadonlyArray<Operation>>();
+	it("throws when subscribe targets a nested node or a scalar field", () => {
+		const state = createMutableState({ a: { x: 0 } });
 
-		subscribe(state.a, (ops) => {
-			nodeHeard.push([...ops]);
-		});
-		subscribe(state, (ops) => {
-			rootHeard.push([...ops]);
-		});
+		expect(() => {
+			subscribe(state.a, () => undefined);
+		}).toThrow("opshot: subscribe requires a state");
 
-		state.a.x = 1;
-		await Promise.resolve();
-
-		expect(nodeHeard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["x"], value: 1 }, undo: { verb: "assign", path: ["x"], value: 0 } }],
-		]);
-		expect(rootHeard.map(shapeOps)).toEqual([
-			[
-				{
-					do: { verb: "assign", path: ["a", "x"], value: 1 },
-					undo: { verb: "assign", path: ["a", "x"], value: 0 },
-				},
-			],
-		]);
-
-		nodeHeard.length = 0;
-		rootHeard.length = 0;
-
-		state.b.y = 2;
-		await Promise.resolve();
-
-		expect(nodeHeard).toEqual([]);
-		expect(rootHeard.map(shapeOps)).toEqual([
-			[
-				{
-					do: { verb: "assign", path: ["b", "y"], value: 2 },
-					undo: { verb: "assign", path: ["b", "y"], value: 0 },
-				},
-			],
-		]);
-	});
-
-	it("unsubscribing a node listener leaves the root listener intact", async () => {
-		const state = createMutableState({ a: { x: 0 }, b: { y: 0 } });
-		const rootHeard = new Array<ReadonlyArray<Operation>>();
-		const stopNode = subscribe(state.a, () => undefined);
-
-		subscribe(state, (ops) => {
-			rootHeard.push([...ops]);
-		});
-
-		stopNode();
-
-		state.a.x = 1;
-		await Promise.resolve();
-
-		expect(rootHeard.map(shapeOps)).toEqual([
-			[
-				{
-					do: { verb: "assign", path: ["a", "x"], value: 1 },
-					undo: { verb: "assign", path: ["a", "x"], value: 0 },
-				},
-			],
-		]);
+		expect(() => {
+			subscribe(state.a.x as unknown as object, () => undefined);
+		}).toThrow("opshot: subscribe requires a state");
 	});
 
 	it("delivers a transaction below the root to a group listener and to its channel", () => {
@@ -321,7 +265,7 @@ describe("subscribe", () => {
 		channel.subscribe(group, (_state, _ops, context) => channelHeard.push(context));
 
 		channel.transact(
-			state.a,
+			state,
 			() => {
 				state.a.n = 1;
 			},
@@ -344,7 +288,7 @@ describe("subscribe", () => {
 
 		const heard = new Array<unknown>();
 
-		subscribe(state.a, (_ops, meta) => heard.push(meta));
+		subscribe(state, (_ops, meta) => heard.push(meta));
 
 		applyOperations(state, recorded, "undo", { replay: true });
 
@@ -355,7 +299,7 @@ describe("subscribe", () => {
 	it("throws when applyOperations runs inside a transact", () => {
 		const state = createMutableState({ a: { n: 0 }, top: 0 });
 		const recorded = new Array<Operation>();
-		const stopRecording = subscribe(state.a, (ops) => recorded.push(...ops));
+		const stopRecording = subscribe(state, (ops) => recorded.push(...ops));
 
 		transact(state, () => {
 			state.a.n = 1;
@@ -467,13 +411,5 @@ describe("subscribe", () => {
 		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
-	});
-
-	it("throws when the target is a scalar field", () => {
-		const state = createMutableState({ a: { x: 0 } });
-
-		expect(() => {
-			subscribe(state.a.x as unknown as object, () => undefined);
-		}).toThrow("opshot: expected a state object");
 	});
 });

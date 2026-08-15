@@ -1,4 +1,5 @@
-import type { EmitterRecord, GroupDeliver, StateDeliver } from "./emitterRegistry";
+import type { GroupDeliver, StateDeliver } from "./emitterRegistry";
+import type { Handle } from "../handle";
 import type { Operation } from "../ops/operation";
 
 type Delivery =
@@ -13,10 +14,10 @@ export interface PendingDelivery {
 	readonly channelId: object | undefined;
 }
 
-const collectDeliveries = (record: EmitterRecord): Array<Delivery> => {
+const collectDeliveries = (handle: Handle): Array<Delivery> => {
 	const deliveries: Array<Delivery> = [];
 
-	for (const groupListeners of record.groupChain ?? []) {
+	for (const groupListeners of handle.groups ?? []) {
 		for (const byChannel of groupListeners.values()) {
 			for (const deliverToListener of byChannel.values()) {
 				deliveries.push({ kind: "group", deliver: deliverToListener });
@@ -24,7 +25,7 @@ const collectDeliveries = (record: EmitterRecord): Array<Delivery> => {
 		}
 	}
 
-	for (const byChannel of record.listeners.values()) {
+	for (const byChannel of handle.subscribers.values()) {
 		for (const deliverToListener of byChannel.values()) {
 			deliveries.push({ kind: "own", deliver: deliverToListener });
 		}
@@ -61,13 +62,13 @@ const deliveryFailures: Array<unknown> = [];
 let isDraining = false;
 
 export const prepareDelivery = (
-	record: EmitterRecord,
+	handle: Handle,
 	ops: ReadonlyArray<Operation>,
 	meta: unknown,
 	channelId: object | undefined,
 ): PendingDelivery => ({
-	writeProxy: record.writeProxy,
-	deliveries: collectDeliveries(record),
+	writeProxy: handle.proxy.root,
+	deliveries: collectDeliveries(handle),
 	ops,
 	meta,
 	channelId,
@@ -75,10 +76,6 @@ export const prepareDelivery = (
 
 export const enqueueDelivery = (pending: PendingDelivery): void => {
 	queuedDeliveries.push(pending);
-};
-
-export const recordDeliveryFailure = (error: unknown): void => {
-	deliveryFailures.push(error);
 };
 
 export const drainDeliveries = (): void => {

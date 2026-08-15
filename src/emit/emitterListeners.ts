@@ -1,21 +1,12 @@
 import { snapshot } from "valtio/vanilla";
-import { armEmitter, disarmEmitter, reportBareDiff } from "./emitterBare";
-import {
-	deleteEmitter,
-	getOrCreateEmitter,
-	hasListeners,
-	type EmitterRecord,
-	type GroupDeliver,
-	type GroupListeners,
-	type StateDeliver,
-} from "./emitterRegistry";
-import { resolveWriteProxy } from "./resolveWriteProxy";
+import { requireHandle, type Handle } from "../handle";
+import { emitWrites } from "./emitterBare";
+import { hasListeners, type GroupDeliver, type GroupListeners, type StateDeliver } from "./emitterRegistry";
 
 interface StateBinding {
-	readonly record: EmitterRecord;
+	readonly handle: Handle;
 	readonly listener: Function;
 	readonly channelId: object | undefined;
-	readonly writeProxy: object;
 }
 
 interface GroupBinding {
@@ -34,22 +25,17 @@ export function addStateListener(
 	channelId: object | undefined,
 	deliver: StateDeliver,
 ): () => void {
-	const writeProxy = resolveWriteProxy(state);
-	const record = getOrCreateEmitter(writeProxy);
+	const handle = requireHandle(state, "opshot: subscribe requires a state");
 
-	if (record.disarmEmission === undefined && record.groupChain === undefined) {
-		armEmitter(record);
+	if (!hasListeners(handle)) {
+		handle.lastSnapshot = snapshot(handle.proxy.root);
 	}
 
-	if (!hasListeners(record)) {
-		record.lastReported = snapshot(record.writeProxy);
-	}
-
-	let byChannel = record.listeners.get(listener);
+	let byChannel = handle.subscribers.get(listener);
 
 	if (byChannel === undefined) {
 		byChannel = new Map();
-		record.listeners.set(listener, byChannel);
+		handle.subscribers.set(listener, byChannel);
 	}
 
 	byChannel.set(channelId, deliver);
@@ -59,7 +45,7 @@ export function addStateListener(
 
 		if (held === undefined) return;
 
-		const channels = held.record.listeners.get(held.listener);
+		const channels = held.handle.subscribers.get(held.listener);
 
 		if (channels?.has(held.channelId) !== true) {
 			bindings.delete(unsubscribe);
@@ -67,20 +53,15 @@ export function addStateListener(
 			return;
 		}
 
-		reportBareDiff(held.record);
+		emitWrites(held.handle);
 		channels.delete(held.channelId);
 
-		if (channels.size === 0) held.record.listeners.delete(held.listener);
-
-		if (held.record.groupChain === undefined && held.record.listeners.size === 0) {
-			disarmEmitter(held.record);
-			deleteEmitter(held.writeProxy);
-		}
+		if (channels.size === 0) held.handle.subscribers.delete(held.listener);
 
 		bindings.delete(unsubscribe);
 	};
 
-	bindings.set(unsubscribe, { record, listener, channelId, writeProxy });
+	bindings.set(unsubscribe, { handle, listener, channelId });
 
 	return unsubscribe;
 }

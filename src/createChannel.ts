@@ -37,7 +37,7 @@ export interface Channel<M extends object> {
 	/**
 	 * Listens for changes to a state.
 	 *
-	 * @param state - State (or nested object) to listen to.
+	 * @param state - State to listen to.
 	 * @param listener - Called on each change.
 	 * @returns Unsubscribe function.
 	 */

@@ -183,7 +183,7 @@ describe("createChannel", () => {
 		state.bare = 1;
 
 		channel.transact(
-			state.a,
+			state,
 			() => {
 				state.a.n = 1;
 				state.bare = 2;
