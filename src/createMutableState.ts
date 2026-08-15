@@ -19,6 +19,8 @@ export interface MutableStateOptions extends MutableNodeOptions {
 	 * Group that receives this state's changes.
 	 */
 	readonly group?: Group;
+
+	readonly onError?: (error: unknown) => void;
 }
 
 /**
@@ -54,25 +56,33 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	assertInitializerStrictnessJoins(properties, receiverOptions?.strict !== false);
 
-	const instrumented = proxy({ root: base });
-	const lastSnapshot: unknown = snapshot(instrumented.root);
-
-	if (lastSnapshot === null || (typeof lastSnapshot !== "object" && typeof lastSnapshot !== "function")) {
-		throw new Error("opshot: state snapshots must have an object root");
-	}
-
 	const handle: Handle = {
-		proxy: instrumented,
-		lastSnapshot,
+		proxy: { root: base },
+		lastSnapshot: base,
 		hasPendingWrites: false,
 		isFlushScheduled: false,
 		isFlushHeld: false,
 		flushGeneration: 0,
 		subscribers: new Map(),
 		groups: options?.group !== undefined ? getGroupChain(options.group) : undefined,
+		emitOn: options?.emitOn,
+		strict: options?.strict !== false,
+		onError: options?.onError,
 	};
 
 	registerHandle(base, handle);
+
+	const instrumented = proxy({ root: base });
+
+	handle.proxy = instrumented;
+
+	const lastSnapshot: unknown = snapshot(instrumented.root);
+
+	if (lastSnapshot === null || (typeof lastSnapshot !== "object" && typeof lastSnapshot !== "function")) {
+		throw new Error("opshot: state snapshots must have an object root");
+	}
+
+	handle.lastSnapshot = lastSnapshot;
 	armWatch(handle);
 
 	return instrumented.root;

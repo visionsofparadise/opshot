@@ -1,12 +1,15 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
+import type { EmissionScheduler } from "./settings";
 
-const handles = new WeakMap<object, Handle>();
+const occupancies = new WeakMap<object, Set<WeakRef<Handle>>>();
 
 const { proxyStateMap } = unstable_getInternalStates();
 
+const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
+
 export interface Handle {
-	readonly proxy: { readonly root: object };
+	proxy: { readonly root: object };
 	lastSnapshot: object;
 	hasPendingWrites: boolean;
 	isFlushScheduled: boolean;
@@ -15,17 +18,54 @@ export interface Handle {
 	subscribers: StateListeners;
 	groups?: ReadonlyArray<GroupListeners>;
 	disarmWatch?: () => void;
+	emitOn?: EmissionScheduler;
+	strict: boolean;
+	onError?: (error: unknown) => void;
 }
 
-export const registerHandle = (rootTarget: object, handle: Handle): void => {
-	handles.set(rootTarget, handle);
-};
+export function registerHandle(target: object, handle: Handle): void {
+	let occupants = occupancies.get(target);
 
-export const handleOf = (node: object): Handle | undefined => {
-	const target = proxyStateMap.get(node)?.[0] ?? node;
+	if (occupants === undefined) {
+		occupants = new Set();
+		occupancies.set(target, occupants);
+	}
 
-	return handles.get(target);
-};
+	occupants.add(new WeakRef(handle));
+}
+
+export function handlesOf(node: object): Array<Handle> {
+	const target = rawTargetOf(node);
+	const occupants = occupancies.get(target);
+
+	if (occupants === undefined) return [];
+
+	const handles = new Array<Handle>();
+
+	for (const reference of occupants) {
+		const handle = reference.deref();
+
+		if (handle === undefined) {
+			occupants.delete(reference);
+
+			continue;
+		}
+
+		handles.push(handle);
+	}
+
+	return handles;
+}
+
+export function handleOf(node: object): Handle | undefined {
+	const target = rawTargetOf(node);
+
+	for (const handle of handlesOf(node)) {
+		if (rawTargetOf(handle.proxy.root) === target) return handle;
+	}
+
+	return undefined;
+}
 
 export function requireHandle(state: object, message: string): Handle {
 	const value: unknown = state;

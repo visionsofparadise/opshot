@@ -168,7 +168,7 @@ describe("options inheritance through the boundary", () => {
 		expect(getOptions(target(destination.box))?.emitOn).toBe(emitA);
 	});
 
-	it("a restamped emitOn after the emitter record is minted flushes on the new scheduler", async () => {
+	it("a restamped emitOn after the handle bag is set flushes on the handle scheduler", async () => {
 		const firstPending = new Array<() => void>();
 		const secondPending = new Array<() => void>();
 		const first: EmissionScheduler = (flush) => {
@@ -190,11 +190,11 @@ describe("options inheritance through the boundary", () => {
 
 		await Promise.resolve();
 
-		expect(firstPending).toHaveLength(0);
-		expect(secondPending).toHaveLength(1);
+		expect(firstPending).toHaveLength(1);
+		expect(secondPending).toHaveLength(0);
 		expect(heard).toEqual([]);
 
-		secondPending[0]!();
+		firstPending[0]!();
 
 		expect(heard).toEqual([1]);
 	});

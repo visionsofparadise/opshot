@@ -1,6 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { createMutableState } from "./createMutableState";
-import { handleOf, registerHandle, type Handle } from "./handle";
+import { handleOf, handlesOf, registerHandle, type Handle } from "./handle";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -21,6 +21,7 @@ describe("handleOf", () => {
 			isFlushHeld: false,
 			flushGeneration: 0,
 			subscribers: new Map(),
+			strict: true,
 		};
 
 		registerHandle(target, registered);
@@ -37,6 +38,14 @@ describe("createMutableState registration", () => {
 		expect(handle).toBeDefined();
 		expect(handle?.proxy.root).toBe(state);
 		expect(Object.hasOwn(state, "root")).toBe(false);
+	});
+
+	it("handlesOf the raw factory target contains the handle", () => {
+		const state = createMutableState({ n: 1 });
+		const handle = handleOf(rawTargetOf(state));
+
+		expect(handle).toBeDefined();
+		expect(handlesOf(rawTargetOf(state))).toContain(handle);
 	});
 
 	it("does not register a frozen factory argument", () => {

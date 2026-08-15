@@ -1,5 +1,6 @@
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
+import { requireHandle } from "./handle";
 import { isSameIdentity } from "./identity";
 import { isState } from "./isState";
 import { ignore } from "./ignore";
@@ -223,6 +224,14 @@ describe("createMutableState", () => {
 		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["index"], value: 1 }, undo: { verb: "assign", path: ["index"], value: 0 } },
 		]);
+	});
+
+	it("requireHandle still throws for a nested node", () => {
+		const state = createMutableState({ a: { n: 1 } });
+
+		expect(() => requireHandle(state.a, "opshot: subscribe requires a state")).toThrow(
+			"opshot: subscribe requires a state",
+		);
 	});
 
 	it("keeps a retained input object out of the state", () => {

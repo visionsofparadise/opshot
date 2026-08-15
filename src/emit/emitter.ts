@@ -1,7 +1,6 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
 import { diffObjects } from "../ops/diff";
-import { getOptions } from "../settings";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery } from "./emitterDeliver";
@@ -24,7 +23,7 @@ export function scheduleFlush(handle: Handle): void {
 	};
 
 	void Promise.resolve().then(() => {
-		const emitOn = getOptions(targetOf(handle.proxy.root))?.emitOn;
+		const emitOn = handle.emitOn;
 
 		if (emitOn === undefined) {
 			run();
