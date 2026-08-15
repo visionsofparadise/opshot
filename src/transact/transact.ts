@@ -26,6 +26,25 @@ const attachRollbackCause = (error: unknown, rollbackError: unknown): void => {
 	});
 };
 
+const flattenDeliveryFailures = (error: unknown): Array<unknown> => {
+	if (error instanceof AggregateError && error.message === "opshot: listeners failed during delivery") {
+		return error.errors;
+	}
+
+	return [error];
+};
+
+const releaseUncaught = (failures: ReadonlyArray<unknown>): void => {
+	if (failures.length === 0) return;
+
+	const error =
+		failures.length === 1 ? failures[0] : new AggregateError(failures, "opshot: listeners failed during delivery");
+
+	queueMicrotask(() => {
+		throw error;
+	});
+};
+
 export function runTransaction(state: object, mutate: () => void, meta: unknown, channelId: object | undefined): void {
 	if (isTransactionOpen()) {
 		throw new Error(
@@ -42,8 +61,24 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 
 	handle.isFlushHeld = true;
 
+	const listenerFailures = new Array<unknown>();
+
+	const emitCollectingListeners = (emit: () => void): void => {
+		const baseline = handle.lastSnapshot;
+
+		try {
+			emit();
+		} catch (error) {
+			if (handle.lastSnapshot === baseline) throw error;
+
+			listenerFailures.push(...flattenDeliveryFailures(error));
+		}
+	};
+
 	try {
-		emitWrites(handle);
+		emitCollectingListeners(() => {
+			emitWrites(handle);
+		});
 
 		openTransaction();
 
@@ -69,24 +104,25 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 			}
 		}
 
-		const restoreTarget = handle.lastSnapshot;
-
 		try {
-			emitTransactionWrites(handle, meta, channelId);
+			emitCollectingListeners(() => {
+				emitTransactionWrites(handle, meta, channelId);
+			});
 		} catch (error) {
-			if (handle.lastSnapshot === restoreTarget) {
-				try {
-					rollbackTransaction(handle);
-				} catch (rollbackError) {
-					attachRollbackCause(error, rollbackError);
-				}
+			try {
+				rollbackTransaction(handle);
+			} catch (rollbackError) {
+				attachRollbackCause(error, rollbackError);
 			}
 
 			throw error;
 		}
 
-		emitWrites(handle);
+		emitCollectingListeners(() => {
+			emitWrites(handle);
+		});
 	} finally {
 		releaseHold(handle, ownsHold);
+		releaseUncaught(listenerFailures);
 	}
 }

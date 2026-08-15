@@ -2,6 +2,25 @@ import { createMutableState } from "../createMutableState";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
 
+const runCapturingUncaught = (run: () => void): unknown => {
+	let released: unknown;
+	const spy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => {
+		try {
+			callback();
+		} catch (error) {
+			released = error;
+		}
+	});
+
+	try {
+		run();
+
+		return released;
+	} finally {
+		spy.mockRestore();
+	}
+};
+
 interface Counter {
 	n: number;
 }
@@ -20,12 +39,14 @@ describe("deliver", () => {
 		});
 		subscribe(state, () => called.push("third"));
 
-		expect(() =>
+		const released = runCapturingUncaught(() => {
 			transact(state, () => {
 				state.n = 1;
-			}),
-		).toThrow(failure);
+			});
+		});
+
 		expect(called).toEqual(["first", "second", "third"]);
+		expect(released).toBe(failure);
 	});
 
 	it("aggregates several listener failures", () => {
@@ -40,18 +61,14 @@ describe("deliver", () => {
 			throw second;
 		});
 
-		let raised: unknown;
-
-		try {
+		const released = runCapturingUncaught(() => {
 			transact(state, () => {
 				state.n = 1;
 			});
-		} catch (error) {
-			raised = error;
-		}
+		});
 
-		expect(raised).toBeInstanceOf(AggregateError);
-		expect((raised as AggregateError).errors).toEqual([first, second]);
+		expect(released).toBeInstanceOf(AggregateError);
+		expect((released as AggregateError).errors).toEqual([first, second]);
 	});
 
 	it("delivers a re-entrant emission after the current loop rather than inside it", () => {
@@ -117,12 +134,14 @@ describe("deliver", () => {
 			heard.push("other");
 		});
 
-		expect(() =>
+		const released = runCapturingUncaught(() => {
 			transact(transacted, () => {
 				transacted.n += 1;
 				other.n += 1;
-			}),
-		).toThrow(transactedFailure);
+			});
+		});
+
+		expect(released).toBe(transactedFailure);
 		expect(heard).toEqual(["transacted"]);
 	});
 
@@ -221,11 +240,13 @@ describe("deliver", () => {
 		subscribe(effect, () => heard.push("effect"));
 		subscribe(later, () => heard.push("later"));
 
-		expect(() =>
+		const released = runCapturingUncaught(() => {
 			transact(cause, () => {
 				cause.n += 1;
-			}),
-		).toThrow(failure);
+			});
+		});
+
+		expect(released).toBe(failure);
 		expect(heard).toEqual(["effect"]);
 
 		transact(later, () => {
@@ -244,16 +265,16 @@ describe("deliver", () => {
 		});
 		subscribe(state, () => heard.push(state.n));
 
-		expect(() =>
+		runCapturingUncaught(() => {
 			transact(state, () => {
 				state.n = 1;
-			}),
-		).toThrow("listener failure");
-		expect(() =>
+			});
+		});
+		runCapturingUncaught(() => {
 			transact(state, () => {
 				state.n = 2;
-			}),
-		).toThrow("listener failure");
+			});
+		});
 
 		expect(heard).toEqual([1, 2]);
 	});

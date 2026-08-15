@@ -276,19 +276,26 @@ describe("createGroup", () => {
 		});
 		subscribe(state, () => called.push("own"));
 
-		let raised: unknown;
+		let released: unknown;
+		const spy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => {
+			try {
+				callback();
+			} catch (error) {
+				released = error;
+			}
+		});
 
 		try {
 			transact(state, () => {
 				state.count = 1;
 			});
-		} catch (error) {
-			raised = error;
+		} finally {
+			spy.mockRestore();
 		}
 
 		expect(called).toEqual(["parent", "child", "own"]);
-		expect(raised).toBeInstanceOf(AggregateError);
-		expect((raised as AggregateError).errors).toEqual([parentFailure, childFailure]);
+		expect(released).toBeInstanceOf(AggregateError);
+		expect((released as AggregateError).errors).toEqual([parentFailure, childFailure]);
 	});
 
 	it("delivers a queued emission to a group listener removed during the delivery that queued it", () => {

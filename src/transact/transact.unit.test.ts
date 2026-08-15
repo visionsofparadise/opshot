@@ -8,6 +8,25 @@ import { subscribe } from "../subscribe";
 import { TrackedMap } from "../tracked/trackedMap";
 import { transact } from "./transact";
 
+const runCapturingUncaught = (run: () => void): unknown => {
+	let released: unknown;
+	const spy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => {
+		try {
+			callback();
+		} catch (error) {
+			released = error;
+		}
+	});
+
+	try {
+		run();
+
+		return released;
+	} finally {
+		spy.mockRestore();
+	}
+};
+
 describe("transact", () => {
 	it("runs the mutate callback and emits ops with meta when subscribed", () => {
 		const state = createMutableState({ count: 0 });
@@ -99,12 +118,14 @@ describe("transact", () => {
 		});
 		subscribe(state, () => heard.push("a"));
 
-		expect(() =>
+		const released = runCapturingUncaught(() => {
 			transact(state, () => {
 				state.a.n = 1;
-			}),
-		).toThrow(failure);
+			});
+		});
+
 		expect(heard).toEqual(["root", "a"]);
+		expect(released).toBe(failure);
 	});
 
 	it("emits a covering ancestor's pending Writes before that ancestor's Transaction write", async () => {
@@ -487,34 +508,38 @@ describe("transact", () => {
 
 	it("leaves delivered writes standing when a listener throws", () => {
 		const state = createMutableState({ n: 0 });
+		const failure = new Error("listener failed");
 
 		subscribe(state, () => {
-			throw new Error("listener failed");
+			throw failure;
 		});
 
-		expect(() =>
+		const released = runCapturingUncaught(() => {
 			transact(state, () => {
 				state.n = 42;
-			}),
-		).toThrow("listener failed");
+			});
+		});
 
 		expect(state.n).toBe(42);
+		expect(released).toBe(failure);
 	});
 
 	it("leaves delivered writes standing when a listener throws AggregateError", () => {
 		const state = createMutableState({ n: 0 });
+		const failure = new AggregateError([new Error("inner")], "listener aggregate");
 
 		subscribe(state, () => {
-			throw new AggregateError([new Error("inner")], "listener aggregate");
+			throw failure;
 		});
 
-		expect(() =>
+		const released = runCapturingUncaught(() => {
 			transact(state, () => {
 				state.n = 42;
-			}),
-		).toThrow(AggregateError);
+			});
+		});
 
 		expect(state.n).toBe(42);
+		expect(released).toBe(failure);
 	});
 
 	it("delivers a cycle formed in the transaction without rolling back", () => {
