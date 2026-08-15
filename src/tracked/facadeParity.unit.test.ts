@@ -2,7 +2,7 @@ import { createMutableState } from "../createMutableState";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { TrackedDate } from "./trackedDate";
 import { TrackedMap } from "./trackedMap";
 import { TrackedSet } from "./trackedSet";

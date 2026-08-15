@@ -1,5 +1,5 @@
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { type Operation } from "../ops/operation";

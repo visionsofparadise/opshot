@@ -1,6 +1,6 @@
 import { proxy, snapshot } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
-import { armWatch } from "./emit/emitterBare";
+import { armWatch } from "./emit/emitter";
 import { registerHandle, type Handle } from "./handle";
 import { getOptions, stampOptions, type MutableNodeOptions } from "./settings";
 import { isUnsafeTracked, unsafeTrack } from "./unsafeTrack";

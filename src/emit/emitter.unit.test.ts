@@ -4,8 +4,8 @@ import { handleOf } from "../handle";
 import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
-import { emitWrites, scheduleFlush } from "./emitterBare";
+import { transact } from "../transact/transact";
+import { emitWrites, scheduleFlush } from "./emitter";
 import { shapeOps } from "../ops/operationShape";
 
 type CyclicNode = { n: number; self?: CyclicNode };
@@ -32,7 +32,7 @@ const manualScheduler = (): {
 	};
 };
 
-describe("emitterBare", () => {
+describe("emitter", () => {
 	it("emitWrites is a no-op when current equals lastSnapshot", async () => {
 		const state = createMutableState({ count: 0 });
 		const handle = handleOf(state);

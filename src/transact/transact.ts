@@ -1,13 +1,7 @@
-import {
-	closeTransaction,
-	emitTransactionWrites,
-	emitWrites,
-	isTransactionOpen,
-	openTransaction,
-	releaseHold,
-	rollbackTransaction,
-} from "./emit/emitterBare";
-import { requireHandle } from "./handle";
+import { emitTransactionWrites, emitWrites, releaseHold } from "../emit/emitter";
+import { requireHandle } from "../handle";
+import { closeTransaction, isTransactionOpen, openTransaction } from "./nest";
+import { rollbackTransaction } from "./rollback";
 
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
@@ -51,7 +45,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 	try {
 		emitWrites(handle);
 
-		const transaction = openTransaction(handle);
+		openTransaction();
 
 		let completed = false;
 		let mutateError: unknown;
@@ -64,11 +58,11 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 
 			throw error;
 		} finally {
-			closeTransaction(transaction);
+			closeTransaction();
 
 			if (!completed) {
 				try {
-					rollbackTransaction(transaction);
+					rollbackTransaction(handle);
 				} catch (rollbackError) {
 					attachRollbackCause(mutateError, rollbackError);
 				}
@@ -82,7 +76,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		} catch (error) {
 			if (handle.lastSnapshot === restoreTarget) {
 				try {
-					rollbackTransaction(transaction);
+					rollbackTransaction(handle);
 				} catch (rollbackError) {
 					attachRollbackCause(error, rollbackError);
 				}

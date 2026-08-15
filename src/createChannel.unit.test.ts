@@ -2,7 +2,7 @@ import { createChannel } from "./createChannel";
 import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact";
+import { transact } from "./transact/transact";
 
 describe("createChannel", () => {
 	it("delivers total M on own-channel transactions with defaults merged", () => {

@@ -4,7 +4,7 @@ import { createMutableState } from "./createMutableState";
 import { applyOperations } from "./ops/applyOperations";
 import { type Operation } from "./ops/operation";
 import { subscribe, type EmissionContext } from "./subscribe";
-import { transact } from "./transact";
+import { transact } from "./transact/transact";
 import { shapeOps } from "./ops/operationShape";
 
 describe("subscribe", () => {

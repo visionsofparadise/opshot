@@ -5,7 +5,7 @@ import { TrackedDate, TrackedMap, TrackedSet, type Operation, type OperationPath
 import { createLinkMutation, type LinkMutation, type Mutation } from "../ops/operation";
 import { useMutableState } from "../react/useMutableState";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 
 interface Doc {
 	count: number;

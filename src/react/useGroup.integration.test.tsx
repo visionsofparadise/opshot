@@ -5,7 +5,7 @@ import { act, renderHook } from "@testing-library/react";
 import { createChannel } from "../createChannel";
 import { createGroup } from "../createGroup";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { useGroup } from "./useGroup";
 
 describe("useGroup", () => {

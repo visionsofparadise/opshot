@@ -1,5 +1,5 @@
 import { resolveWriteProxy } from "../emit/resolveWriteProxy";
-import { runTransaction } from "../transact";
+import { runTransaction } from "../transact/transact";
 import { applyMutations, type ApplyDirection } from "./applyMutations";
 import { isMutation, type Operation } from "./operation";
 import type { OperationPath } from "./path";

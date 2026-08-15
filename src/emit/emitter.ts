@@ -1,39 +1,13 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { applyMutations } from "../ops/applyMutations";
 import { diffObjects } from "../ops/diff";
 import { getOptions } from "../settings";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery } from "./emitterDeliver";
 import { hasListeners, targetOf } from "./emitterRegistry";
+import { requireObjectSnapshot } from "./requireObjectSnapshot";
 import type { Handle } from "../handle";
-
-export interface Transaction {
-	readonly handle: Handle;
-}
-
-const requireObjectSnapshot = (value: unknown): object => {
-	if (value !== null && (typeof value === "object" || typeof value === "function")) return value;
-
-	throw new Error("opshot: state snapshots must have an object root");
-};
-
-let currentTransaction: Transaction | undefined;
-
-export const isTransactionOpen = (): boolean => currentTransaction !== undefined;
-
-export const openTransaction = (handle: Handle): Transaction => {
-	const transaction: Transaction = { handle };
-
-	currentTransaction = transaction;
-
-	return transaction;
-};
-
-export const closeTransaction = (_transaction: Transaction): void => {
-	currentTransaction = undefined;
-};
 
 export function scheduleFlush(handle: Handle): void {
 	if (handle.isFlushScheduled) return;
@@ -196,31 +170,3 @@ export function emitWrites(handle: Handle): void {
 export function emitTransactionWrites(handle: Handle, meta: unknown, channelId: object | undefined): void {
 	emitRange(handle, meta, channelId);
 }
-
-export const rollbackTransaction = (transaction: Transaction): void => {
-	const failures: Array<unknown> = [];
-	const handle = transaction.handle;
-	const restoreTarget = handle.lastSnapshot;
-
-	try {
-		const operations = diffObjects(
-			requireObjectSnapshot(snapshot(handle.proxy.root)),
-			requireObjectSnapshot(restoreTarget),
-		);
-
-		if (operations.length > 0) {
-			applyMutations(handle.proxy.root, operations, "do");
-		}
-
-		handle.lastSnapshot = restoreTarget;
-		handle.hasPendingWrites = false;
-	} catch (error) {
-		failures.push(error);
-	}
-
-	if (failures.length === 0) return;
-
-	if (failures.length === 1) throw failures[0];
-
-	throw new AggregateError(failures, "opshot: failures during rollback");
-};

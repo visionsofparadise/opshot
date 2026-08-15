@@ -1,6 +1,6 @@
 import { snapshot } from "valtio/vanilla";
 import { requireHandle, type Handle } from "../handle";
-import { emitWrites } from "./emitterBare";
+import { emitWrites } from "./emitter";
 import { hasListeners, type GroupDeliver, type GroupListeners, type StateDeliver } from "./emitterRegistry";
 
 interface StateBinding {

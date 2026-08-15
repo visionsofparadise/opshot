@@ -1,5 +1,5 @@
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { createProxy } from "proxy-compare";
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 

@@ -1,4 +1,4 @@
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 // @vitest-environment jsdom
 
 import { createMutableState } from "../createMutableState";

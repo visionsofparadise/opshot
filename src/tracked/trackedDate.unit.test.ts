@@ -2,7 +2,7 @@ import { createProxy, isChanged } from "proxy-compare";
 import { snapshot } from "valtio/vanilla";
 
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { createMutableState } from "../createMutableState";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation, type Mutation } from "../ops/operation";

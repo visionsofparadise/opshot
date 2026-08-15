@@ -1,4 +1,4 @@
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { subscribe } from "../subscribe";
 import { createMutableState } from "../createMutableState";
 import { cloneValue } from "./cloneValue";

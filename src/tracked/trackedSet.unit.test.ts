@@ -6,7 +6,7 @@ import { ignore } from "../ignore";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation, type Mutation } from "../ops/operation";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { addressOf } from "./address";
 import { TrackedSet } from "./trackedSet";
 

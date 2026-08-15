@@ -1,11 +1,11 @@
-import { createMutableState } from "./createMutableState";
-import { ignore } from "./ignore";
-import { applyOperations } from "./ops/applyOperations";
-import * as diffModule from "./ops/diff";
-import { type Operation } from "./ops/operation";
-import { shapeOps } from "./ops/operationShape";
-import { subscribe } from "./subscribe";
-import { TrackedMap } from "./tracked/trackedMap";
+import { createMutableState } from "../createMutableState";
+import { ignore } from "../ignore";
+import { applyOperations } from "../ops/applyOperations";
+import * as diffModule from "../ops/diff";
+import { type Operation } from "../ops/operation";
+import { shapeOps } from "../ops/operationShape";
+import { subscribe } from "../subscribe";
+import { TrackedMap } from "../tracked/trackedMap";
 import { transact } from "./transact";
 
 describe("transact", () => {

@@ -1,4 +1,4 @@
-import { transact } from "./transact";
+import { transact } from "./transact/transact";
 import { createProxy } from "proxy-compare";
 
 import { createMutableState } from "./createMutableState";

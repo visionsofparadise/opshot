@@ -7,7 +7,7 @@ import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { peelReadProxy } from "../peelReadProxy";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { isReadProxy } from "./readTracker";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";

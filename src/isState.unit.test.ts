@@ -3,7 +3,7 @@ import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
 import { isState } from "./isState";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact";
+import { transact } from "./transact/transact";
 
 describe("isState", () => {
 	it("recognizes a live state and rejects other values", () => {

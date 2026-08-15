@@ -8,7 +8,7 @@ import { addressOf } from "../tracked/address";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
 import {

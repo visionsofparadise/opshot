@@ -5,7 +5,7 @@ import { isSameIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { behaviorNames, catalog, type BehaviorName } from "./valueCatalog";
 
 type ValueState = { value: unknown };

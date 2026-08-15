@@ -1,4 +1,4 @@
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";

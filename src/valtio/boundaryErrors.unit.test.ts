@@ -1,4 +1,4 @@
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { createMutableState } from "../createMutableState";
 import { rejectionError } from "./boundaryErrors";
 

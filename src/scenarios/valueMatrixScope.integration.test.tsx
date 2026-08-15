@@ -7,7 +7,7 @@ import { createMutableState } from "../createMutableState";
 import { scope } from "../react/scope";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { catalog, scopeBehaviorNames, type ScopeBehaviorName } from "./valueCatalog";
 
 type NestedState = { label: number };

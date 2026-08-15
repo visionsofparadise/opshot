@@ -1,6 +1,6 @@
 import { createMutableState } from "../createMutableState";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { applyOperations } from "./applyOperations";
 import { type Operation } from "./operation";
 

@@ -1,5 +1,5 @@
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { createGroup, type Group } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";

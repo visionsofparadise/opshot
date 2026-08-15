@@ -5,7 +5,7 @@ import { isSameIdentity } from "./identity";
 import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact";
+import { transact } from "./transact/transact";
 import { shapeOps } from "./ops/operationShape";
 
 vi.mock(import("./ops/diff"), { spy: true });

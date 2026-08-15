@@ -2,7 +2,7 @@ import { getGroupListeners, isGroup, type Group } from "./createGroup";
 import { addGroupListener, addStateListener } from "./emit/emitterListeners";
 import { runOperations } from "./ops/applyOperations";
 import { toChannelContext, type EmissionContext } from "./subscribe";
-import { runTransaction } from "./transact";
+import { runTransaction } from "./transact/transact";
 import type { ApplyDirection } from "./ops/applyMutations";
 import type { Operation } from "./ops/operation";
 

@@ -1041,7 +1041,7 @@ describe("opshot boundary dead-region guard", () => {
 		const source = freshProxy({ value: 1 });
 		const preInstallSnapshot = freshSnapshot(source);
 		const { createMutableState } = await import("../createMutableState");
-		const { transact } = await import("../transact");
+		const { transact } = await import("../transact/transact");
 		const destination = createMutableState<{ item: unknown }>({ item: null });
 		const reused = freshSnapshot(source);
 

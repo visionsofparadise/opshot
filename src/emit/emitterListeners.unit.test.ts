@@ -4,7 +4,7 @@ import { handleOf } from "../handle";
 import { diffObjects } from "../ops/diff";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { addStateListener, holdsBinding } from "./emitterListeners";
 import { shapeOps } from "../ops/operationShape";
 

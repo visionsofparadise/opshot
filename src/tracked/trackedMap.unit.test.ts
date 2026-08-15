@@ -1,6 +1,6 @@
 import { snapshot } from "valtio/vanilla";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact";
+import { transact } from "../transact/transact";
 import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
