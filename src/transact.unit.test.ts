@@ -666,6 +666,38 @@ describe("transact", () => {
 		expect(alsoRollable.n).toBe(99);
 	});
 
+	it("rolls the graph back when the transaction-write diff throws", () => {
+		const state = createMutableState({ n: 0 });
+
+		subscribe(state, () => undefined);
+
+		const prepareError = new Error("prepare failed");
+		const original = diffModule.diffObjects;
+		let diffCalls = 0;
+		const spy = vi.spyOn(diffModule, "diffObjects").mockImplementation((from, to, ...rest) => {
+			diffCalls += 1;
+
+			if (diffCalls === 1) throw prepareError;
+
+			return original(from, to, ...rest);
+		});
+
+		let caught: unknown;
+
+		try {
+			transact(state, () => {
+				state.n = 1;
+			});
+		} catch (error) {
+			caught = error;
+		} finally {
+			spy.mockRestore();
+		}
+
+		expect(caught).toBe(prepareError);
+		expect(state.n).toBe(0);
+	});
+
 	it("attaches a prepare failure as a non-enumerable cause when rollback also fails", () => {
 		const absorb = (_flush: () => void): void => undefined;
 		const state = createMutableState({ n: 0 }, { emitOn: absorb });

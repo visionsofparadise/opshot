@@ -33,7 +33,7 @@ const manualScheduler = (): {
 };
 
 describe("emitterBare", () => {
-	it("emitWrites is a no-op when current equals lastSnapshot", () => {
+	it("emitWrites is a no-op when current equals lastSnapshot", async () => {
 		const state = createMutableState({ count: 0 });
 		const handle = handleOf(state);
 
@@ -44,7 +44,27 @@ describe("emitterBare", () => {
 		emitWrites(handle!);
 		scheduleFlush(handle!);
 
+		await Promise.resolve();
+
 		expect(diffObjects).not.toHaveBeenCalled();
+	});
+
+	it("a live freeze then a tracked write emits only the tracked field", async () => {
+		const state = createMutableState({ child: { n: 1 }, count: 0 });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		Object.freeze(state.child);
+		state.count = 1;
+
+		await Promise.resolve();
+
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
+		]);
 	});
 
 	it("flushes a bare cyclic formation as ordinary ops", async () => {

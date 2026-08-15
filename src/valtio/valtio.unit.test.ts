@@ -9,6 +9,8 @@ import {
 	unstable_replaceInternalFunction,
 	type INTERNAL_Op,
 } from "valtio/vanilla";
+import { carriedOwnKeysOf } from "../utils/dataEntries";
+import { admissionLane } from "./classify";
 
 // Local aliases for valtio's internal seam signatures, which the package's public types do not export.
 type CreateHandler = <T extends object>(
@@ -600,7 +602,7 @@ describe("createHandler seam: throwing defineProperty/setPrototypeOf traps", () 
 	});
 });
 
-// Reimplements valtio's createSnapshotDefault with one added branch (an own accessor copies as a live getter/setter); the replacement must self-recurse, since the default recurses to child snapshots by its own name.
+// Reimplements valtio's createSnapshotDefault with two added branches (an own accessor copies as a live getter/setter; a cache hit rebinds untracked children onto the cached snapshot); the replacement must self-recurse, since the default recurses to child snapshots by its own name.
 describe("createSnapshot seam: accessor preservation", () => {
 	const { refSet, proxyStateMap, snapCache } = unstable_getInternalStates();
 
@@ -609,7 +611,32 @@ describe("createSnapshot seam: accessor preservation", () => {
 	const createSnapshotPreservingAccessors = <T extends object>(target: T, version: number): T => {
 		const cached = snapCache.get(target) as [number, T] | undefined;
 
-		if (cached?.[0] === version) return cached[1];
+		if (cached?.[0] === version) {
+			const cachedSnapshot = cached[1];
+
+			for (const key of carriedOwnKeysOf(target)) {
+				const value: unknown = Reflect.get(target, key);
+
+				if (typeof value !== "object" || value === null) continue;
+
+				if (admissionLane(value) !== "untracked") continue;
+
+				if (Reflect.get(cachedSnapshot, key) === value) continue;
+
+				const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+
+				if (descriptor === undefined || descriptor.get !== undefined || descriptor.set !== undefined) continue;
+
+				Object.defineProperty(cachedSnapshot, key, {
+					value,
+					enumerable: descriptor.enumerable,
+					configurable: true,
+				});
+				markToTrack(value, false);
+			}
+
+			return cachedSnapshot;
+		}
 
 		const snap: object = Array.isArray(target) ? [] : Object.create(Object.getPrototypeOf(target) as object | null);
 

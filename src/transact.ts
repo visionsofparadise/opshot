@@ -75,13 +75,17 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 			}
 		}
 
+		const restoreTarget = handle.lastSnapshot;
+
 		try {
 			emitTransactionWrites(handle, meta, channelId);
 		} catch (error) {
-			try {
-				rollbackTransaction(transaction);
-			} catch (rollbackError) {
-				attachRollbackCause(error, rollbackError);
+			if (handle.lastSnapshot === restoreTarget) {
+				try {
+					rollbackTransaction(transaction);
+				} catch (rollbackError) {
+					attachRollbackCause(error, rollbackError);
+				}
 			}
 
 			throw error;
