@@ -5,6 +5,7 @@ build/
 coverage/
 .tsbuildinfo
 .eslintcache
+.scratch/
 scratch/
 
 .tools/
