@@ -1,6 +1,7 @@
-import { snapshot } from "valtio/vanilla";
+import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { createMutableState, type MutableStateOptions } from "../createMutableState";
+import { handleOf } from "../handle";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
 import { subscribe } from "../subscribe";
@@ -19,6 +20,10 @@ import {
 	type Operation,
 } from "./operation";
 import { shapeHalf, shapeOps } from "./operationShape";
+
+const { proxyStateMap } = unstable_getInternalStates();
+
+const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> = new WeakMap()): unknown => {
 	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
@@ -246,6 +251,24 @@ describe("diffObjects: atomic flat paths", () => {
 
 		expect(diffObjects(hole, stored)[0]?.do).toEqual({ verb: "assign", path: [0], value: undefined });
 		expect(diffObjects(stored, hole)[0]?.do).toEqual({ verb: "delete", path: [0] });
+	});
+
+	it("marks array length on the emit dirty index for hole-only growth", async () => {
+		const state = createMutableState({ list: [1] });
+		const handle = handleOf(state);
+		const heard = record(state);
+
+		if (handle === undefined) throw new Error("expected a handle");
+
+		state.list.length = 10;
+		await Promise.resolve();
+
+		expect((heard[0] ?? []).map((pair) => pair.do.path)).toEqual([["list", "length"]]);
+
+		const arrayRaw = rawTargetOf(state.list);
+
+		expect(handle.lastDirty?.edges.get(arrayRaw)?.has("length")).toBe(true);
+		expect(handle.lastDirty?.nodes.has(arrayRaw)).toBe(true);
 	});
 
 	it("emits enumerable array non-index string properties as ordinary paths", () => {

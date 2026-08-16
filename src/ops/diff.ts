@@ -669,8 +669,11 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 	return commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
 };
 
-const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult =>
-	mintAssignment(context, path, before, after, true);
+const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): DiffResult => {
+	markChangedPath(context, path);
+
+	return mintAssignment(context, path, before, after, true);
+};
 
 const tryCollapse = (
 	context: DiffContext,
