@@ -13,10 +13,15 @@ import { stampOperation } from "../ops/operation";
 import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
-import { drainDeliveries, enqueueDelivery, prepareDelivery } from "./emitterDeliver";
+import { drainDeliveries, enqueueDelivery, prepareDelivery, type PendingDelivery } from "./emitterDeliver";
 import { targetOf } from "./emitterRegistry";
 import { requireObjectSnapshot } from "./requireObjectSnapshot";
 import type { DirtyIndex, Handle } from "../handle";
+
+export interface CapturedRange {
+	readonly delivery: PendingDelivery | undefined;
+	readonly writeError: Error | undefined;
+}
 
 export function scheduleFlush(handle: Handle): void {
 	if (handle.isFlushScheduled) return;
@@ -143,12 +148,12 @@ const combinedRefusalOf = (refusals: ReadonlyArray<Error>): Error => {
 	return new AggregateError(refusals, "opshot: dangerous occupancies were refused");
 };
 
-const emitRange = (
+const captureRange = (
 	handle: Handle,
 	meta: unknown,
 	channelId: object | undefined,
 	kind: "write" | "transaction",
-): void => {
+): CapturedRange => {
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
@@ -193,24 +198,63 @@ const emitRange = (
 		}
 
 		handle.lastDirty = dirty;
-		enqueueDelivery(prepareDelivery(handle, ops, meta, channelId, dirty));
-		drainDeliveries();
 	} else {
 		handle.lastDirty = previousDirty;
 	}
 
-	if (kind === "write" && refusals.length > 0) {
-		const error = markOccupancyRefusal(combinedRefusalOf(refusals));
-
-		if (handle.onError !== undefined) handle.onError(error);
-		else throw error;
-	}
+	return {
+		delivery: ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, dirty) : undefined,
+		writeError:
+			kind === "write" && refusals.length > 0 ? markOccupancyRefusal(combinedRefusalOf(refusals)) : undefined,
+	};
 };
+
+const deliverCaptured = (captured: CapturedRange): void => {
+	if (captured.delivery !== undefined) enqueueDelivery(captured.delivery);
+
+	drainDeliveries();
+};
+
+export function deliverCapturedRanges(ranges: ReadonlyArray<CapturedRange>): void {
+	for (const captured of ranges) {
+		if (captured.delivery !== undefined) enqueueDelivery(captured.delivery);
+	}
+
+	drainDeliveries();
+}
+
+const raiseWriteError = (handle: Handle, error: Error): void => {
+	if (handle.onError !== undefined) handle.onError(error);
+	else throw error;
+};
+
+const emitRange = (
+	handle: Handle,
+	meta: unknown,
+	channelId: object | undefined,
+	kind: "write" | "transaction",
+): void => {
+	const captured = captureRange(handle, meta, channelId, kind);
+
+	deliverCaptured(captured);
+
+	if (captured.writeError !== undefined) raiseWriteError(handle, captured.writeError);
+};
+
+export function captureWrites(handle: Handle): CapturedRange {
+	return captureRange(handle, undefined, undefined, "write");
+}
+
+export function captureTransactionWrites(handle: Handle, meta: unknown, channelId: object | undefined): CapturedRange {
+	return captureRange(handle, meta, channelId, "transaction");
+}
 
 export function emitWrites(handle: Handle): void {
 	emitRange(handle, undefined, undefined, "write");
 }
 
-export function emitTransactionWrites(handle: Handle, meta: unknown, channelId: object | undefined): void {
-	emitRange(handle, meta, channelId, "transaction");
+export function emitCapturedWrites(handle: Handle, captured: CapturedRange): void {
+	deliverCaptured(captured);
+
+	if (captured.writeError !== undefined) raiseWriteError(handle, captured.writeError);
 }

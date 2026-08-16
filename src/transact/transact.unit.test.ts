@@ -433,6 +433,51 @@ describe("transact", () => {
 		]);
 	});
 
+	it("keeps a write recorded in a starting-write listener out of the transaction", () => {
+		const state = createMutableState({ n: 0, extra: 0 });
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		let bumped = false;
+
+		subscribe(state, (ops, meta) => {
+			heard.push({ ops: [...ops], meta });
+
+			if (bumped) return;
+
+			bumped = true;
+			state.extra = 1;
+		});
+
+		state.n = 1;
+
+		transact(
+			state,
+			() => {
+				state.n = 2;
+			},
+			{ tag: "tx" },
+		);
+
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				meta: undefined,
+			},
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 2 }, undo: { verb: "assign", path: ["n"], value: 1 } }],
+				meta: { tag: "tx" },
+			},
+			{
+				ops: [
+					{
+						do: { verb: "assign", path: ["extra"], value: 1 },
+						undo: { verb: "assign", path: ["extra"], value: 0 },
+					},
+				],
+				meta: undefined,
+			},
+		]);
+	});
+
 	it("emits a listener write on the same state as a Write after the transaction", () => {
 		const state = createMutableState({ n: 0, extra: 0 });
 		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();

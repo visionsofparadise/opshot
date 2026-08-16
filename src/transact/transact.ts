@@ -1,4 +1,10 @@
-import { emitTransactionWrites, emitWrites } from "../emit/emitter";
+import {
+	captureTransactionWrites,
+	captureWrites,
+	deliverCapturedRanges,
+	emitCapturedWrites,
+	emitWrites,
+} from "../emit/emitter";
 import { requireHandle } from "../handle";
 import { isOccupancyRefusal, occupancyRefusalsOf } from "../occupancy";
 import { closeTransaction, isTransactionOpen, openTransaction } from "./nest";
@@ -72,17 +78,25 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		}
 	};
 
+	const deliverQuietly = (ranges: Parameters<typeof deliverCapturedRanges>[0]): void => {
+		try {
+			deliverCapturedRanges(ranges);
+		} catch (error) {
+			listenerFailures.push(...flattenDeliveryFailures(error));
+		}
+	};
+
 	try {
-		emitCollectingListeners(() => {
-			emitWrites(handle);
-		});
+		const starting = captureWrites(handle);
 
-		if (occupancyRefusalsOf(handle).length > 0) return;
+		if (starting.writeError !== undefined) {
+			try {
+				emitCapturedWrites(handle, starting);
+			} catch (error) {
+				if (isOccupancyRefusal(error)) throw error;
 
-		if (handle.hasPendingWrites) {
-			emitCollectingListeners(() => {
-				emitWrites(handle);
-			});
+				listenerFailures.push(...flattenDeliveryFailures(error));
+			}
 
 			if (occupancyRefusalsOf(handle).length > 0) return;
 		}
@@ -112,15 +126,18 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 				} catch (rollbackError) {
 					attachRollbackCause(mutateError, rollbackError);
 				}
-			}
 
-			handle.isFlushHeld = previousHeld;
+				handle.isFlushHeld = previousHeld;
+				deliverQuietly([starting]);
+			} else {
+				handle.isFlushHeld = previousHeld;
+			}
 		}
 
+		let transaction: ReturnType<typeof captureTransactionWrites>;
+
 		try {
-			emitCollectingListeners(() => {
-				emitTransactionWrites(handle, meta, channelId);
-			});
+			transaction = captureTransactionWrites(handle, meta, channelId);
 		} catch (error) {
 			try {
 				rollbackTransaction(handle);
@@ -128,8 +145,12 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 				attachRollbackCause(error, rollbackError);
 			}
 
+			deliverQuietly([starting]);
+
 			throw error;
 		}
+
+		deliverQuietly([starting, transaction]);
 
 		emitCollectingListeners(() => {
 			emitWrites(handle);
