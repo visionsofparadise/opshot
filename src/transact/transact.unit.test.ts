@@ -433,6 +433,41 @@ describe("transact", () => {
 		]);
 	});
 
+	it("emits a listener write on the same state as a Write after the transaction", () => {
+		const state = createMutableState({ n: 0, extra: 0 });
+		const heard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+
+		subscribe(state, (ops, meta) => {
+			heard.push({ ops: [...ops], meta });
+
+			if ((meta as { tag?: string } | undefined)?.tag === "tx") state.extra = 1;
+		});
+
+		transact(
+			state,
+			() => {
+				state.n = 1;
+			},
+			{ tag: "tx" },
+		);
+
+		expect(heard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				meta: { tag: "tx" },
+			},
+			{
+				ops: [
+					{
+						do: { verb: "assign", path: ["extra"], value: 1 },
+						undo: { verb: "assign", path: ["extra"], value: 0 },
+					},
+				],
+				meta: undefined,
+			},
+		]);
+	});
+
 	it("emits a write on another state as a Write after the transact returns", async () => {
 		const first = createMutableState({ x: 0 });
 		const second = createMutableState({ n: 0 });

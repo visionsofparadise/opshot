@@ -1,4 +1,4 @@
-import { emitTransactionWrites, emitWrites, releaseHold } from "../emit/emitter";
+import { emitTransactionWrites, emitWrites } from "../emit/emitter";
 import { requireHandle } from "../handle";
 import { isOccupancyRefusal, occupancyRefusalsOf } from "../occupancy";
 import { closeTransaction, isTransactionOpen, openTransaction } from "./nest";
@@ -58,10 +58,6 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 	handle.flushGeneration += 1;
 	handle.isFlushScheduled = false;
 
-	const ownsHold = !handle.isFlushHeld;
-
-	handle.isFlushHeld = true;
-
 	const listenerFailures = new Array<unknown>();
 
 	const emitCollectingListeners = (emit: () => void): void => {
@@ -82,6 +78,18 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		});
 
 		if (occupancyRefusalsOf(handle).length > 0) return;
+
+		if (handle.hasPendingWrites) {
+			emitCollectingListeners(() => {
+				emitWrites(handle);
+			});
+
+			if (occupancyRefusalsOf(handle).length > 0) return;
+		}
+
+		const previousHeld = handle.isFlushHeld;
+
+		handle.isFlushHeld = true;
 
 		openTransaction();
 
@@ -105,6 +113,8 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 					attachRollbackCause(mutateError, rollbackError);
 				}
 			}
+
+			handle.isFlushHeld = previousHeld;
 		}
 
 		try {
@@ -125,7 +135,6 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 			emitWrites(handle);
 		});
 	} finally {
-		releaseHold(handle, ownsHold);
 		releaseUncaught(listenerFailures);
 	}
 }

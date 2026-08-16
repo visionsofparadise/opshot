@@ -45,14 +45,6 @@ export function scheduleFlush(handle: Handle): void {
 	});
 }
 
-export function releaseHold(handle: Handle, ownsHold: boolean): void {
-	if (!ownsHold) return;
-
-	handle.isFlushHeld = false;
-
-	if (handle.hasPendingWrites) scheduleFlush(handle);
-}
-
 export function armWatch(handle: Handle): void {
 	if (handle.disarmWatch !== undefined) return;
 
