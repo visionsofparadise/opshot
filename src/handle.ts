@@ -50,20 +50,6 @@ export function registerHandle(target: object, handle: Handle): void {
 	occupants.add(new WeakRef(handle));
 }
 
-export function unregisterHandle(target: object, handle: Handle): void {
-	const occupants = occupancies.get(target);
-
-	if (occupants === undefined) return;
-
-	for (const reference of occupants) {
-		const occupant = reference.deref();
-
-		if (occupant === undefined || occupant === handle) occupants.delete(reference);
-	}
-
-	if (occupants.size === 0) occupancies.delete(target);
-}
-
 const rawOf = (node: object): object => {
 	const peeled = peelReadProxy(node);
 

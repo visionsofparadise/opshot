@@ -1,8 +1,9 @@
+import { handleOf, handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { walkDataEntries } from "../utils/dataEntries";
 import { cloneValue } from "./cloneValue";
 import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
-import { formatOperationPath, type OperationPath } from "./path";
+import { createOperationPath, formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndex, isCanonicalArrayIndexString, isObjectLike, MAX_ARRAY_LENGTH } from "./predicates";
 
 export type ApplyDirection = "do" | "undo";
@@ -26,7 +27,18 @@ const linkError = (path: OperationPath, ref: OperationPath, reason: string): Err
 const isWritableDataDescriptor = (descriptor: PropertyDescriptor | undefined): boolean =>
 	descriptor !== undefined && "value" in descriptor && descriptor.writable === true;
 
-const restoreRecordedContent = (attached: object, recorded: object, restored: WeakSet<object>): void => {
+const isAdmittedOn = (destination: Handle | undefined, node: object): boolean => {
+	if (destination === undefined) return true;
+
+	return handlesOf(node).includes(destination);
+};
+
+const restoreRecordedContent = (
+	attached: object,
+	recorded: object,
+	restored: WeakSet<object>,
+	destination: Handle | undefined,
+): void => {
 	if (restored.has(recorded)) return;
 
 	restored.add(recorded);
@@ -42,7 +54,7 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 		if (isObjectLike(value)) {
 			const target = getRegisteredTarget(value);
 
-			if (target !== undefined) {
+			if (target !== undefined && isAdmittedOn(destination, target)) {
 				const present: unknown = attachedDescriptor?.value;
 
 				if (!isObjectLike(present) || resolveIdentity(present) !== resolveIdentity(target)) {
@@ -53,7 +65,13 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 
 				if (!isObjectLike(child)) throw new Error(`opshot: replay could not reattach ${key}`);
 
-				restoreRecordedContent(child, value, restored);
+				restoreRecordedContent(child, value, restored, destination);
+
+				continue;
+			}
+
+			if (target !== undefined) {
+				Reflect.set(attached, key, cloneValue(value, new WeakMap(), createOperationPath([])));
 
 				continue;
 			}
@@ -74,27 +92,29 @@ const restoreRecordedContent = (attached: object, recorded: object, restored: We
 const getValuePayload = (operation: AssignMutation): ValuePayload => {
 	const original = getValueOriginal(operation) ?? operation.value;
 
-	if (isObjectLike(original) && getRegisteredTarget(original) !== undefined)
-		return { recorded: original, fallback: undefined };
-
 	return {
 		recorded: original,
 		fallback: isObjectLike(original) ? cloneValue(original, new WeakMap(), operation.path) : original,
 	};
 };
 
-const restoreValue = (payload: ValuePayload, attach: (value: unknown) => void, readAttached: () => unknown): void => {
+const restoreValue = (
+	payload: ValuePayload,
+	attach: (value: unknown) => void,
+	readAttached: () => unknown,
+	destination: Handle | undefined,
+): void => {
 	if (isObjectLike(payload.recorded)) {
 		const target = getRegisteredTarget(payload.recorded);
 
-		if (target !== undefined) {
+		if (target !== undefined && isAdmittedOn(destination, target)) {
 			attach(target);
 
 			const attached = readAttached();
 
 			if (!isObjectLike(attached)) throw new Error("opshot: replay could not read a reattached target");
 
-			restoreRecordedContent(attached, payload.recorded, new WeakSet());
+			restoreRecordedContent(attached, payload.recorded, new WeakSet(), destination);
 
 			return;
 		}
@@ -209,7 +229,12 @@ const applyLink = (root: object, operation: LinkMutation): void => {
 	Reflect.set(terminal.parent, key, resolveRefValue(root, ref, path));
 };
 
-const applyPlain = (parent: object, segment: unknown, operation: Exclude<Mutation, LinkMutation>): void => {
+const applyPlain = (
+	parent: object,
+	segment: unknown,
+	operation: Exclude<Mutation, LinkMutation>,
+	destination: Handle | undefined,
+): void => {
 	const path = operation.path;
 
 	if (Array.isArray(parent) && segment === "length") {
@@ -254,10 +279,11 @@ const applyPlain = (parent: object, segment: unknown, operation: Exclude<Mutatio
 		getValuePayload(operation),
 		(value) => Reflect.set(parent, key, value),
 		() => Reflect.get(parent, key),
+		destination,
 	);
 };
 
-const applyMutation = (root: object, operation: Mutation): void => {
+const applyMutation = (root: object, operation: Mutation, destination: Handle | undefined): void => {
 	if (operation.verb === "link") {
 		applyLink(root, operation);
 
@@ -266,12 +292,14 @@ const applyMutation = (root: object, operation: Mutation): void => {
 
 	const terminal = resolveTerminal(root, operation.path);
 
-	applyPlain(terminal.parent, terminal.segment, operation);
+	applyPlain(terminal.parent, terminal.segment, operation, destination);
 };
 
 export function applyMutations(root: object, operations: ReadonlyArray<Operation>, direction: ApplyDirection): void {
+	const destination = handleOf(root);
+
 	if (direction === "do") {
-		for (const operation of operations) applyMutation(root, operation.do);
+		for (const operation of operations) applyMutation(root, operation.do, destination);
 
 		return;
 	}
@@ -281,6 +309,6 @@ export function applyMutations(root: object, operations: ReadonlyArray<Operation
 
 		if (operation === undefined) continue;
 
-		applyMutation(root, operation.undo);
+		applyMutation(root, operation.undo, destination);
 	}
 }

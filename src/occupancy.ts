@@ -1,5 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { registerHandle, unregisterHandle, type DirtyIndex, type Handle } from "./handle";
+import { registerHandle, type DirtyIndex, type Handle } from "./handle";
 import { getRegisteredTarget, isSameIdentity } from "./identity";
 import { isPlainArray } from "./ops/cloneValue";
 import { routeUnderPath } from "./ops/commitWalk";
@@ -154,14 +154,11 @@ const routeTableOf = (handle: Handle): Map<object, Array<OperationPath>> => {
 const publishRoutes = (handle: Handle, node: object, paths: ReadonlyArray<OperationPath>): void => {
 	const raw = rawTargetOf(node);
 	const table = routeTableOf(handle);
-	const rootRaw = rawTargetOf(handle.proxy.root);
 
 	if (paths.length === 0) {
 		table.delete(raw);
 		handle.routes.delete(raw);
 		handle.members.delete(raw);
-
-		if (raw !== rootRaw) unregisterHandle(raw, handle);
 
 		return;
 	}
@@ -215,7 +212,6 @@ export function restoreOccupancyTables(handle: Handle, snapshot: OccupancyTableS
 	handle.unsafeAt = snapshot.unsafeAt;
 
 	const table = routeTableOf(handle);
-	const rootRaw = rawTargetOf(handle.proxy.root);
 
 	for (const node of [...table.keys()]) {
 		if (snapshot.routes.has(node)) continue;
@@ -223,8 +219,6 @@ export function restoreOccupancyTables(handle: Handle, snapshot: OccupancyTableS
 		table.delete(node);
 		handle.routes.delete(node);
 		handle.members.delete(node);
-
-		if (node !== rootRaw) unregisterHandle(node, handle);
 	}
 
 	for (const [node, paths] of snapshot.routes) {

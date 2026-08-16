@@ -360,6 +360,43 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 		expect(isSameIdentity(restored.left, shared)).toBe(true);
 	});
 
+	it("applies branded ops onto a distinct replica without donating live identities", () => {
+		const state = createMutableState({ child: { n: 1 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.child = { n: 2 };
+		});
+
+		const replica = createMutableState({ child: { n: 1 } });
+
+		applyOperations(replica, heard[0] ?? [], "do");
+
+		expect(replica.child).toEqual({ n: 2 });
+		expect(replica.child).not.toBe(state.child);
+		expect(isSameIdentity(replica.child, state.child)).toBe(false);
+	});
+
+	it("reattaches a live node both states already hold", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ slot?: { n: number } }>({ slot: shared });
+		const replica = createMutableState<{ slot?: { n: number } }>({});
+
+		replica.slot = state.slot;
+
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.slot;
+		});
+
+		applyOperations(replica, heard[0] ?? [], "do");
+		expect(replica.slot).toBeUndefined();
+
+		applyOperations(replica, heard[0] ?? [], "undo");
+		expect(isSameIdentity(replica.slot as object, shared)).toBe(true);
+	});
+
 	it("round-trips clear, delete-readd, and slot displacement atomically", () => {
 		const state = createMutableState({
 			map: new TrackedMap([
