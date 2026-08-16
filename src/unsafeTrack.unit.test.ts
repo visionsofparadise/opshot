@@ -126,6 +126,94 @@ describe("unsafeTrack occupancy", () => {
 		expect(errors).toHaveLength(0);
 		expect(typeof state.foo === "object" && state.foo !== null && isSameIdentity(state.foo, map)).toBe(true);
 	});
+
+	it("same-window overwrite of an unsafe wrap then a later assign without a wrap refuses", async () => {
+		const map = new Map<string, number>();
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ foo: Map<string, number> | unknown }>(
+			{ foo: null },
+			{
+				emitOn: (flush) => {
+					try {
+						flush();
+					} catch (error) {
+						errors.push(error);
+					}
+				},
+			},
+		);
+
+		state.foo = unsafeTrack(map);
+		state.foo = { n: 1 };
+		await Promise.resolve();
+		expect(errors).toHaveLength(0);
+
+		state.foo = map;
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+		expect(String(errors[0])).toContain("Map at /foo cannot be tracked");
+	});
+
+	it("delete after an unsafe wrap then a later assign without a wrap refuses", async () => {
+		const map = new Map<string, number>();
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ foo?: Map<string, number> | unknown }>(
+			{ foo: null },
+			{
+				emitOn: (flush) => {
+					try {
+						flush();
+					} catch (error) {
+						errors.push(error);
+					}
+				},
+			},
+		);
+
+		state.foo = unsafeTrack(map);
+		delete state.foo;
+		await Promise.resolve();
+		expect(errors).toHaveLength(0);
+
+		state.foo = map;
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+		expect(String(errors[0])).toContain("Map at /foo cannot be tracked");
+	});
+
+	it("wrap then subscribe in the same turn then leave-and-return without a wrap refuses", async () => {
+		const map = new Map<string, number>();
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ foo: Map<string, number> | unknown }>(
+			{ foo: null },
+			{
+				emitOn: (flush) => {
+					try {
+						flush();
+					} catch (error) {
+						errors.push(error);
+					}
+				},
+			},
+		);
+
+		state.foo = unsafeTrack(map);
+		subscribe(state, () => undefined);
+		await Promise.resolve();
+		expect(errors).toHaveLength(0);
+
+		state.foo = { n: 1 };
+		await Promise.resolve();
+		expect(errors).toHaveLength(0);
+
+		state.foo = map;
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+		expect(String(errors[0])).toContain("Map at /foo cannot be tracked");
+	});
 });
 
 describe("unsafeTrack stories", () => {

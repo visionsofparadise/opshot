@@ -1137,6 +1137,49 @@ describe("write-window occupancy refusal", () => {
 		expect(String(errors[0])).toContain("opshot: Map at /box cannot be tracked");
 	});
 
+	it("does not run mutate when opening Write refuses a dangerous occupancy", () => {
+		const state = createMutableState<{ box: unknown; tick: number }>({ box: null, tick: 0 });
+		let mutated = false;
+
+		state.box = new Map<string, number>();
+
+		expect(() => {
+			transact(state, () => {
+				mutated = true;
+				state.tick = 1;
+			});
+		}).toThrow("opshot: Map at /box cannot be tracked");
+
+		expect(mutated).toBe(false);
+		expect(state.tick).toBe(0);
+		expect(state.box).toBeInstanceOf(Map);
+	});
+
+	it("calls onError and does not run mutate when opening Write refuses", () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ box: unknown; tick: number }>(
+			{ box: null, tick: 0 },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		let mutated = false;
+
+		state.box = new Map<string, number>();
+
+		transact(state, () => {
+			mutated = true;
+			state.tick = 1;
+		});
+
+		expect(mutated).toBe(false);
+		expect(state.tick).toBe(0);
+		expect(state.box).toBeInstanceOf(Map);
+		expect(String(errors[0])).toContain("opshot: Map at /box cannot be tracked");
+	});
+
 	it("raises after emit when a Write window has no onError", async () => {
 		const thrown = new Array<unknown>();
 		const heard = new Array<Array<Operation>>();

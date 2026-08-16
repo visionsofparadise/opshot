@@ -101,4 +101,23 @@ describe("ignore", () => {
 			{ do: { verb: "assign", path: ["tick"], value: 2 }, undo: { verb: "assign", path: ["tick"], value: 1 } },
 		]);
 	});
+
+	it("wrap then subscribe in the same turn keeps the occupant ignored", async () => {
+		const obj = { n: 1 };
+		const state = createMutableState<{ a: { n: number } | null; tick: number }>({ a: null, tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		state.a = ignore(obj);
+		subscribe(state, (ops) => heard.push([...ops]));
+		await Promise.resolve();
+
+		obj.n = 9;
+		state.tick = 1;
+		await Promise.resolve();
+
+		expect(state.a).toBe(obj);
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } }],
+		]);
+	});
 });

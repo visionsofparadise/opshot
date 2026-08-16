@@ -1,6 +1,12 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { copyOccupancyTables, occupancyRefusalsOf, reconcileOccupancies, restoreOccupancyTables } from "../occupancy";
+import {
+	copyOccupancyTables,
+	markOccupancyRefusal,
+	occupancyRefusalsOf,
+	reconcileOccupancies,
+	restoreOccupancyTables,
+} from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
@@ -154,12 +160,6 @@ const emitRange = (
 	const from = handle.lastSnapshot;
 	const to = snapshot(handle.proxy.root);
 
-	if (from === to) {
-		handle.lastSnapshot = to;
-
-		return;
-	}
-
 	const occupancyBaseline = copyOccupancyTables(handle);
 
 	reconcileOccupancies(handle, handle.proxy.root, from);
@@ -174,21 +174,25 @@ const emitRange = (
 		throw combinedRefusalOf(refusals);
 	}
 
-	const ops = diffObjects(
-		requireObjectSnapshot(reconcileUntracked(from, handle.proxy.root, new WeakSet())),
-		requireObjectSnapshot(to),
-		handle,
-	);
+	if (from !== to) {
+		const ops = diffObjects(
+			requireObjectSnapshot(reconcileUntracked(from, handle.proxy.root, new WeakSet())),
+			requireObjectSnapshot(to),
+			handle,
+		);
 
-	handle.lastSnapshot = to;
+		handle.lastSnapshot = to;
 
-	if (ops.length > 0) {
-		enqueueDelivery(prepareDelivery(handle, ops, meta, channelId));
-		drainDeliveries();
+		if (ops.length > 0) {
+			enqueueDelivery(prepareDelivery(handle, ops, meta, channelId));
+			drainDeliveries();
+		}
+	} else {
+		handle.lastSnapshot = to;
 	}
 
 	if (kind === "write" && refusals.length > 0) {
-		const error = combinedRefusalOf(refusals);
+		const error = markOccupancyRefusal(combinedRefusalOf(refusals));
 
 		if (handle.onError !== undefined) handle.onError(error);
 		else throw error;

@@ -47,20 +47,34 @@ export function recordPendingOccupancy(
 	records.set(key, { child, kind });
 }
 
-export function takePendingOccupancy(parentRaw: object, key: string | symbol, child: object): PendingKind | undefined {
+const spendPendingOccupancy = (parentRaw: object, key: string | symbol): PendingRecord | undefined => {
 	const records = pendingByParent.get(parentRaw);
 
 	if (records === undefined) return undefined;
 
 	const record = records.get(key);
 
-	if (record?.child !== child) return undefined;
+	if (record === undefined) return undefined;
 
 	records.delete(key);
 
 	if (records.size === 0) pendingByParent.delete(parentRaw);
 
-	return record.kind;
+	return record;
+};
+
+export function discardPendingOccupancy(parentRaw: object, key: string | symbol): void {
+	spendPendingOccupancy(parentRaw, key);
+}
+
+export function takePendingOccupancy(parentRaw: object, key: string | symbol, child: object): PendingKind | undefined {
+	const record = spendPendingOccupancy(parentRaw, key);
+
+	if (record === undefined) return undefined;
+
+	if (record.child === child || isSameIdentity(record.child, child)) return record.kind;
+
+	return undefined;
 }
 
 function discardPendingOccupanciesOn(parentRaw: object): void {
@@ -84,6 +98,18 @@ function beginOccupancyRefusals(handle: Handle): void {
 
 export function occupancyRefusalsOf(handle: Handle): Array<Error> {
 	return occupancyRefusals.get(handle) ?? [];
+}
+
+const occupancyRefusalErrors = new WeakSet<object>();
+
+export function markOccupancyRefusal(error: Error): Error {
+	occupancyRefusalErrors.add(error);
+
+	return error;
+}
+
+export function isOccupancyRefusal(error: unknown): boolean {
+	return typeof error === "object" && error !== null && occupancyRefusalErrors.has(error);
 }
 
 export function occupancyOmissionsOf(handle: Handle): Set<string> {
@@ -232,9 +258,7 @@ function bindVisitedOccupancy(
 	if (typeof child !== "object" || child === null) return "continue";
 
 	const childLive = liveOf(child);
-	const kind =
-		takePendingOccupancy(parentRaw, occupancyKey, childLive) ??
-		(child !== childLive ? takePendingOccupancy(parentRaw, occupancyKey, child) : undefined);
+	const kind = takePendingOccupancy(parentRaw, occupancyKey, childLive);
 	const descriptor = Reflect.getOwnPropertyDescriptor(parentRaw, occupancyKey);
 
 	const ignoredOccupant = handle.ignoredAt.get(pathKey);

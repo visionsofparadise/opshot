@@ -3,7 +3,7 @@ import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } f
 import { handlesOf } from "../handle";
 import { getRegisteredTarget } from "../identity";
 import { pendingIgnore } from "../ignore";
-import { recordPendingOccupancy } from "../occupancy";
+import { discardPendingOccupancy, recordPendingOccupancy } from "../occupancy";
 import { flagPossiblyShared } from "../ops/commitWalk";
 import { peelReadProxy } from "../peelReadProxy";
 import { pendingUnsafe } from "../unsafeTrack";
@@ -233,10 +233,12 @@ export function installBoundary(): void {
 
 							const result = defaultSet(target, prop, instrumented, receiver);
 
+							if (result) discardPendingOccupancy(target, prop);
+
 							if (ignoreWrap || unsafeWrap) {
 								const stored: unknown = Reflect.get(target, prop);
 
-								if (typeof stored === "object" && stored !== null) {
+								if (result && typeof stored === "object" && stored !== null) {
 									recordPendingOccupancy(target, prop, rawTargetOf(stored), ignoreWrap ? "ignore" : "unsafe");
 								}
 
@@ -258,13 +260,21 @@ export function installBoundary(): void {
 
 						if (refusesWrite(target, prop, resolved)) return false;
 
-						return defaultSet(target, prop, resolved, receiver);
+						const result = defaultSet(target, prop, resolved, receiver);
+
+						if (result) discardPendingOccupancy(target, prop);
+
+						return result;
 					} finally {
 						setTargetStack.pop();
 					}
 				},
 				deleteProperty(target, prop) {
-					return defaultDelete(target, prop);
+					const result = defaultDelete(target, prop);
+
+					if (result) discardPendingOccupancy(target, prop);
+
+					return result;
 				},
 				defineProperty(target, prop, descriptor) {
 					return Reflect.defineProperty(target, prop, descriptor);
