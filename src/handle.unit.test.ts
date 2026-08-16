@@ -24,6 +24,8 @@ describe("handleOf", () => {
 			strict: true,
 			unsafeAt: new Map(),
 			ignoredAt: new Map(),
+			members: new WeakSet(),
+			routes: new WeakMap(),
 		};
 
 		registerHandle(target, registered);

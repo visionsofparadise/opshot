@@ -1,11 +1,12 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
 import {
+	beginOccupancyRefusals,
 	copyOccupancyTables,
 	markOccupancyRefusal,
 	occupancyRefusalsOf,
-	reconcileOccupancies,
 	restoreOccupancyTables,
+	syncHandleTables,
 } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { rollbackTransaction } from "../transact/rollback";
@@ -14,7 +15,7 @@ import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery } from "./emitterDeliver";
 import { targetOf } from "./emitterRegistry";
 import { requireObjectSnapshot } from "./requireObjectSnapshot";
-import type { Handle } from "../handle";
+import type { DirtyIndex, Handle } from "../handle";
 
 export function scheduleFlush(handle: Handle): void {
 	if (handle.isFlushScheduled) return;
@@ -161,34 +162,40 @@ const emitRange = (
 	const to = snapshot(handle.proxy.root);
 
 	const occupancyBaseline = copyOccupancyTables(handle);
+	const previousDirty = handle.lastDirty;
+	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
 
-	reconcileOccupancies(handle, handle.proxy.root, from);
+	handle.lastDirty = dirty;
+	beginOccupancyRefusals(handle);
+
+	if (from === to) syncHandleTables(handle);
+
+	const ops =
+		from === to
+			? []
+			: diffObjects(
+					requireObjectSnapshot(reconcileUntracked(from, handle.proxy.root, new WeakSet())),
+					requireObjectSnapshot(to),
+					handle,
+					dirty,
+				);
 
 	const refusals = occupancyRefusalsOf(handle);
 
 	if (kind === "transaction" && refusals.length > 0) {
-		restoreOccupancyTables(handle, occupancyBaseline.ignoredAt, occupancyBaseline.unsafeAt);
+		restoreOccupancyTables(handle, occupancyBaseline);
+		handle.lastDirty = previousDirty;
+		beginOccupancyRefusals(handle);
 		rollbackTransaction(handle);
-		reconcileOccupancies(handle, handle.proxy.root, handle.lastSnapshot);
 
 		throw combinedRefusalOf(refusals);
 	}
 
-	if (from !== to) {
-		const ops = diffObjects(
-			requireObjectSnapshot(reconcileUntracked(from, handle.proxy.root, new WeakSet())),
-			requireObjectSnapshot(to),
-			handle,
-		);
+	handle.lastSnapshot = to;
 
-		handle.lastSnapshot = to;
-
-		if (ops.length > 0) {
-			enqueueDelivery(prepareDelivery(handle, ops, meta, channelId));
-			drainDeliveries();
-		}
-	} else {
-		handle.lastSnapshot = to;
+	if (ops.length > 0) {
+		enqueueDelivery(prepareDelivery(handle, ops, meta, channelId, dirty));
+		drainDeliveries();
 	}
 
 	if (kind === "write" && refusals.length > 0) {

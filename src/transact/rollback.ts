@@ -12,6 +12,7 @@ export const rollbackTransaction = (handle: Handle): void => {
 	const operations = diffObjects(
 		requireObjectSnapshot(snapshot(handle.proxy.root)),
 		requireObjectSnapshot(restoreTarget),
+		handle,
 	);
 
 	if (operations.length > 0) {

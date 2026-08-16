@@ -1,15 +1,19 @@
+import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget, isSameIdentity } from "../identity";
-import { isUnderIgnoredOccupancy, occupancyOmissionsOf } from "../occupancy";
-import { walkDataEntries } from "../utils/dataEntries";
-import { isCloneable, isPlainArray, isPlainObject } from "./cloneValue";
 import {
-	canonicalRouteOf,
-	createRouteIndex,
-	externalRoutesOf,
-	isPossiblyShared,
-	routeUnderPath,
-	type RouteIndex,
-} from "./commitWalk";
+	addOccupancyRoute,
+	bindVisitedOccupancy,
+	dropOccupancyRoutesUnder,
+	isUnderIgnoredOccupancy,
+	markDirtyNode,
+	markDirtyPath,
+	occupancyOmissionsOf,
+	occupancyRouteEntries,
+	type OccupancyVisit,
+} from "../occupancy";
+import { walkDataEntries } from "../utils/dataEntries";
+import { isPlainArray, isPlainObject } from "./cloneValue";
+import { canonicalRouteOf, externalRoutesOf, routeUnderPath } from "./commitWalk";
 import {
 	createAssignMutation,
 	createDeleteMutation,
@@ -17,10 +21,20 @@ import {
 	getValueOriginal,
 	type Operation,
 } from "./operation";
-import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
+import {
+	appendOperationPath,
+	createOperationPath,
+	formatOperationPath,
+	operationPathsEqual,
+	type OperationPath,
+} from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import { OPERATION_WEIGHT, weighValue } from "./weight";
-import type { Handle } from "../handle";
+import type { DirtyIndex, Handle } from "../handle";
+
+const { proxyStateMap } = unstable_getInternalStates();
+
+const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 type RootKind = "plainObject" | "plainArray";
 type Ancestors = Map<object, Set<object>>;
@@ -35,14 +49,16 @@ interface DiffContext {
 	readonly ops: Array<Operation>;
 	readonly ancestors: Ancestors;
 	readonly ancestorPaths: Map<object, OperationPath>;
-	readonly firstMintRoute: Map<object, OperationPath>;
-	readonly liveRoot: object;
+	readonly predatingRoutes: Map<object, ReadonlyArray<OperationPath>>;
+	readonly firstRouteThisBatch: Map<object, OperationPath>;
+	readonly firstTouchedThisBatch: Map<object, OperationPath>;
+	readonly decomposingRemovals: Set<object>;
 	readonly beforeRoot: object;
 	readonly afterRoot: object;
 	readonly linksEnabled: boolean;
 	readonly handle: Handle | undefined;
+	readonly dirty: DirtyIndex | undefined;
 	readonly omissions: ReadonlySet<string>;
-	routeIndex: RouteIndex | undefined;
 }
 
 class IncompatibleObjectRootsError extends Error {
@@ -81,10 +97,119 @@ const mergeResults = (results: ReadonlyArray<DiffResult>): DiffResult => {
 
 const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
 
-const requireRouteIndex = (context: DiffContext): RouteIndex => {
-	context.routeIndex ??= createRouteIndex(context.liveRoot);
+const routeKeyOf = (node: object): object => rawTargetOf(liveOf(node));
 
-	return context.routeIndex;
+const segmentFor = (parent: object, key: string): string | number =>
+	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
+
+const liveAtPath = (root: object, path: OperationPath): unknown => {
+	let current: unknown = root;
+
+	for (const segment of path) {
+		if (!isObjectLike(current)) return undefined;
+
+		current = Reflect.get(current, segment);
+	}
+
+	return current;
+};
+
+const routesOfLive = (context: DiffContext, live: object): ReadonlyArray<OperationPath> => {
+	if (context.handle === undefined) return [];
+
+	return context.handle.routes.get(routeKeyOf(live)) ?? [];
+};
+
+const rememberPredatingRoutes = (context: DiffContext, live: object): void => {
+	if (context.handle === undefined) return;
+
+	const key = routeKeyOf(live);
+
+	if (context.predatingRoutes.has(key)) return;
+
+	context.predatingRoutes.set(key, context.handle.routes.get(key) ?? []);
+};
+
+const rememberFirstRouteThisBatch = (context: DiffContext, live: object, path: OperationPath): void => {
+	const key = routeKeyOf(live);
+
+	if (!context.firstTouchedThisBatch.has(key)) context.firstTouchedThisBatch.set(key, path);
+
+	if (context.firstRouteThisBatch.has(key)) return;
+
+	const predating = context.predatingRoutes.get(key) ?? [];
+
+	if (predating.some((route) => operationPathsEqual(route, path))) return;
+
+	context.firstRouteThisBatch.set(key, path);
+};
+
+const writesTables = (context: DiffContext): context is DiffContext & { handle: Handle; dirty: DirtyIndex } =>
+	context.handle !== undefined && context.dirty !== undefined;
+
+const admitEmitPath = (
+	context: DiffContext,
+	path: OperationPath,
+	before: unknown,
+	after: unknown,
+	beforePresent: boolean,
+): OccupancyVisit => {
+	if (!writesTables(context) || path.length === 0) return "continue";
+
+	const liveParent = liveAtPath(context.handle.proxy.root, path.slice(0, -1));
+	const liveChild = liveAtPath(context.handle.proxy.root, path);
+	const lastSegment = path[path.length - 1];
+
+	if (!isObjectLike(liveParent) || lastSegment === undefined) return "continue";
+
+	if (isObjectLike(liveChild)) rememberPredatingRoutes(context, liveChild);
+
+	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
+	const visit = bindVisitedOccupancy(context.handle, path, liveParent, lastSegment, liveChild, sameOccupant);
+
+	if (visit === "continue" && isObjectLike(liveChild)) {
+		rememberFirstRouteThisBatch(context, liveChild, path);
+	}
+
+	return visit;
+};
+
+const recordDescendantRoutes = (
+	context: DiffContext,
+	path: OperationPath,
+	visits: Set<object> = new Set(),
+	sameOccupant = false,
+): void => {
+	if (!writesTables(context)) return;
+
+	const liveNode = liveAtPath(context.handle.proxy.root, path);
+
+	if (!isObjectLike(liveNode)) return;
+
+	const nodeKey = rawTargetOf(liveNode);
+
+	if (visits.has(nodeKey)) return;
+
+	visits.add(nodeKey);
+
+	if (isUnderIgnoredOccupancy(context.handle, path) || context.handle.ignoredAt.has(formatOperationPath(path))) {
+		return;
+	}
+
+	for (const entry of walkDataEntries(liveNode)) {
+		if (typeof entry.value !== "object" || entry.value === null) continue;
+
+		const childPath = appendOperationPath(path, segmentFor(liveNode, entry.key));
+
+		rememberPredatingRoutes(context, entry.value);
+
+		const visit = bindVisitedOccupancy(context.handle, childPath, liveNode, entry.key, entry.value, sameOccupant);
+
+		if (visit !== "continue") continue;
+
+		rememberFirstRouteThisBatch(context, entry.value, childPath);
+		recordDescendantRoutes(context, childPath, visits, sameOccupant);
+	}
 };
 
 const usableRoutesIn = (
@@ -99,7 +224,7 @@ const usableExternalRoutesOf = (
 	context: DiffContext,
 	live: object,
 	formation: OperationPath,
-): ReadonlyArray<OperationPath> => usableRoutesIn(context, requireRouteIndex(context).routesOf(live), live, formation);
+): ReadonlyArray<OperationPath> => usableRoutesIn(context, routesOfLive(context, live), live, formation);
 
 const routeResolvesIn = (root: object, route: OperationPath, live: object): boolean => {
 	let current: unknown = root;
@@ -114,18 +239,27 @@ const routeResolvesIn = (root: object, route: OperationPath, live: object): bool
 		current = container[segment];
 	}
 
-	return isObjectLike(current) && liveOf(current) === live;
+	return isObjectLike(current) && routeKeyOf(current) === routeKeyOf(live);
 };
 
 const refForMint = (context: DiffContext, live: object, container: OperationPath): OperationPath | undefined => {
-	const routes = requireRouteIndex(context).routesOf(live);
+	const routes = routesOfLive(context, live);
 	const external = usableRoutesIn(context, routes, live, container);
 
 	if (external.length === 0) return undefined;
 
-	const predating = external.find((route) => routeResolvesIn(context.beforeRoot, route, live));
+	const predating = context.predatingRoutes.get(routeKeyOf(live)) ?? [];
+	const predatingUsable = external.find(
+		(route) =>
+			predating.some((occupied) => operationPathsEqual(occupied, route)) ||
+			routeResolvesIn(context.beforeRoot, route, live),
+	);
 
-	if (predating !== undefined) return predating;
+	if (predatingUsable !== undefined) return predatingUsable;
+
+	const firstThisBatch = context.firstRouteThisBatch.get(routeKeyOf(live));
+
+	if (firstThisBatch !== undefined && routeUnderPath(firstThisBatch, container)) return undefined;
 
 	const canonical = canonicalRouteOf(routes);
 
@@ -134,53 +268,9 @@ const refForMint = (context: DiffContext, live: object, container: OperationPath
 	return external[0];
 };
 
-const linkOperation = (
-	path: OperationPath,
-	ref: OperationPath,
-	before: unknown,
-	beforePresent: boolean,
-): Operation => ({
-	do: createLinkMutation(path, ref),
-	undo: beforePresent ? createAssignMutation(path, before) : createDeleteMutation(path),
-});
+const assignmentNeedsDecomposition = (context: DiffContext, value: object, formation: OperationPath): boolean => {
+	if (!context.linksEnabled) return false;
 
-const payloadEmbedsEscape = (context: DiffContext, value: object, formation: OperationPath): boolean => {
-	const visited = new Set<object>();
-
-	const visit = (node: object): boolean => {
-		const live = liveOf(node);
-
-		if (visited.has(live)) return false;
-
-		visited.add(live);
-
-		if (isPossiblyShared(live) && usableExternalRoutesOf(context, live, formation).length > 0) return true;
-
-		if (!isCloneable(node)) return false;
-
-		for (const entry of walkDataEntries(node)) {
-			const child: unknown = entry.value;
-
-			if (!isObjectLike(child)) continue;
-
-			if (visit(child)) return true;
-		}
-
-		return false;
-	};
-
-	for (const entry of walkDataEntries(value)) {
-		const child: unknown = entry.value;
-
-		if (!isObjectLike(child)) continue;
-
-		if (visit(child)) return true;
-	}
-
-	return false;
-};
-
-const payloadHasInteriorSharing = (value: object): boolean => {
 	const seen = new Set<object>();
 
 	seen.add(liveOf(value));
@@ -197,6 +287,8 @@ const payloadHasInteriorSharing = (value: object): boolean => {
 
 			seen.add(live);
 
+			if (usableExternalRoutesOf(context, live, formation).length > 0) return true;
+
 			if (visit(child)) return true;
 		}
 
@@ -206,12 +298,30 @@ const payloadHasInteriorSharing = (value: object): boolean => {
 	return visit(value);
 };
 
+const linkOperation = (
+	path: OperationPath,
+	ref: OperationPath,
+	before: unknown,
+	beforePresent: boolean,
+): Operation => ({
+	do: createLinkMutation(path, ref),
+	undo: beforePresent ? createAssignMutation(path, before) : createDeleteMutation(path),
+});
+
+const hasInteriorSharingUnder = (context: DiffContext, path: OperationPath): boolean => {
+	if (context.handle === undefined) return false;
+
+	for (const [, routes] of occupancyRouteEntries(context.handle)) {
+		if (routes.filter((route) => routeUnderPath(route, path)).length > 1) return true;
+	}
+
+	return false;
+};
+
 const hasSharedEscapeUnderPath = (context: DiffContext, path: OperationPath): boolean => {
-	const index = requireRouteIndex(context);
+	if (context.handle === undefined) return false;
 
-	for (const live of index.sharedLives) {
-		const routes = index.routesOf(live);
-
+	for (const [live, routes] of occupancyRouteEntries(context.handle)) {
 		if (!routes.some((route) => routeUnderPath(route, path))) continue;
 
 		if (usableRoutesIn(context, routes, live, path).length > 0) return true;
@@ -230,7 +340,7 @@ const carriedUndoLiveOf = (pair: Operation): object | undefined => {
 	return liveOf(original);
 };
 
-const forEachHintedCarriedUndo = (
+const forEachCarriedUndo = (
 	context: DiffContext,
 	opsStart: number,
 	visit: (pair: Operation, live: object, index: number) => boolean,
@@ -242,7 +352,7 @@ const forEachHintedCarriedUndo = (
 
 		const live = carriedUndoLiveOf(pair);
 
-		if (live === undefined || !isPossiblyShared(live)) continue;
+		if (live === undefined) continue;
 
 		if (visit(pair, live, index)) return;
 	}
@@ -251,7 +361,7 @@ const forEachHintedCarriedUndo = (
 const collapseHidesSurvivingSharing = (context: DiffContext, opsStart: number): boolean => {
 	let found = false;
 
-	forEachHintedCarriedUndo(context, opsStart, (pair, live) => {
+	forEachCarriedUndo(context, opsStart, (pair, live) => {
 		if (usableExternalRoutesOf(context, live, pair.do.path).length === 0) return false;
 
 		found = true;
@@ -282,16 +392,6 @@ const commitOperation = (
 	if ("value" in pair.undo) weight += weighHalf(getValueOriginal(pair.undo));
 
 	return { weight };
-};
-
-const samePathSegments = (left: OperationPath, right: OperationPath): boolean => {
-	if (left.length !== right.length) return false;
-
-	for (let index = 0; index < left.length; index++) {
-		if (left[index] !== right[index]) return false;
-	}
-
-	return true;
 };
 
 const insertOperation = (context: DiffContext, index: number, pair: Operation): DiffResult => {
@@ -342,16 +442,6 @@ const mintDecomposedContents = (context: DiffContext, path: OperationPath, after
 	return mergeResults(results);
 };
 
-const recordFirstMint = (context: DiffContext, live: object, path: OperationPath): OperationPath => {
-	const recorded = context.firstMintRoute.get(live);
-
-	if (recorded !== undefined) return recorded;
-
-	context.firstMintRoute.set(live, path);
-
-	return path;
-};
-
 const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): DiffResult =>
 	mergeResults([
 		commitOperation(
@@ -368,7 +458,16 @@ const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after
 	]);
 
 const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before: object): DiffResult => {
-	recordFirstMint(context, liveOf(before), path);
+	const live = liveOf(before);
+	const key = routeKeyOf(live);
+
+	if (context.decomposingRemovals.has(key)) {
+		return commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
+	}
+
+	context.decomposingRemovals.add(key);
+	rememberPredatingRoutes(context, live);
+	rememberFirstRouteThisBatch(context, live, path);
 
 	const results = new Array<DiffResult>();
 
@@ -410,7 +509,7 @@ const mintDecomposedChange = (
 ): DiffResult => {
 	if (
 		isObjectLike(before) &&
-		payloadHasInteriorSharing(before) &&
+		assignmentNeedsDecomposition(context, before, path) &&
 		usableExternalRoutesOf(context, liveOf(before), path).length === 0
 	) {
 		return mergeResults([mintDecomposedRemoval(context, path, before), mintDecomposedAddition(context, path, after)]);
@@ -456,50 +555,88 @@ const mintAssignment = (
 
 		if (ancestorPath !== undefined) return commitLink(context, path, ancestorPath, before, beforePresent);
 
-		const recorded = context.firstMintRoute.get(live);
+		const ref = refForMint(context, live, path);
 
-		if (recorded !== undefined && routeResolvesIn(context.afterRoot, recorded, live)) {
+		if (ref !== undefined) return commitLink(context, path, ref, before, beforePresent);
+
+		const recorded = context.firstRouteThisBatch.get(routeKeyOf(live));
+
+		if (
+			recorded !== undefined &&
+			!operationPathsEqual(recorded, path) &&
+			routeResolvesIn(context.afterRoot, recorded, live)
+		) {
 			return commitLink(context, path, recorded, before, beforePresent);
-		}
-
-		if (isPossiblyShared(live)) {
-			const ref = refForMint(context, live, path);
-
-			if (ref !== undefined) return commitLink(context, path, ref, before, beforePresent);
 		}
 
 		if (
 			(isPlainObject(assigned) || isPlainArray(assigned)) &&
-			(payloadEmbedsEscape(context, assigned, path) || payloadHasInteriorSharing(assigned))
+			assignmentNeedsDecomposition(context, assigned, path)
 		) {
-			recordFirstMint(context, live, path);
-
 			if (!beforePresent) return mintDecomposedAddition(context, path, assigned);
 
 			return mintDecomposedChange(context, path, before, assigned);
 		}
 
-		recordFirstMint(context, live, path);
+		if (writesTables(context)) {
+			rememberPredatingRoutes(context, live);
+			addOccupancyRoute(context.handle, live, path);
+			rememberFirstRouteThisBatch(context, live, path);
+		}
 	}
 
-	if (beforePresent) {
-		return commitOperation(context, context.ops.length, path, changePair(path, before, assigned), weighCarried);
+	const committed = beforePresent
+		? commitOperation(context, context.ops.length, path, changePair(path, before, assigned), weighCarried)
+		: commitOperation(context, context.ops.length, path, additionPair(path, assigned), weighCarried);
+
+	if (isObjectLike(assigned) && writesTables(context) && !isSkippedPath(context, path)) {
+		recordDescendantRoutes(context, path);
 	}
 
-	return commitOperation(context, context.ops.length, path, additionPair(path, assigned), weighCarried);
+	return committed;
 };
 
-const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult =>
-	mintAssignment(context, path, undefined, after, false);
+const markChangedPath = (context: DiffContext, path: OperationPath): void => {
+	if (!writesTables(context) || path.length === 0) return;
+
+	const liveParent = liveAtPath(context.handle.proxy.root, path.slice(0, -1));
+
+	if (!isObjectLike(liveParent)) return;
+
+	markDirtyPath(context.dirty, context.handle, path, liveParent);
+};
+
+const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): DiffResult => {
+	const visit = admitEmitPath(context, path, undefined, after, false);
+
+	if (visit === "omit") return emptyResult();
+
+	if (visit === "skip" && isOmittedPath(context, path)) return emptyResult();
+
+	markChangedPath(context, path);
+
+	return mintAssignment(context, path, undefined, after, false);
+};
 
 const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): DiffResult => {
 	if (isSkippedPath(context, path) && isOmittedPath(context, path)) return emptyResult();
 
 	if (isObjectLike(before) && context.linksEnabled) {
-		const live = liveOf(before);
-		const recorded = context.firstMintRoute.get(live);
+		rememberPredatingRoutes(context, before);
+		rememberFirstRouteThisBatch(context, before, path);
+	}
 
-		if (recorded !== undefined && !samePathSegments(recorded, path)) {
+	if (writesTables(context)) {
+		dropOccupancyRoutesUnder(context.handle, path);
+		markChangedPath(context, path);
+	}
+
+	if (isObjectLike(before) && context.linksEnabled) {
+		const live = liveOf(before);
+		const recorded =
+			context.firstTouchedThisBatch.get(routeKeyOf(live)) ?? context.firstRouteThisBatch.get(routeKeyOf(live));
+
+		if (recorded !== undefined && !operationPathsEqual(recorded, path)) {
 			const pair: Operation = {
 				do: createDeleteMutation(path),
 				undo: createLinkMutation(path, recorded),
@@ -511,7 +648,7 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 
 				if (existing === undefined) continue;
 
-				if (existing.do.verb === "delete" && samePathSegments(existing.do.path, recorded)) {
+				if (existing.do.verb === "delete" && operationPathsEqual(existing.do.path, recorded)) {
 					insertAt = index;
 
 					break;
@@ -521,11 +658,12 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 			return insertOperation(context, insertAt, pair);
 		}
 
-		if (payloadHasInteriorSharing(before) && usableExternalRoutesOf(context, live, path).length === 0) {
+		if (
+			assignmentNeedsDecomposition(context, before, path) &&
+			usableExternalRoutesOf(context, live, path).length === 0
+		) {
 			return mintDecomposedRemoval(context, path, before);
 		}
-
-		recordFirstMint(context, live, path);
 	}
 
 	return commitOperation(context, context.ops.length, path, removalPair(path, before), weighCarried);
@@ -544,26 +682,23 @@ const tryCollapse = (
 ): DiffResult => {
 	if (walked.weight === 0) return walked;
 
-	const probe = { sawHintedNode: false };
-	const onNode = (node: object): void => {
-		if (isPossiblyShared(node) || isPossiblyShared(liveOf(node))) probe.sawHintedNode = true;
-	};
-
-	const beforeWeight = weighValue(before, walked.weight, onNode);
-	const afterWeight = weighValue(after, walked.weight - beforeWeight, onNode);
+	const beforeWeight = weighValue(before, walked.weight);
+	const afterWeight = weighValue(after, walked.weight - beforeWeight);
 	const collapsedWeight = OPERATION_WEIGHT + beforeWeight + afterWeight;
 
 	if (collapsedWeight >= walked.weight) return walked;
 
 	if (context.linksEnabled) {
 		if (
-			(isObjectLike(after) && payloadHasInteriorSharing(after)) ||
-			(isObjectLike(before) && payloadHasInteriorSharing(before))
+			context.ops.slice(opsStart).some((pair) => pair.do.verb === "link" || pair.undo.verb === "link") ||
+			hasInteriorSharingUnder(context, path) ||
+			(isObjectLike(after) && assignmentNeedsDecomposition(context, after, path)) ||
+			(isObjectLike(before) && assignmentNeedsDecomposition(context, before, path))
 		) {
 			return walked;
 		}
 
-		if (probe.sawHintedNode && hasSharedEscapeUnderPath(context, path)) return walked;
+		if (hasSharedEscapeUnderPath(context, path)) return walked;
 
 		if (collapseHidesSurvivingSharing(context, opsStart)) return walked;
 	}
@@ -584,7 +719,13 @@ const tryCollapse = (
 		return weighCarried(value);
 	};
 
-	return commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf);
+	const collapsed = commitOperation(context, opsStart, path, changePair(path, before, after), weighHalf);
+
+	if (context.dirty !== undefined && isObjectLike(after)) markDirtyNode(context.dirty, liveOf(after));
+
+	if (context.dirty !== undefined && isObjectLike(before)) markDirtyNode(context.dirty, liveOf(before));
+
+	return collapsed;
 };
 
 const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean =>
@@ -784,17 +925,34 @@ const walkContainer = (
 };
 
 const diffValue = (context: DiffContext, before: unknown, after: unknown, path: OperationPath): DiffResult => {
-	if (isSkippedPath(context, path)) {
+	const replacing =
+		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
+
+	if (replacing && writesTables(context)) dropOccupancyRoutesUnder(context.handle, path);
+
+	const visit = admitEmitPath(context, path, before, after, isObjectLike(before) || before !== undefined);
+
+	if (visit === "omit") return emptyResult();
+
+	if (visit === "skip" || isSkippedPath(context, path)) {
 		if (isOmittedPath(context, path) || Object.is(before, after)) return emptyResult();
 
 		if (isObjectLike(before) && isObjectLike(after) && sharesStorageIdentity(before, after)) return emptyResult();
 
+		markChangedPath(context, path);
+
 		return pushChange(context, path, before, after);
 	}
 
-	if (Object.is(before, after)) return emptyResult();
+	if (Object.is(before, after)) {
+		if (writesTables(context)) recordDescendantRoutes(context, path, new Set(), true);
 
-	if (path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after)) {
+		return emptyResult();
+	}
+
+	if (replacing) {
+		markChangedPath(context, path);
+
 		return pushChange(context, path, before, after);
 	}
 
@@ -807,6 +965,8 @@ const diffValue = (context: DiffContext, before: unknown, after: unknown, path: 
 			diffObjectProperties(context, before, after, path, false),
 		);
 	}
+
+	markChangedPath(context, path);
 
 	return pushChange(context, path, before, after);
 };
@@ -872,7 +1032,7 @@ const rewriteSurvivingUndos = (context: DiffContext): void => {
 
 	const routeDisturbedAfter = createDoPathTrie(context.ops);
 
-	forEachHintedCarriedUndo(context, 0, (pair, live, index) => {
+	forEachCarriedUndo(context, 0, (pair, live, index) => {
 		const surviving = usableExternalRoutesOf(context, live, pair.do.path).find(
 			(route) => !routeDisturbedAfter(route, index),
 		);
@@ -895,28 +1055,29 @@ const rewriteSurvivingUndos = (context: DiffContext): void => {
  * @param after - Later value.
  * @returns Ops from before to after.
  */
-export function diffObjects(before: object, after: object, handle?: Handle): Array<Operation> {
+export function diffObjects(before: object, after: object, handle?: Handle, dirty?: DirtyIndex): Array<Operation> {
 	const beforeKind = getRootKind(before);
 	const afterKind = getRootKind(after);
 
 	if (beforeKind === undefined || beforeKind !== afterKind) throw new IncompatibleObjectRootsError();
 
 	const ops = new Array<Operation>();
-	const liveRoot = liveOf(after);
-	const linksEnabled = getRegisteredTarget(after) !== undefined;
+	const linksEnabled = handle !== undefined;
 
 	const context: DiffContext = {
 		ops,
 		ancestors: new Map(),
 		ancestorPaths: new Map(),
-		firstMintRoute: new Map(),
-		liveRoot,
+		predatingRoutes: new Map(),
+		firstRouteThisBatch: new Map(),
+		firstTouchedThisBatch: new Map(),
+		decomposingRemovals: new Set(),
 		beforeRoot: before,
 		afterRoot: after,
 		linksEnabled,
 		handle,
+		dirty,
 		omissions: handle === undefined ? new Set() : occupancyOmissionsOf(handle),
-		routeIndex: undefined,
 	};
 
 	diffValue(context, before, after, createOperationPath([]));

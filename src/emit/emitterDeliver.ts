@@ -1,5 +1,5 @@
 import type { GroupDeliver, StateDeliver } from "./emitterRegistry";
-import type { Handle } from "../handle";
+import type { DirtyIndex, Handle } from "../handle";
 import type { Operation } from "../ops/operation";
 
 type Delivery =
@@ -12,6 +12,7 @@ export interface PendingDelivery {
 	readonly ops: ReadonlyArray<Operation>;
 	readonly meta: unknown;
 	readonly channelId: object | undefined;
+	readonly dirty: DirtyIndex;
 }
 
 const collectDeliveries = (handle: Handle): Array<Delivery> => {
@@ -66,12 +67,14 @@ export const prepareDelivery = (
 	ops: ReadonlyArray<Operation>,
 	meta: unknown,
 	channelId: object | undefined,
+	dirty: DirtyIndex,
 ): PendingDelivery => ({
 	writeProxy: handle.proxy.root,
 	deliveries: collectDeliveries(handle),
 	ops,
 	meta,
 	channelId,
+	dirty,
 });
 
 export const enqueueDelivery = (pending: PendingDelivery): void => {

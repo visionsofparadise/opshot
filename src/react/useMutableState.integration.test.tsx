@@ -300,7 +300,7 @@ describe("useMutableState", () => {
 
 		render(<View />);
 		expect(renders).toBe(1);
-		expect(valtioSubscribeCounts.subscribes).toBe(1);
+		expect(valtioSubscribeCounts.subscribes).toBe(2);
 
 		for (let next = 1; next <= 5; next += 1) {
 			act(() => {
@@ -312,7 +312,7 @@ describe("useMutableState", () => {
 
 		expect(renders).toBe(6);
 		expect(screen.getByText("5")).toBeTruthy();
-		expect(valtioSubscribeCounts.subscribes).toBe(1);
+		expect(valtioSubscribeCounts.subscribes).toBe(2);
 		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
 
 		act(() => {
@@ -322,7 +322,7 @@ describe("useMutableState", () => {
 		});
 
 		expect(renders).toBe(6);
-		expect(valtioSubscribeCounts.subscribes).toBe(1);
+		expect(valtioSubscribeCounts.subscribes).toBe(2);
 		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
 	});
 

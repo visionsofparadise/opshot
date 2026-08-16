@@ -7,7 +7,7 @@ import { installBoundary } from "./boundary";
 import { createMutableState } from "../createMutableState";
 import { peelIdentityLayer } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
-import { isPossiblyShared } from "../ops/commitWalk";
+import { handleOf } from "../handle";
 import { type Operation } from "../ops/operation";
 import { ignore } from "../ignore";
 import { isState } from "../isState";
@@ -1460,20 +1460,21 @@ describe("boundary: bare references and the sharing hint", () => {
 		}).not.toThrow();
 	});
 
-	it("leaves the sharing hint unflagged when a write is refused", () => {
+	it("leaves handle routes unchanged when a write is refused", () => {
 		const source: { hub: { n: number }; slot?: unknown } = { hub: { n: 1 } };
 
 		Object.defineProperty(source, "slot", { value: undefined, writable: false, enumerable: true });
 
 		const state = createMutableState(source);
 		const heard = recordEmissions(state);
+		const handle = handleOf(state);
 
 		expect(() => {
 			state.slot = state.hub;
 		}).toThrow("trap returned falsish");
 
 		expect(state.slot).toBeUndefined();
-		expect(isPossiblyShared(state.hub)).toBe(false);
+		expect(handle?.routes.get(rawTargetOf(state.hub))?.map((path) => [...path])).toEqual([["hub"]]);
 
 		transact(state, () => {
 			state.hub.n = 2;

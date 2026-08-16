@@ -4,7 +4,6 @@ import { handlesOf } from "../handle";
 import { getRegisteredTarget } from "../identity";
 import { pendingIgnore } from "../ignore";
 import { discardPendingOccupancy, recordPendingOccupancy } from "../occupancy";
-import { flagPossiblyShared } from "../ops/commitWalk";
 import { peelReadProxy } from "../peelReadProxy";
 import { pendingUnsafe } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
@@ -249,10 +248,6 @@ export function installBoundary(): void {
 								if (Object.is(previous, stored) || Object.is(previous, resolved)) {
 									notifyUpdate(["set", [prop], resolved, previous]);
 								}
-							}
-
-							if (!refSet.has(resolved) && alreadyTracked) {
-								flagPossiblyShared(resolved);
 							}
 
 							return result;
