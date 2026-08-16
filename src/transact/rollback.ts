@@ -16,7 +16,7 @@ export const rollbackTransaction = (handle: Handle): void => {
 	);
 
 	if (operations.length > 0) {
-		applyMutations(handle.proxy.root, operations, "do");
+		applyMutations(handle.proxy.root, operations, "do", "restore");
 	}
 
 	handle.lastSnapshot = restoreTarget;

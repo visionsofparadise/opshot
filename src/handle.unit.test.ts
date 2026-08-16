@@ -26,6 +26,9 @@ describe("handleOf", () => {
 			ignoredAt: new Map(),
 			members: new WeakSet(),
 			routes: new WeakMap(),
+			stamp: {},
+			version: 0,
+			replaying: false,
 		};
 
 		registerHandle(target, registered);

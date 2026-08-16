@@ -959,9 +959,9 @@ describe("transact", () => {
 			b: replicaShared,
 		});
 
-		expect(() => applyOperations(replica, heardA[0] ?? [], "do")).not.toThrow();
-		expect(replica.b).toBeUndefined();
-		expect(replica.a.b.n).toBe(1);
+		expect(() => applyOperations(replica, heardA[0] ?? [], "do")).toThrow(
+			"opshot: applyOperations applies a state's operations only to that state",
+		);
 	});
 
 	it("lets a clean subscribed sibling sharing a region observe nothing across a rolled-back transaction", async () => {

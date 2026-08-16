@@ -69,6 +69,9 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		ignoredAt: new Map(),
 		members: new WeakSet(),
 		routes: new WeakMap(),
+		stamp: {},
+		version: 0,
+		replaying: false,
 	};
 
 	if (pendingUnsafe.has(properties)) {

@@ -166,7 +166,7 @@ const scenarios = {
 				driveInterior(state);
 			});
 
-			const recorded = heard.flat().map((op) => ({ do: op.do, undo: op.undo }));
+			const recorded = heard.flat();
 			const redoBaseline = snapshot(state).value;
 
 			applyOperations(state, recorded, "undo");

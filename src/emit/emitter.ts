@@ -9,6 +9,7 @@ import {
 	syncHandleTables,
 } from "../occupancy";
 import { diffObjects } from "../ops/diff";
+import { stampOperation } from "../ops/operation";
 import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
@@ -195,6 +196,10 @@ const emitRange = (
 	handle.lastSnapshot = to;
 
 	if (ops.length > 0) {
+		if (!handle.replaying) {
+			for (const operation of ops) stampOperation(handle, operation);
+		}
+
 		handle.lastDirty = dirty;
 		enqueueDelivery(prepareDelivery(handle, ops, meta, channelId, dirty));
 		drainDeliveries();

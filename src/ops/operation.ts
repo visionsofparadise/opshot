@@ -1,5 +1,6 @@
 import { cloneValue } from "./cloneValue";
 import { createOperationPath, type OperationPath } from "./path";
+import type { Handle } from "../handle";
 
 /**
  * Assigns a value at a path.
@@ -129,6 +130,24 @@ class LinkHalf extends OperationHalf {
 		this.ref = createOperationPath(ref);
 	}
 }
+
+export const stampOf = (operation: object): object | undefined => {
+	const value: unknown = Object.getOwnPropertyDescriptor(operation, "stamp")?.value;
+
+	return typeof value === "object" && value !== null ? value : undefined;
+};
+
+export const versionOf = (operation: object): number | undefined => {
+	const value: unknown = Reflect.get(operation, "version");
+
+	return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+};
+
+export const stampOperation = (handle: Handle, operation: Operation): void => {
+	handle.version += 1;
+	Object.defineProperty(operation, "stamp", { value: handle.stamp, enumerable: false });
+	Object.defineProperty(operation, "version", { value: handle.version, enumerable: true });
+};
 
 export const isMutation = (value: unknown): value is Mutation =>
 	typeof value === "object" && value !== null && operationBrand in value;

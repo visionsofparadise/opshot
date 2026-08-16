@@ -33,6 +33,9 @@ export interface Handle {
 	members: WeakSet<object>;
 	routes: WeakMap<object, ReadonlyArray<OperationPath>>;
 	lastDirty?: DirtyIndex;
+	stamp: object;
+	version: number;
+	replaying: boolean;
 }
 
 export function registerHandle(target: object, handle: Handle): void {

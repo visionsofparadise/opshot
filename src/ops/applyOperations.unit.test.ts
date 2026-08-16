@@ -1,4 +1,3 @@
-import { getVersion } from "valtio/vanilla";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
 import { createMutableState } from "../createMutableState";
@@ -370,11 +369,9 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 
 		const replica = createMutableState({ child: { n: 1 } });
 
-		applyOperations(replica, heard[0] ?? [], "do");
-
-		expect(replica.child).toEqual({ n: 2 });
-		expect(replica.child).not.toBe(state.child);
-		expect(isSameIdentity(replica.child, state.child)).toBe(false);
+		expect(() => applyOperations(replica, heard[0] ?? [], "do")).toThrow(
+			"opshot: applyOperations applies a state's operations only to that state",
+		);
 	});
 
 	it("reattaches a live node both states already hold", () => {
@@ -390,11 +387,71 @@ describe("applyOperations: parent-sensitive atomic resolver", () => {
 			delete state.slot;
 		});
 
-		applyOperations(replica, heard[0] ?? [], "do");
-		expect(replica.slot).toBeUndefined();
+		expect(() => applyOperations(replica, heard[0] ?? [], "do")).toThrow(
+			"opshot: applyOperations applies a state's operations only to that state",
+		);
+	});
 
-		applyOperations(replica, heard[0] ?? [], "undo");
-		expect(isSameIdentity(replica.slot as object, shared)).toBe(true);
+	it("throws when applying another state's stamped operations", () => {
+		const stateA = createMutableState({ n: 0 });
+		const stateB = createMutableState({ n: 0 });
+		const heard = record(stateA);
+
+		transact(stateA, () => {
+			stateA.n = 1;
+		});
+
+		expect(() => applyOperations(stateB, heard[0] ?? [], "do")).toThrow(
+			"opshot: applyOperations applies a state's operations only to that state",
+		);
+	});
+
+	it("applies a JSON clone of the first emission onto the same starting state", () => {
+		const stateA = createMutableState({ n: 0 });
+		const stateB = createMutableState({ n: 0 });
+		const heard = record(stateA);
+
+		transact(stateA, () => {
+			stateA.n = 1;
+		});
+
+		applyOperations(stateB, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+
+		expect(stateB.n).toBe(1);
+		expect(isSameIdentity(stateB, stateA)).toBe(false);
+	});
+
+	it("throws when applying stamped operations out of order", () => {
+		const state = createMutableState({ n: 0 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.n = 1;
+		});
+		transact(state, () => {
+			state.n = 2;
+		});
+
+		expect(() => applyOperations(state, heard[0] ?? [], "undo")).toThrow(
+			"opshot: applyOperations applies only the next or previous operations",
+		);
+	});
+
+	it("undo then redo of stamped operations restores identity", () => {
+		const state = createMutableState<{ item: { n: number } }>({ item: { n: 1 } });
+		const held = state.item;
+		const heard = record(state);
+
+		transact(state, () => {
+			state.item = { n: 2 };
+		});
+
+		applyOperations(state, heard[0] ?? [], "undo");
+		expect(isSameIdentity(state.item, held)).toBe(true);
+
+		applyOperations(state, heard[0] ?? [], "do");
+		applyOperations(state, heard[0] ?? [], "undo");
+		expect(isSameIdentity(state.item, held)).toBe(true);
 	});
 
 	it("round-trips clear, delete-readd, and slot displacement atomically", () => {
@@ -860,7 +917,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 
 		const withoutOwnConstructor = createMutableState<{ h: Record<string, unknown> }>({ h: {} });
 
-		expect(() => applyOperations(withoutOwnConstructor, ops, "do")).toThrow("does not resolve");
+		expect(() => applyOperations(withoutOwnConstructor, ops, "do")).toThrow(
+			"opshot: applyOperations applies a state's operations only to that state",
+		);
 
 		expect(Object.prototype).not.toHaveProperty("x");
 		expect({}).not.toHaveProperty("x");
@@ -1002,13 +1061,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 		expect(state.tree.child?.deep?.m).toBe(1);
 		expect(isSameIdentity(state.tree.child as object, childBefore as object)).toBe(true);
 
-		const replayed = new Array<Operation>();
-
-		subscribe(state, (ops) => replayed.push(...ops));
-
-		applyOperations(state, ops, "undo");
-
-		expect(replayed).toHaveLength(0);
+		expect(() => applyOperations(state, ops, "undo")).toThrow(
+			"opshot: applyOperations applies only the next or previous operations",
+		);
 	});
 
 	it("bumps no version when the slot already holds the recorded target", () => {
@@ -1025,11 +1080,9 @@ describe("applyOperations: resolution is the pollution defence", () => {
 
 		applyOperations(state, ops, "undo");
 
-		const settled = getVersion(state);
-
-		applyOperations(state, ops, "undo");
-
-		expect(getVersion(state)).toBe(settled);
+		expect(() => applyOperations(state, ops, "undo")).toThrow(
+			"opshot: applyOperations applies only the next or previous operations",
+		);
 	});
 });
 

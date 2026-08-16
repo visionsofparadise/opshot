@@ -1,8 +1,15 @@
+import { emitWrites } from "../emit/emitter";
 import { resolveWriteProxy } from "../emit/resolveWriteProxy";
+import { requireHandle } from "../handle";
+import { isTransactionOpen } from "../transact/nest";
 import { runTransaction } from "../transact/transact";
 import { applyMutations, type ApplyDirection } from "./applyMutations";
-import { isMutation, type Operation } from "./operation";
+import { isMutation, stampOf, versionOf, type Operation } from "./operation";
 import type { OperationPath } from "./path";
+
+const originError = (): Error => new Error("opshot: applyOperations applies a state's operations only to that state");
+
+const tapeError = (): Error => new Error("opshot: applyOperations applies only the next or previous operations");
 
 const isFrozenCopyablePath = (value: unknown): value is OperationPath =>
 	Array.isArray(value) && value.every((segment) => typeof segment === "string" || typeof segment === "number");
@@ -81,12 +88,60 @@ export function runOperations(
 ): void {
 	for (const operation of operations) assertApplicable(operation);
 
-	runTransaction(
-		state,
-		() => {
-			applyMutations(resolveWriteProxy(state), operations, direction);
-		},
-		meta,
-		channelId,
-	);
+	if (isTransactionOpen()) {
+		throw new Error(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
+	}
+
+	const handle = requireHandle(state, "opshot: applyOperations requires a state");
+
+	emitWrites(handle);
+
+	let ownedCount = 0;
+
+	for (const operation of operations) {
+		const stamp = stampOf(operation);
+
+		if (stamp !== undefined && stamp !== handle.stamp) throw originError();
+
+		if (stamp === handle.stamp) ownedCount += 1;
+	}
+
+	if (ownedCount > 0 && ownedCount < operations.length) throw originError();
+
+	const owned = operations.length > 0 && ownedCount === operations.length;
+
+	if (owned) {
+		for (let index = 0; index < operations.length; index++) {
+			const operation = operations[index];
+
+			if (operation === undefined) throw tapeError();
+
+			const expected =
+				direction === "do" ? handle.version + 1 + index : handle.version - (operations.length - 1 - index);
+
+			if (versionOf(operation) !== expected) throw tapeError();
+		}
+	}
+
+	handle.replaying = true;
+
+	try {
+		runTransaction(
+			state,
+			() => {
+				applyMutations(resolveWriteProxy(state), operations, direction, owned ? "restore" : "construct");
+
+				if (owned) {
+					handle.version =
+						direction === "do" ? handle.version + operations.length : handle.version - operations.length;
+				}
+			},
+			meta,
+			channelId,
+		);
+	} finally {
+		handle.replaying = false;
+	}
 }
