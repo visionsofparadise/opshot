@@ -190,6 +190,30 @@ describe("value matrix scope", () => {
 		}
 	}
 
+	it("skips a state nested on a DOM node", async () => {
+		const nested = createMutableState<NestedState>({ label: 0 });
+		const node = document.createElement("div");
+
+		Object.assign(node, { nested });
+
+		const { Probe, renders } = buildProbe();
+
+		render(createElement(Probe, { holder: node }));
+
+		expect(screen.getByTestId("out").textContent).toBe("0");
+
+		const before = renders.count;
+
+		await act(async () => {
+			transact(nested, () => {
+				nested.label = 1;
+			});
+		});
+
+		expect(screen.getByTestId("out").textContent).toBe("0");
+		expect(renders.count).toBe(before);
+	});
+
 	it("skips a state nested in React element props", async () => {
 		const nested = createMutableState<NestedState>({ label: 0 });
 		const element = createElement("div", { nested });

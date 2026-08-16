@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { proxy, snapshot } from "valtio/vanilla";
+import { proxy, snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { ignore } from "../ignore";
 import { installBoundary } from "../valtio/boundary";
-import { createReadTracker, isReadProxy } from "./readTracker";
+import { createReadTracker, isReadProxy, readsIntersectDirty } from "./readTracker";
 import { peelReadProxy } from "../peelReadProxy";
+import type { DirtyIndex } from "../handle";
+
+const { proxyStateMap } = unstable_getInternalStates();
+
+const rawTargetOf = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
+
+const emptyDirty = (): DirtyIndex => ({ edges: new WeakMap(), nodes: new WeakSet() });
 
 installBoundary();
 
@@ -385,5 +392,57 @@ describe("ReadTracker", () => {
 		state.shown = 1;
 
 		expect(readTracker.readsChanged(state)).toBe(false);
+	});
+});
+
+describe("readsIntersectDirty", () => {
+	it("hits a recorded key and misses a sibling", () => {
+		const state = createLive({ a: 1, b: 2 });
+		const readTracker = createReadTracker();
+		const readProxy = readTracker.wrap(state);
+
+		void readProxy.a;
+
+		const dirty = emptyDirty();
+		const raw = rawTargetOf(state);
+
+		dirty.edges.set(raw, new Set(["b"]));
+		expect(readsIntersectDirty(readTracker, dirty)).toBe(false);
+
+		dirty.edges.set(raw, new Set(["a"]));
+		expect(readsIntersectDirty(readTracker, dirty)).toBe(true);
+	});
+
+	it("uses the node flag for ownKeys", () => {
+		const state = createLive({ a: 1 });
+		const readTracker = createReadTracker();
+		const readProxy = readTracker.wrap(state);
+
+		void Reflect.ownKeys(readProxy);
+
+		const dirty = emptyDirty();
+		const raw = rawTargetOf(state);
+
+		dirty.edges.set(raw, new Set(["a"]));
+		expect(readsIntersectDirty(readTracker, dirty)).toBe(false);
+
+		dirty.nodes.add(raw);
+		expect(readsIntersectDirty(readTracker, dirty)).toBe(true);
+	});
+
+	it("uses the node flag for an identity-only nested read", () => {
+		const state = createLive({ box: { n: 1 }, other: { n: 1 } });
+		const readTracker = createReadTracker();
+		const readProxy = readTracker.wrap(state);
+
+		void readProxy.box;
+
+		const dirty = emptyDirty();
+
+		dirty.nodes.add(rawTargetOf(state.other));
+		expect(readsIntersectDirty(readTracker, dirty)).toBe(false);
+
+		dirty.nodes.add(rawTargetOf(state.box));
+		expect(readsIntersectDirty(readTracker, dirty)).toBe(true);
 	});
 });

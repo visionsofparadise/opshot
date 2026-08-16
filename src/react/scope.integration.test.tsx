@@ -15,26 +15,27 @@ import {
 
 import { createMutableState } from "../createMutableState";
 import { TrackedMap } from "../tracked/trackedMap";
+import { transact } from "../transact/transact";
 import { isReadProxy } from "./readTracker";
 import { isRendering } from "./renderPhase";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
-const valtioSubscribeCounts = vi.hoisted(() => ({ subscribes: 0, unsubscribes: 0 }));
+const subscribeCounts = vi.hoisted(() => ({ subscribes: 0, unsubscribes: 0 }));
 
-vi.mock("valtio/vanilla", async () => {
-	const actual = await vi.importActual<typeof import("valtio/vanilla")>("valtio/vanilla");
+vi.mock("../subscribe", async () => {
+	const actual = await vi.importActual<typeof import("../subscribe")>("../subscribe");
 	const actualSubscribe = actual.subscribe;
 
 	return {
 		...actual,
 		subscribe: (...args: Parameters<typeof actualSubscribe>) => {
-			valtioSubscribeCounts.subscribes += 1;
+			subscribeCounts.subscribes += 1;
 
 			const unsubscribe = actualSubscribe(...args);
 
 			return () => {
-				valtioSubscribeCounts.unsubscribes += 1;
+				subscribeCounts.unsubscribes += 1;
 				unsubscribe();
 			};
 		},
@@ -42,7 +43,7 @@ vi.mock("valtio/vanilla", async () => {
 });
 
 describe("scope", () => {
-	it("rerenders a scoped child when a read prop field changes", () => {
+	it("rerenders a scoped child when a read prop field changes", async () => {
 		let childRenders = 0;
 
 		const Child = scope<{ state: { count: number; other: number } }>(({ state }) => {
@@ -65,7 +66,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("value").textContent).toBe("0");
 		expect(childRenders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			const state = (globalThis as { __scoped?: { count: number; other: number } }).__scoped;
 
 			if (state === undefined) throw new Error("missing state");
@@ -75,7 +76,7 @@ describe("scope", () => {
 
 		expect(childRenders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			const state = (globalThis as { __scoped?: { count: number; other: number } }).__scoped;
 
 			if (state === undefined) throw new Error("missing state");
@@ -87,7 +88,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("value").textContent).toBe("2");
 	});
 
-	it("heals mutations that land before passive subscription attach", () => {
+	it("heals mutations that land before passive subscription attach", async () => {
 		let boundaryRenders = 0;
 
 		const Mutator: FC<{ state: { count: number } }> = ({ state }) => {
@@ -125,7 +126,7 @@ describe("scope", () => {
 		expect(boundaryRenders).toBe(2);
 	});
 
-	it("free-rider: unwrapped child reads ride the scoped boundary", () => {
+	it("free-rider: unwrapped child reads ride the scoped boundary", async () => {
 		let boundaryRenders = 0;
 		let leafRenders = 0;
 		let stateRef: { view: string; detail: number; other: number } | undefined;
@@ -161,7 +162,7 @@ describe("scope", () => {
 		expect(boundaryRenders).toBe(1);
 		expect(leafRenders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.detail = 5;
@@ -171,7 +172,7 @@ describe("scope", () => {
 		expect(leafRenders).toBe(2);
 		expect(screen.getByTestId("detail").textContent).toBe("5");
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.other = 1;
@@ -181,7 +182,7 @@ describe("scope", () => {
 		expect(leafRenders).toBe(2);
 	});
 
-	it("versioned identity through React.memo retains sibling readProxies", () => {
+	it("versioned identity through React.memo retains sibling readProxies", async () => {
 		let parentRenders = 0;
 		let childRenders = 0;
 		let stateRef: { other: number; obj: { x: number } } | undefined;
@@ -217,7 +218,7 @@ describe("scope", () => {
 		expect(parentRenders).toBe(1);
 		expect(childRenders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.other = 1;
@@ -227,7 +228,7 @@ describe("scope", () => {
 		expect(childRenders).toBe(1);
 		expect(screen.getByTestId("x").textContent).toBe("1");
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.obj.x = 9;
@@ -238,7 +239,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("x").textContent).toBe("9");
 	});
 
-	it("subscribes once per source set rather than once per render", () => {
+	it("subscribes once per source set rather than once per render", async () => {
 		const state = createMutableState({ count: 0, other: 0 });
 		let renders = 0;
 
@@ -248,34 +249,131 @@ describe("scope", () => {
 			return <span data-testid="count">{scoped.count}</span>;
 		});
 
-		valtioSubscribeCounts.subscribes = 0;
-		valtioSubscribeCounts.unsubscribes = 0;
+		subscribeCounts.subscribes = 0;
+		subscribeCounts.unsubscribes = 0;
 
 		render(<View state={state} />);
 		expect(renders).toBe(1);
-		expect(valtioSubscribeCounts.subscribes).toBe(1);
+		expect(subscribeCounts.subscribes).toBe(1);
 
 		for (let next = 1; next <= 5; next += 1) {
-			act(() => {
+			await act(async () => {
 				state.count = next;
 			});
 		}
 
 		expect(renders).toBe(6);
 		expect(screen.getByTestId("count").textContent).toBe("5");
-		expect(valtioSubscribeCounts.subscribes).toBe(1);
-		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
+		expect(subscribeCounts.subscribes).toBe(1);
+		expect(subscribeCounts.unsubscribes).toBe(0);
 
-		act(() => {
+		await act(async () => {
 			state.other = 1;
 		});
 
 		expect(renders).toBe(6);
-		expect(valtioSubscribeCounts.subscribes).toBe(1);
-		expect(valtioSubscribeCounts.unsubscribes).toBe(0);
+		expect(subscribeCounts.subscribes).toBe(1);
+		expect(subscribeCounts.unsubscribes).toBe(0);
 	});
 
-	it("renders a memoized component as an element and keeps it updating", () => {
+	it("waits for emitOn before rerendering a read field", async () => {
+		const queued = new Array<() => void>();
+		const state = createMutableState({ count: 0 }, { emitOn: (flush) => queued.push(flush) });
+		let renders = 0;
+
+		const View = scope<{ state: { count: number } }>(({ state: scoped }) => {
+			renders += 1;
+
+			return <span data-testid="count">{scoped.count}</span>;
+		});
+
+		render(<View state={state} />);
+		expect(screen.getByTestId("count").textContent).toBe("0");
+		expect(renders).toBe(1);
+
+		await act(async () => {
+			state.count = 1;
+		});
+
+		expect(screen.getByTestId("count").textContent).toBe("0");
+		expect(renders).toBe(1);
+
+		await act(async () => {
+			queued[0]?.();
+		});
+
+		expect(screen.getByTestId("count").textContent).toBe("1");
+		expect(renders).toBe(2);
+	});
+
+	it("does not rerender when a transact of a read field rolls back", async () => {
+		const state = createMutableState({ count: 0 });
+		let renders = 0;
+
+		const View = scope<{ state: { count: number } }>(({ state: scoped }) => {
+			renders += 1;
+
+			return <span data-testid="count">{scoped.count}</span>;
+		});
+
+		render(<View state={state} />);
+		expect(renders).toBe(1);
+
+		await act(async () => {
+			try {
+				transact(state, () => {
+					state.count = 1;
+
+					throw new Error("rollback");
+				});
+			} catch {
+				return;
+			}
+		});
+
+		expect(renders).toBe(1);
+		expect(screen.getByTestId("count").textContent).toBe("0");
+	});
+
+	it("does not bump from a source-switch unsubscribe flush", async () => {
+		const queuedA = new Array<() => void>();
+		const queuedB = new Array<() => void>();
+		const stateA = createMutableState({ count: 0 }, { emitOn: (flush) => queuedA.push(flush) });
+		const stateB = createMutableState({ count: 0 }, { emitOn: (flush) => queuedB.push(flush) });
+		let childRenders = 0;
+		let switchSource: (() => void) | undefined;
+
+		const Child = scope<{ state: { count: number } }>(({ state }) => {
+			childRenders += 1;
+
+			return <span data-testid="count">{state.count}</span>;
+		});
+
+		const Parent: FC = () => {
+			const [which, setWhich] = useState<"a" | "b">("a");
+
+			switchSource = () => setWhich("b");
+
+			return <Child state={which === "a" ? stateA : stateB} />;
+		};
+
+		render(<Parent />);
+		expect(childRenders).toBe(1);
+
+		await act(async () => {
+			stateA.count = 1;
+		});
+
+		expect(childRenders).toBe(1);
+
+		await act(async () => {
+			switchSource?.();
+		});
+
+		expect(childRenders).toBe(2);
+	});
+
+	it("renders a memoized component as an element and keeps it updating", async () => {
 		let renders = 0;
 		let stateRef: { count: number } | undefined;
 
@@ -301,7 +399,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("memo-count").textContent).toBe("0");
 		expect(renders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.count = 3;
@@ -311,7 +409,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("memo-count").textContent).toBe("3");
 	});
 
-	it("finds a state deeper than the retired depth cap", () => {
+	it("finds a state deeper than the retired depth cap", async () => {
 		const deep = createMutableState({ label: "deep" });
 		const depth = 15;
 		let nested: Record<string, unknown> = { child: deep };
@@ -343,7 +441,7 @@ describe("scope", () => {
 
 		const before = renders;
 
-		act(() => {
+		await act(async () => {
 			deep.label = "deeper";
 		});
 
@@ -378,7 +476,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("size").textContent).toBe("1");
 		expect(renders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.unrelated = "changed";
@@ -386,7 +484,7 @@ describe("scope", () => {
 
 		expect(renders).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.map.set("b", { label: "two" });
@@ -396,7 +494,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("size").textContent).toBe("2");
 	});
 
-	it("tracks method-interior reads end-to-end", () => {
+	it("tracks method-interior reads end-to-end", async () => {
 		class Counter {
 			count = 0;
 
@@ -431,7 +529,7 @@ describe("scope", () => {
 		render(<Parent />);
 		expect(screen.getByTestId("count").textContent).toBe("0");
 
-		act(() => {
+		await act(async () => {
 			if (stateRef === undefined) throw new Error("missing state");
 
 			stateRef.counter.bump();
@@ -926,7 +1024,7 @@ describe("scope", () => {
 		expect(renders).toBe(before + 1);
 	});
 
-	it("gives a readProxy the object protocol of the value it wraps", () => {
+	it("gives a readProxy the object protocol of the value it wraps", async () => {
 		interface Shape {
 			name: string;
 			items: Array<number>;
@@ -981,7 +1079,7 @@ describe("scope", () => {
 		expect(() => structuredClone(createMutableState({ n: 1 }))).toThrow();
 	});
 
-	it("completes preventExtensions, freeze, and seal through a readProxy while writes through it keep working", () => {
+	it("completes preventExtensions, freeze, and seal through a readProxy while writes through it keep working", async () => {
 		interface Shape {
 			count: number;
 			items: Array<number>;
@@ -1010,7 +1108,7 @@ describe("scope", () => {
 		Object.preventExtensions(wrapped);
 		Object.seal(wrapped.items);
 
-		act(() => {
+		await act(async () => {
 			wrapped.count = 1;
 			wrapped.items[0] = 9;
 		});
@@ -1042,36 +1140,36 @@ describe("per-key comparison", () => {
 		};
 	};
 
-	it("leaves an unread key of a read node silent", () => {
+	it("leaves an unread key of a read node silent", async () => {
 		const state = createMutableState({ box: { n: 1, m: 1 } });
 		const reader = mountReader(state, (value) => value.box.n);
 
-		act(() => {
+		await act(async () => {
 			state.box.m = 5;
 		});
 
 		expect(reader.renders()).toBe(1);
 	});
 
-	it("leaves an unread sibling subtree silent", () => {
+	it("leaves an unread sibling subtree silent", async () => {
 		const state = createMutableState({ a: { x: 1 }, b: { y: 1, deep: { z: 1 } } });
 		const reader = mountReader(state, (value) => value.a.x);
 
-		act(() => {
+		await act(async () => {
 			state.b.y = 9;
 		});
-		act(() => {
+		await act(async () => {
 			state.b.deep.z = 9;
 		});
 
 		expect(reader.renders()).toBe(1);
 	});
 
-	it("keeps a length read silent under element churn and signals on push", () => {
+	it("keeps a length read silent under element churn and signals on push", async () => {
 		const state = createMutableState({ rows: [{ v: 1 }, { v: 2 }] });
 		const reader = mountReader(state, (value) => value.rows.length);
 
-		act(() => {
+		await act(async () => {
 			const row = state.rows[0];
 
 			if (row === undefined) throw new Error("missing row");
@@ -1081,7 +1179,7 @@ describe("per-key comparison", () => {
 
 		expect(reader.renders()).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			state.rows.push({ v: 3 });
 		});
 
@@ -1089,47 +1187,47 @@ describe("per-key comparison", () => {
 		expect(reader.text()).toBe("3");
 	});
 
-	it("signals an equal-content replacement under an identity-only read", () => {
+	it("signals an equal-content replacement under an identity-only read", async () => {
 		const state = createMutableState({ box: { n: 1 } });
 		const reader = mountReader(state, (value) => typeof value.box);
 
-		act(() => {
+		await act(async () => {
 			state.box = { n: 1 };
 		});
 
 		expect(reader.renders()).toBe(2);
 	});
 
-	it("stays silent on an equal-content replacement where the component read into the object", () => {
+	it("signals an equal-content replacement on a recorded parent path", async () => {
 		const state = createMutableState({ box: { n: 1 } });
 		const reader = mountReader(state, (value) => value.box.n);
 
-		act(() => {
+		await act(async () => {
 			state.box = { n: 1 };
 		});
 
-		expect(reader.renders()).toBe(1);
+		expect(reader.renders()).toBe(2);
 	});
 
-	it("detects a wholesale node replacement through the parent's key", () => {
+	it("detects a wholesale node replacement through the parent's key", async () => {
 		const state = createMutableState<{ box: { n: number; extra?: number } }>({ box: { n: 1 } });
 		const reader = mountReader(state, (value) => value.box.n);
 
-		act(() => {
+		await act(async () => {
 			state.box = { n: 99 };
 		});
 
 		expect(reader.renders()).toBe(2);
 		expect(reader.text()).toBe("99");
 
-		act(() => {
+		await act(async () => {
 			state.box = { n: 99, extra: 1 };
 		});
 
-		expect(reader.renders()).toBe(2);
+		expect(reader.renders()).toBe(3);
 	});
 
-	it("signals an own getter on its dependency and stays silent on an unrelated write", () => {
+	it("signals an own getter on its dependency and stays silent on an unrelated write", async () => {
 		interface Doubler {
 			count: number;
 			other: number;
@@ -1145,13 +1243,13 @@ describe("per-key comparison", () => {
 		} as Doubler);
 		const reader = mountReader(state, (value) => value.double);
 
-		act(() => {
+		await act(async () => {
 			state.other = 1;
 		});
 
 		expect(reader.renders()).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			state.count = 5;
 		});
 
@@ -1159,33 +1257,33 @@ describe("per-key comparison", () => {
 		expect(reader.text()).toBe("10");
 	});
 
-	it("signals an in-place deep change under an identity-only read", () => {
+	it("signals an in-place deep change under an identity-only read", async () => {
 		const state = createMutableState({ box: { inner: { deep: 1 } } });
 		const reader = mountReader(state, (value) => typeof value.box);
 
-		act(() => {
+		await act(async () => {
 			state.box.inner.deep = 2;
 		});
 
 		expect(reader.renders()).toBe(2);
 	});
 
-	it("leaves an identity-only read silent when a sibling churns", () => {
+	it("leaves an identity-only read silent when a sibling churns", async () => {
 		const state = createMutableState({ box: { inner: 1 }, other: { n: 1 } });
 		const reader = mountReader(state, (value) => typeof value.box);
 
-		act(() => {
+		await act(async () => {
 			state.other.n = 2;
 		});
 
 		expect(reader.renders()).toBe(1);
 	});
 
-	it("signals an added key through in and Object.keys reads", () => {
+	it("signals an added key through in and Object.keys reads", async () => {
 		const state = createMutableState<{ x: number; y?: number }>({ x: 1 });
 		const reader = mountReader(state, (value) => `${"y" in value}:${Object.keys(value).length}`);
 
-		act(() => {
+		await act(async () => {
 			state.y = 2;
 		});
 
@@ -1193,11 +1291,11 @@ describe("per-key comparison", () => {
 		expect(reader.text()).toBe("true:2");
 	});
 
-	it("signals a delete of a read key", () => {
+	it("signals a delete of a read key", async () => {
 		const state = createMutableState<{ n?: number; keep: number }>({ n: 1, keep: 0 });
 		const reader = mountReader(state, (value) => String(value.n));
 
-		act(() => {
+		await act(async () => {
 			delete state.n;
 		});
 
@@ -1205,7 +1303,7 @@ describe("per-key comparison", () => {
 		expect(reader.text()).toBe("undefined");
 	});
 
-	it("leaves a TrackedMap read key silent when another key churns", () => {
+	it("leaves a TrackedMap read key silent when another key churns", async () => {
 		const state = createMutableState({
 			map: new TrackedMap<string, number>([
 				["a", 1],
@@ -1214,13 +1312,13 @@ describe("per-key comparison", () => {
 		});
 		const reader = mountReader(state, (value) => String(value.map.get("a")));
 
-		act(() => {
+		await act(async () => {
 			state.map.set("b", 99);
 		});
 
 		expect(reader.renders()).toBe(1);
 
-		act(() => {
+		await act(async () => {
 			state.map.set("a", 42);
 		});
 

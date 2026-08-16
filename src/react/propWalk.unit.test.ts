@@ -127,7 +127,6 @@ describe("discoverStateKeys", () => {
 				typedArray: Object.assign(new Uint8Array(1), { inner: state }),
 				arraySubclass,
 				privateClass: new PrivateHolder(state),
-				unsafeTrackedPrivateClass: unsafeTrack(new PrivateHolder(state)),
 			}),
 		).toEqual({
 			rawMap: false,
@@ -138,14 +137,21 @@ describe("discoverStateKeys", () => {
 			typedArray: false,
 			arraySubclass: false,
 			privateClass: false,
-			unsafeTrackedPrivateClass: false,
 		});
 	});
 
-	it("descends a frozen container, diverging from the state walk", () => {
+	it("finds a state inside an unsafeTrack'd dangerous-kind container", () => {
 		const state = createState();
 
-		expect(discoveredKeys(Object.freeze({ inner: state }))).toEqual(["inner"]);
+		expect(reachesState({ unsafeTrackedPrivateClass: unsafeTrack(new PrivateHolder(state)) })).toEqual({
+			unsafeTrackedPrivateClass: true,
+		});
+	});
+
+	it("leaves a frozen nested container unsearched", () => {
+		const state = createState();
+
+		expect(discoveredKeys(Object.freeze({ inner: state }))).toEqual([]);
 	});
 
 	it("leaves an ignore()d container unsearched", () => {
@@ -378,13 +384,55 @@ describe("substituteStates", () => {
 		expect(rebuilt.inner).toEqual({ wrapper: state });
 	});
 
-	it("rebuilds a frozen container holding a state without throwing", () => {
+	it("leaves a frozen nested container by reference", () => {
 		const state = createState();
 		const frozen = Object.freeze({ inner: state });
 		const result = substituteStates({ frozen }, wrapSource);
 
-		expect(result.props.frozen).not.toBe(frozen);
-		expect(result.props.frozen.inner).toEqual({ wrapper: state });
+		expect(result.props.frozen).toBe(frozen);
+		expect(result.sources).toEqual([]);
+	});
+
+	it("finds a state on a frozen entry root", () => {
+		const state = createState();
+		const result = substituteStates(Object.freeze({ inner: state }), wrapSource);
+
+		expect(result.sources[0]).toBe(state);
+		expect(result.props.inner).toEqual({ wrapper: state });
+	});
+
+	it("finds a state under a __react-prefixed key", () => {
+		const state = createState();
+
+		expect(discoveredKeys({ __reactData: state })).toEqual(["__reactData"]);
+	});
+
+	it("leaves a non-writable nested object edge unsearched", () => {
+		const state = createState();
+		const holder: Record<string, unknown> = {};
+
+		Object.defineProperty(holder, "inner", {
+			value: { nested: state },
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		expect(discoveredKeys({ holder })).toEqual([]);
+	});
+
+	it("finds a state on a non-writable entry-root edge", () => {
+		const state = createState();
+		const root: Record<string, unknown> = {};
+
+		Object.defineProperty(root, "inner", {
+			value: state,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		expect(substituteStates(root, wrapSource).sources[0]).toBe(state);
 	});
 
 	it("keeps the holes of a sparse array", () => {

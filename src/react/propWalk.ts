@@ -1,17 +1,18 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
 import { pendingIgnore } from "../ignore";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
-import { classifyValue } from "../valtio/classify";
-
-const { refSet } = unstable_getInternalStates();
+import { pendingUnsafe } from "../unsafeTrack";
+import { walkDataEntries, type DataEntry } from "../utils/dataEntries";
+import { admissionLane } from "../valtio/classify";
 
 export interface SubstitutionResult<T> {
 	readonly props: T;
 	readonly sources: ReadonlyArray<object>;
 }
 
-type DataEntry = readonly [string, unknown];
+type WalkMode = "entry" | "nested";
+
+type ChildRole = "state" | "descend" | "skip";
 
 interface DiscoveryPass {
 	readonly entriesByContainer: Map<object, ReadonlyArray<DataEntry>>;
@@ -30,41 +31,39 @@ const stateKeysByContainer = new WeakMap<object, ReadonlySet<string>>();
 
 const noStateKeys: ReadonlySet<string> = new Set<string>();
 
-const isSearchableContainer = (value: unknown): value is object => {
-	if (typeof value !== "object" || value === null) return false;
+const isReactOwnNode = (value: object): boolean =>
+	"$$typeof" in value || (typeof Node !== "undefined" && value instanceof Node);
 
-	if ("$$typeof" in value) return false;
+const childRole = (value: unknown, writable: boolean, mode: WalkMode): ChildRole => {
+	if (typeof value !== "object" || value === null) return "skip";
 
-	if (refSet.has(value) || pendingIgnore.has(value)) return false;
+	if (isReactOwnNode(value)) return "skip";
 
-	const kind = classifyValue(value);
+	if (mode === "nested" && !writable) return "skip";
 
-	return kind === "plain" || kind === "plainArray" || kind === "cleanClass";
-};
+	if (admissionLane(value) === "untracked") return "skip";
 
-const readDataEntries = (container: object): ReadonlyArray<DataEntry> => {
-	const entries: Array<DataEntry> = [];
+	if (isState(value)) return "state";
 
-	for (const key of Object.keys(container)) {
-		if (key.startsWith("__react")) continue;
+	if (pendingIgnore.has(value)) return "skip";
 
-		const descriptor = Reflect.getOwnPropertyDescriptor(container, key);
+	if (pendingUnsafe.has(value) || admissionLane(value) === "tracked") return "descend";
 
-		if (!descriptor || !("value" in descriptor)) continue;
-
-		const value: unknown = descriptor.value;
-
-		entries.push([key, value]);
-	}
-
-	return entries;
+	return "skip";
 };
 
 const readVerdict = (container: object, pass: DiscoveryPass): ReadonlySet<string> =>
 	pass.verdicts.get(container) ?? stateKeysByContainer.get(container) ?? noStateKeys;
 
-function visitContainer(container: object, pass: DiscoveryPass): boolean {
-	if (stateKeysByContainer.has(container)) return false;
+const createDiscoveryPass = (): DiscoveryPass => ({
+	entriesByContainer: new Map<object, ReadonlyArray<DataEntry>>(),
+	verdicts: new Map<object, Set<string>>(),
+	inProgress: new Set<object>(),
+	relaxable: new Set<object>(),
+});
+
+function visitContainer(container: object, pass: DiscoveryPass, mode: WalkMode): boolean {
+	if (mode === "nested" && stateKeysByContainer.has(container)) return false;
 
 	if (pass.inProgress.has(container)) return true;
 
@@ -72,24 +71,30 @@ function visitContainer(container: object, pass: DiscoveryPass): boolean {
 
 	pass.inProgress.add(container);
 
-	const entries = readDataEntries(container);
+	const entries = walkDataEntries(container);
 	const keys = new Set<string>();
 	let dependedOnBackEdge = false;
 
 	pass.entriesByContainer.set(container, entries);
 
-	for (const [key, value] of entries) {
-		if (isState(value)) {
-			keys.add(key);
+	for (const entry of entries) {
+		const role = childRole(entry.value, entry.writable, mode);
+
+		if (role === "state") {
+			keys.add(entry.key);
 
 			continue;
 		}
 
-		if (!isSearchableContainer(value)) continue;
+		if (role !== "descend") continue;
 
-		if (visitContainer(value, pass)) dependedOnBackEdge = true;
+		const child = entry.value;
 
-		if (readVerdict(value, pass).size > 0) keys.add(key);
+		if (typeof child !== "object" || child === null) continue;
+
+		if (visitContainer(child, pass, "nested")) dependedOnBackEdge = true;
+
+		if (readVerdict(child, pass).size > 0) keys.add(entry.key);
 	}
 
 	pass.inProgress.delete(container);
@@ -112,14 +117,18 @@ function relaxVerdicts(pass: DiscoveryPass): void {
 
 			if (keys === undefined || entries === undefined) continue;
 
-			for (const [key, value] of entries) {
-				if (keys.has(key)) continue;
+			for (const entry of entries) {
+				if (keys.has(entry.key)) continue;
 
-				if (!isSearchableContainer(value)) continue;
+				if (childRole(entry.value, entry.writable, "nested") !== "descend") continue;
 
-				if (readVerdict(value, pass).size === 0) continue;
+				const child = entry.value;
 
-				keys.add(key);
+				if (typeof child !== "object" || child === null) continue;
+
+				if (readVerdict(child, pass).size === 0) continue;
+
+				keys.add(entry.key);
 
 				gained = true;
 			}
@@ -127,34 +136,56 @@ function relaxVerdicts(pass: DiscoveryPass): void {
 	}
 }
 
+const cacheNestedVerdicts = (pass: DiscoveryPass, skip?: object): void => {
+	for (const [visited, keys] of pass.verdicts) {
+		if (visited === skip) continue;
+
+		stateKeysByContainer.set(visited, keys);
+	}
+};
+
 export function discoverStateKeys(container: object): ReadonlySet<string> {
 	const cached = stateKeysByContainer.get(container);
 
 	if (cached !== undefined) return cached;
 
-	if (!isSearchableContainer(container)) return noStateKeys;
+	if (isReactOwnNode(container)) return noStateKeys;
 
-	const pass: DiscoveryPass = {
-		entriesByContainer: new Map<object, ReadonlyArray<DataEntry>>(),
-		verdicts: new Map<object, Set<string>>(),
-		inProgress: new Set<object>(),
-		relaxable: new Set<object>(),
-	};
+	if (pendingIgnore.has(container)) return noStateKeys;
 
-	visitContainer(container, pass);
+	if (admissionLane(container) !== "tracked" && !pendingUnsafe.has(container)) return noStateKeys;
+
+	const pass = createDiscoveryPass();
+
+	visitContainer(container, pass, "nested");
 	relaxVerdicts(pass);
-
-	for (const [visited, keys] of pass.verdicts) stateKeysByContainer.set(visited, keys);
+	cacheNestedVerdicts(pass);
 
 	return pass.verdicts.get(container) ?? noStateKeys;
 }
 
-function substituteContainer(container: object, substitution: Substitution, wrap: (source: object) => object): object {
+function substituteContainer(
+	container: object,
+	substitution: Substitution,
+	wrap: (source: object) => object,
+	mode: WalkMode,
+): object {
 	const rebuilt = substitution.rebuiltByContainer.get(container);
 
 	if (rebuilt !== undefined) return rebuilt;
 
-	const stateKeys = discoverStateKeys(container);
+	let stateKeys: ReadonlySet<string>;
+
+	if (mode === "nested") {
+		stateKeys = discoverStateKeys(container);
+	} else {
+		const pass = createDiscoveryPass();
+
+		visitContainer(container, pass, "entry");
+		relaxVerdicts(pass);
+		cacheNestedVerdicts(pass, container);
+		stateKeys = pass.verdicts.get(container) ?? noStateKeys;
+	}
 
 	if (stateKeys.size === 0) {
 		substitution.rebuiltByContainer.set(container, container);
@@ -175,8 +206,9 @@ function substituteContainer(container: object, substitution: Substitution, wrap
 		if (descriptor === undefined || !("value" in descriptor)) continue;
 
 		const value: unknown = descriptor.value;
+		const role = childRole(value, descriptor.writable === true, mode);
 
-		if (isState(value)) {
+		if (role === "state") {
 			const source = peelReadProxy(value);
 
 			if (typeof source !== "object" || source === null) continue;
@@ -191,9 +223,11 @@ function substituteContainer(container: object, substitution: Substitution, wrap
 			continue;
 		}
 
-		if (!isSearchableContainer(value)) continue;
+		if (role !== "descend") continue;
 
-		descriptors[key] = { ...descriptor, value: substituteContainer(value, substitution, wrap) };
+		if (typeof value !== "object" || value === null) continue;
+
+		descriptors[key] = { ...descriptor, value: substituteContainer(value, substitution, wrap, "nested") };
 	}
 
 	Object.defineProperties(clone, descriptors);
@@ -208,7 +242,9 @@ export function substituteStates<T extends object>(root: T, wrap: (source: objec
 		visitedSources: new Set<object>(),
 	};
 
-	if (!isSearchableContainer(root)) return { props: root, sources: substitution.sources };
+	if (isReactOwnNode(root)) {
+		return { props: root, sources: substitution.sources };
+	}
 
-	return { props: substituteContainer(root, substitution, wrap) as T, sources: substitution.sources };
+	return { props: substituteContainer(root, substitution, wrap, "entry") as T, sources: substitution.sources };
 }

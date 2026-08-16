@@ -1,6 +1,7 @@
 import { getVersion, unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredReadProxyTarget, registerReadProxyTarget } from "../identity";
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
+import type { DirtyIndex } from "../handle";
 
 const { refSet, proxyStateMap } = unstable_getInternalStates();
 
@@ -108,6 +109,49 @@ const getPrototypeMethod = (target: object, prop: string | symbol): Function | u
 
 export const isReadProxy = (value: unknown): boolean =>
 	isObjectLike(value) && getRegisteredReadProxyTarget(value) !== undefined;
+
+const trackerPartitions = new WeakMap<ReadTracker, Map<object, SourcePartition>>();
+
+const recordedKeysOf = (used: UsageRecord): Array<Set<string | symbol>> => {
+	const keySets = new Array<Set<string | symbol>>();
+
+	if (used[KEYS_PROPERTY] !== undefined) keySets.push(used[KEYS_PROPERTY]);
+
+	if (used[HAS_KEY_PROPERTY] !== undefined) keySets.push(used[HAS_KEY_PROPERTY]);
+
+	if (used[HAS_OWN_KEY_PROPERTY] !== undefined) keySets.push(used[HAS_OWN_KEY_PROPERTY]);
+
+	return keySets;
+};
+
+export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): boolean {
+	const partitions = trackerPartitions.get(tracker);
+
+	if (partitions === undefined) return false;
+
+	for (const partition of partitions.values()) {
+		for (const [writeProxy, used] of partition.affected) {
+			const raw = getProxyTarget(writeProxy);
+			const edges = dirty.edges.get(raw);
+
+			for (const keys of recordedKeysOf(used)) {
+				for (const key of keys) {
+					if (edges?.has(key) === true) return true;
+				}
+			}
+
+			if (used[ALL_OWN_KEYS_PROPERTY] === true && dirty.nodes.has(raw)) return true;
+		}
+
+		for (const writeProxy of partition.versionAtRecord.keys()) {
+			if (partition.affected.has(writeProxy)) continue;
+
+			if (dirty.nodes.has(getProxyTarget(writeProxy))) return true;
+		}
+	}
+
+	return false;
+}
 
 export function createReadTracker(): ReadTracker {
 	const partitions = new Map<object, SourcePartition>();
@@ -291,8 +335,8 @@ export function createReadTracker(): ReadTracker {
 
 		const handler: ProxyHandler<object> = {
 			get(_target, prop) {
-				const value: unknown = Reflect.get(writeProxy, prop, writeProxy);
 				const readProxy = readProxyBox.current;
+				const value: unknown = Reflect.get(writeProxy, prop, readProxy ?? writeProxy);
 
 				const used = trackUsage(partition, writeProxy);
 
@@ -358,7 +402,7 @@ export function createReadTracker(): ReadTracker {
 		return readProxy;
 	};
 
-	return {
+	const tracker: ReadTracker = {
 		wrap<T extends object>(writeProxy: T): T {
 			if (!isLiveProxy(writeProxy)) {
 				throw new Error("opshot: ReadTracker.wrap requires a write proxy");
@@ -413,4 +457,8 @@ export function createReadTracker(): ReadTracker {
 			});
 		},
 	};
+
+	trackerPartitions.set(tracker, partitions);
+
+	return tracker;
 }

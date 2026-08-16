@@ -61,6 +61,15 @@ const queuedDeliveries: Array<PendingDelivery> = [];
 const deliveryFailures: Array<unknown> = [];
 
 let isDraining = false;
+let drainingDelivery: PendingDelivery | undefined;
+
+export function lastDeliveryDirty(handle: Handle): DirtyIndex | undefined {
+	if (drainingDelivery?.writeProxy === handle.proxy.root) {
+		return drainingDelivery.dirty;
+	}
+
+	return handle.lastDirty;
+}
 
 export const prepareDelivery = (
 	handle: Handle,
@@ -91,10 +100,12 @@ export const drainDeliveries = (): void => {
 	try {
 		while (queuedDeliveries.length > 0) {
 			for (const queued of queuedDeliveries.splice(0, queuedDeliveries.length)) {
+				drainingDelivery = queued;
 				runDelivery(queued, deliveryFailures);
 			}
 		}
 	} finally {
+		drainingDelivery = undefined;
 		isDraining = false;
 		failures = deliveryFailures.splice(0, deliveryFailures.length);
 	}

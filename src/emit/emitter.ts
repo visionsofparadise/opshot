@@ -165,7 +165,8 @@ const emitRange = (
 	const previousDirty = handle.lastDirty;
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
 
-	handle.lastDirty = dirty;
+	if (from !== to) handle.lastDirty = dirty;
+
 	beginOccupancyRefusals(handle);
 
 	if (from === to) syncHandleTables(handle);
@@ -194,8 +195,11 @@ const emitRange = (
 	handle.lastSnapshot = to;
 
 	if (ops.length > 0) {
+		handle.lastDirty = dirty;
 		enqueueDelivery(prepareDelivery(handle, ops, meta, channelId, dirty));
 		drainDeliveries();
+	} else {
+		handle.lastDirty = previousDirty;
 	}
 
 	if (kind === "write" && refusals.length > 0) {
