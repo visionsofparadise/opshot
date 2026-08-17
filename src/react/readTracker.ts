@@ -12,7 +12,7 @@ const ALL_OWN_KEYS_PROPERTY = "w";
 
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
-const isLiveProxy = (value: object): boolean => proxyStateMap.has(value);
+const isLiveProxy = (value: object): value is object => proxyStateMap.has(value);
 const getProxyTarget = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
 const getProxyVersion = (writeProxy: object): number => getVersion(writeProxy) ?? 0;
 
@@ -162,11 +162,11 @@ export function createReadTracker(): ReadTracker {
 		if (isObjectLike(value) && isLiveProxy(value)) partition.identityReads.add(value);
 	};
 
-	const toReadProxy = (writeProxy: object, partition: SourcePartition): object => {
+	const toReadProxy = <T extends object>(writeProxy: T, partition: SourcePartition): T => {
 		const currentVersion = getProxyVersion(writeProxy);
 		const cached = partition.proxyCache.get(writeProxy);
 
-		if (cached?.version === currentVersion) return cached.readProxy;
+		if (cached?.version === currentVersion) return cached.readProxy as T;
 
 		const target = getProxyTarget(writeProxy);
 
@@ -240,7 +240,7 @@ export function createReadTracker(): ReadTracker {
 			},
 		};
 
-		const readProxy = new Proxy(writeProxy, handler);
+		const readProxy = new Proxy(writeProxy, handler) as T;
 
 		readProxyBox.current = readProxy;
 		registerReadProxyTarget(readProxy, writeProxy);
@@ -257,7 +257,7 @@ export function createReadTracker(): ReadTracker {
 
 			const partition = getPartition(writeProxy);
 
-			return toReadProxy(writeProxy, partition) as T;
+			return toReadProxy(writeProxy, partition);
 		},
 
 		captureReads(): void {

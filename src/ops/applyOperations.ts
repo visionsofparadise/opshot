@@ -113,15 +113,15 @@ export function runOperations(
 	const owned = operations.length > 0 && ownedCount === operations.length;
 
 	if (owned) {
-		for (let index = 0; index < operations.length; index++) {
-			const operation = operations[index];
+		let index = 0;
 
-			if (operation === undefined) throw tapeError();
-
+		for (const operation of operations) {
 			const expected =
 				direction === "do" ? handle.version + 1 + index : handle.version - (operations.length - 1 - index);
 
 			if (versionOf(operation) !== expected) throw tapeError();
+
+			index += 1;
 		}
 	}
 

@@ -3,6 +3,13 @@ import { peelIdentityLayer } from "../identity";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
+class ExpectedStateObjectError extends Error {
+	constructor() {
+		super("opshot: expected a state object");
+		this.name = "ExpectedStateObjectError";
+	}
+}
+
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
 
@@ -19,7 +26,7 @@ export function resolveWriteProxy(state: object): object {
 		current = peeled;
 	}
 
-	if (!isObjectLike(current) || !proxyStateMap.has(current)) throw new Error("opshot: expected a state object");
+	if (!isObjectLike(current) || !proxyStateMap.has(current)) throw new ExpectedStateObjectError();
 
 	return current;
 }

@@ -17,6 +17,13 @@ interface ResolvedTerminal {
 	readonly segment: unknown;
 }
 
+class ReplayReattachError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ReplayReattachError";
+	}
+}
+
 const unresolvedError = (path: OperationPath): Error =>
 	new Error(`opshot: ${formatOperationPath(path)} does not resolve to a supported operation address`);
 
@@ -56,7 +63,7 @@ const restoreRecordedContent = (
 
 				const child: unknown = Reflect.get(attached, key);
 
-				if (!isObjectLike(child)) throw new Error(`opshot: replay could not reattach ${key}`);
+				if (!isObjectLike(child)) throw new ReplayReattachError(`opshot: replay could not reattach ${key}`);
 
 				restoreRecordedContent(child, value, restored, identity);
 
@@ -99,7 +106,9 @@ const restoreValue = (
 
 			const attached = readAttached();
 
-			if (!isObjectLike(attached)) throw new Error("opshot: replay could not read a reattached target");
+			if (!isObjectLike(attached)) {
+				throw new ReplayReattachError("opshot: replay could not read a reattached target");
+			}
 
 			restoreRecordedContent(attached, payload.recorded, new WeakSet(), identity);
 
@@ -259,8 +268,6 @@ const applyPlain = (
 			throw new Error(`opshot: ${formatOperationPath(path)} resolves to an inherited accessor`);
 		}
 	}
-
-	if (!("value" in operation)) throw unresolvedError(path);
 
 	restoreValue(
 		getValuePayload(operation, identity),

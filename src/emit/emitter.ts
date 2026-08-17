@@ -15,7 +15,6 @@ import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery, type PendingDelivery } from "./emitterDeliver";
 import { targetOf } from "./emitterRegistry";
-import { requireObjectSnapshot } from "./requireObjectSnapshot";
 import type { DirtyIndex, Handle } from "../handle";
 
 export interface CapturedRange {
@@ -170,14 +169,7 @@ const captureRange = (
 	if (from === to) syncHandleTables(handle);
 
 	const ops =
-		from === to
-			? []
-			: diffObjects(
-					requireObjectSnapshot(reconcileUntracked(from, handle.proxy.root, new WeakSet())),
-					requireObjectSnapshot(to),
-					handle,
-					dirty,
-				);
+		from === to ? [] : diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty);
 
 	const refusals = occupancyRefusalsOf(handle);
 

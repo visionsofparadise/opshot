@@ -1,6 +1,7 @@
 import { proxy, snapshot } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
 import { armWatch } from "./emit/emitter";
+import { requireObjectSnapshot } from "./emit/requireObjectSnapshot";
 import { registerHandle, type Handle } from "./handle";
 import { pendingIgnore } from "./ignore";
 import { seedOccupancies } from "./occupancy";
@@ -87,14 +88,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	const instrumented = proxy({ root: base });
 
 	handle.proxy = instrumented;
-
-	const lastSnapshot: unknown = snapshot(instrumented.root);
-
-	if (lastSnapshot === null || (typeof lastSnapshot !== "object" && typeof lastSnapshot !== "function")) {
-		throw new Error("opshot: state snapshots must have an object root");
-	}
-
-	handle.lastSnapshot = lastSnapshot;
+	handle.lastSnapshot = requireObjectSnapshot(snapshot(instrumented.root));
 	seedOccupancies(handle);
 	armWatch(handle);
 

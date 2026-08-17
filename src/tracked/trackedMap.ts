@@ -5,6 +5,13 @@ import { assertMutableFacade } from "./facadeGuard";
 import { iterateSlots } from "./iterateSlots";
 import { clearStore, deleteFromStore, type SlotStore } from "./slotStore";
 
+class EmptyMapSlotError extends Error {
+	constructor() {
+		super("opshot: TrackedMap resolved an empty slot");
+		this.name = "EmptyMapSlotError";
+	}
+}
+
 const isObjectLike = (value: unknown): value is object =>
 	value !== null && (typeof value === "object" || typeof value === "function");
 
@@ -69,7 +76,7 @@ export class TrackedMap<K, V> {
 		} else {
 			const pair = this.slots[slot];
 
-			if (pair === null || pair === undefined) throw new Error("opshot: TrackedMap resolved an empty slot");
+			if (pair === null || pair === undefined) throw new EmptyMapSlotError();
 
 			if (isStoredValue(pair[1], value)) return this;
 

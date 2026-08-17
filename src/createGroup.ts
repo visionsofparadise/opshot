@@ -22,6 +22,13 @@ export interface Group {
 	createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): T;
 }
 
+class UnknownGroupError extends Error {
+	constructor() {
+		super("opshot: unknown group");
+		this.name = "UnknownGroupError";
+	}
+}
+
 const groupChainByGroup = new WeakMap<Group, ReadonlyArray<GroupListeners>>();
 
 export function isGroup(value: unknown): value is Group {
@@ -32,7 +39,7 @@ export function getGroupListeners(group: Group): GroupListeners {
 	const chain = groupChainByGroup.get(group);
 	const listeners = chain?.at(-1);
 
-	if (listeners === undefined) throw new Error("opshot: unknown group");
+	if (listeners === undefined) throw new UnknownGroupError();
 
 	return listeners;
 }
@@ -40,7 +47,7 @@ export function getGroupListeners(group: Group): GroupListeners {
 export function getGroupChain(group: Group): ReadonlyArray<GroupListeners> {
 	const chain = groupChainByGroup.get(group);
 
-	if (chain === undefined) throw new Error("opshot: unknown group");
+	if (chain === undefined) throw new UnknownGroupError();
 
 	return chain;
 }

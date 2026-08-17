@@ -47,6 +47,8 @@ export function peelIdentityLayer(current: object): object | undefined {
 	return undefined;
 }
 
+export function resolveIdentity(value: object | symbol): object | symbol;
+export function resolveIdentity(value: unknown): unknown;
 export function resolveIdentity(value: unknown): unknown {
 	let current = value;
 
@@ -112,14 +114,6 @@ export function identify(value: object): object {
 
 export const internIdentity = (key: object | symbol): number => {
 	const resolved = resolveIdentity(key);
-
-	if (
-		resolved === null ||
-		(typeof resolved !== "object" && typeof resolved !== "function" && typeof resolved !== "symbol")
-	) {
-		throw new Error("opshot: addressOf interned a non-identity value");
-	}
-
 	const record = recordFor(resolved);
 
 	if (record.id !== undefined) return record.id;

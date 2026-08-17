@@ -93,11 +93,7 @@ export function handleOf(node: object): Handle | undefined {
 }
 
 export function requireHandle(state: object, message: string): Handle {
-	const value: unknown = state;
-
-	if (typeof value !== "object" || value === null) throw new Error(message);
-
-	const handle = handleOf(value);
+	const handle = handleOf(state);
 
 	if (handle === undefined) throw new Error(message);
 

@@ -186,6 +186,13 @@ export function canProxy(value: unknown, parentTarget?: object): boolean {
 	return handles.length === 1 && handles[0]?.strict === false && admissionLane(value) === "dangerous";
 }
 
+class MissingMutationTrapError extends Error {
+	constructor() {
+		super("opshot: valtio default handler is missing a mutation trap");
+		this.name = "MissingMutationTrapError";
+	}
+}
+
 let installed = false;
 
 export function installBoundary(): void {
@@ -204,8 +211,7 @@ export function installBoundary(): void {
 			const defaultDelete = handler.deleteProperty;
 			const defaultSet = handler.set;
 
-			if (!defaultDelete || !defaultSet)
-				throw new Error("opshot: valtio default handler is missing a mutation trap");
+			if (!defaultDelete || !defaultSet) throw new MissingMutationTrapError();
 
 			return {
 				...handler,

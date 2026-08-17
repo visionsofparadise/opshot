@@ -1,5 +1,4 @@
 import { snapshot } from "valtio/vanilla";
-import { requireObjectSnapshot } from "../emit/requireObjectSnapshot";
 import { discardPendingOccupanciesForHandle } from "../occupancy";
 import { applyMutations } from "../ops/applyMutations";
 import { diffObjects } from "../ops/diff";
@@ -9,11 +8,7 @@ export const rollbackTransaction = (handle: Handle): void => {
 	discardPendingOccupanciesForHandle(handle);
 
 	const restoreTarget = handle.lastSnapshot;
-	const operations = diffObjects(
-		requireObjectSnapshot(snapshot(handle.proxy.root)),
-		requireObjectSnapshot(restoreTarget),
-		handle,
-	);
+	const operations = diffObjects(snapshot(handle.proxy.root), restoreTarget, handle);
 
 	if (operations.length > 0) {
 		applyMutations(handle.proxy.root, operations, "do", "restore");

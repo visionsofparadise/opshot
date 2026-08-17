@@ -1,14 +1,21 @@
 import { installBoundary } from "../valtio/boundary";
 import { assertMutableFacade } from "./facadeGuard";
 
+class DateSetYearError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "DateSetYearError";
+	}
+}
+
 const setLegacyYear = (date: Date, year: unknown): number => {
 	const setYear: unknown = Reflect.get(date, "setYear");
 
-	if (typeof setYear !== "function") throw new Error("opshot: Date.setYear is not available");
+	if (typeof setYear !== "function") throw new DateSetYearError("opshot: Date.setYear is not available");
 
 	const epochMs: unknown = Reflect.apply(setYear, date, [year]);
 
-	if (typeof epochMs !== "number") throw new Error("opshot: Date.setYear returned a non-number");
+	if (typeof epochMs !== "number") throw new DateSetYearError("opshot: Date.setYear returned a non-number");
 
 	return epochMs;
 };

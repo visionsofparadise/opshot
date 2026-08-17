@@ -1,5 +1,12 @@
 import { internIdentity } from "../identity";
 
+class UnsupportedKeyTypeError extends Error {
+	constructor(key: unknown) {
+		super(`opshot: addressOf received unsupported key type ${typeof key}`);
+		this.name = "UnsupportedKeyTypeError";
+	}
+}
+
 export const addressOf = (key: unknown): string => {
 	if (key === null) return "z";
 
@@ -26,6 +33,6 @@ export const addressOf = (key: unknown): string => {
 		case "function":
 			return `o${internIdentity(key)}`;
 		default:
-			throw new Error(`opshot: addressOf received unsupported key type ${typeof key}`);
+			throw new UnsupportedKeyTypeError(key);
 	}
 };
