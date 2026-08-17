@@ -25,18 +25,12 @@ interface UsageRecord {
 
 interface SourcePartition {
 	readonly affected: Map<object, UsageRecord>;
-	readonly previousValues: Map<object, Map<string | symbol, unknown>>;
-	readonly previousHas: Map<object, Map<string | symbol, boolean>>;
-	readonly previousHasOwn: Map<object, Map<string | symbol, boolean>>;
-	readonly previousOwnKeys: Map<object, ReadonlyArray<string | symbol>>;
-	readonly versionAtRecord: Map<object, number>;
+	readonly identityReads: Set<object>;
 	readonly proxyCache: WeakMap<object, { readProxy: object; version: number }>;
 }
 
 export interface ReadTracker {
 	wrap<T extends object>(writeProxy: T): T;
-
-	readsChanged(writeProxy: object): boolean;
 
 	resetReads(): void;
 
@@ -71,22 +65,6 @@ const recordKey = (
 	}
 
 	set.add(key);
-};
-
-const storeFirst = <T>(
-	store: Map<object, Map<string | symbol, T>>,
-	node: object,
-	key: string | symbol,
-	value: T,
-): void => {
-	let entries = store.get(node);
-
-	if (entries === undefined) {
-		entries = new Map();
-		store.set(node, entries);
-	}
-
-	if (!entries.has(key)) entries.set(key, value);
 };
 
 const getPrototypeMethod = (target: object, prop: string | symbol): Function | undefined => {
@@ -143,7 +121,7 @@ export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): bo
 			if (used[ALL_OWN_KEYS_PROPERTY] === true && dirty.nodes.has(raw)) return true;
 		}
 
-		for (const writeProxy of partition.versionAtRecord.keys()) {
+		for (const writeProxy of partition.identityReads) {
 			if (partition.affected.has(writeProxy)) continue;
 
 			if (dirty.nodes.has(getProxyTarget(writeProxy))) return true;
@@ -164,11 +142,7 @@ export function createReadTracker(): ReadTracker {
 		if (partition === undefined) {
 			partition = {
 				affected: new Map(),
-				previousValues: new Map(),
-				previousHas: new Map(),
-				previousHasOwn: new Map(),
-				previousOwnKeys: new Map(),
-				versionAtRecord: new Map(),
+				identityReads: new Set(),
 				proxyCache: new WeakMap(),
 			};
 			partitions.set(writeProxy, partition);
@@ -182,132 +156,10 @@ export function createReadTracker(): ReadTracker {
 	const trackUsage = (partition: SourcePartition, writeProxy: object): UsageRecord =>
 		shouldRecord() ? getUsage(partition.affected, writeProxy) : {};
 
-	const storeValue = (partition: SourcePartition, writeProxy: object, key: string | symbol, value: unknown): void => {
+	const recordIdentity = (partition: SourcePartition, value: unknown): void => {
 		if (!shouldRecord()) return;
 
-		storeFirst(partition.previousValues, writeProxy, key, value);
-
-		if (isObjectLike(value) && isLiveProxy(value) && !partition.versionAtRecord.has(value)) {
-			partition.versionAtRecord.set(value, getProxyVersion(value));
-		}
-	};
-
-	const storeHas = (partition: SourcePartition, writeProxy: object, key: string | symbol): void => {
-		if (!shouldRecord()) return;
-
-		storeFirst(partition.previousHas, writeProxy, key, Reflect.has(writeProxy, key));
-	};
-
-	const storeHasOwn = (partition: SourcePartition, writeProxy: object, key: string | symbol): void => {
-		if (!shouldRecord()) return;
-
-		storeFirst(
-			partition.previousHasOwn,
-			writeProxy,
-			key,
-			Reflect.getOwnPropertyDescriptor(writeProxy, key) !== undefined,
-		);
-	};
-
-	const storeOwnKeys = (partition: SourcePartition, writeProxy: object): void => {
-		if (!shouldRecord()) return;
-
-		if (partition.previousOwnKeys.has(writeProxy)) return;
-
-		partition.previousOwnKeys.set(writeProxy, Reflect.ownKeys(writeProxy));
-	};
-
-	const isComparableProxy = (value: unknown): value is object => isObjectLike(value) && isLiveProxy(value);
-
-	const nodeChanged = (
-		partition: SourcePartition,
-		previousNode: object,
-		currentNode: object,
-		visiting: Map<object, Set<object>>,
-	): boolean => {
-		let visited = visiting.get(previousNode);
-
-		if (visited === undefined) {
-			visited = new Set();
-			visiting.set(previousNode, visited);
-		}
-
-		if (visited.has(currentNode)) return false;
-
-		visited.add(currentNode);
-
-		const used = partition.affected.get(previousNode);
-
-		if (used === undefined) {
-			if (previousNode !== currentNode) return true;
-
-			const recorded = partition.versionAtRecord.get(previousNode);
-
-			if (recorded === undefined) return true;
-
-			return getProxyVersion(previousNode) !== recorded;
-		}
-
-		const keys = used[KEYS_PROPERTY];
-
-		if (keys !== undefined) {
-			const stored = partition.previousValues.get(previousNode);
-
-			for (const key of keys) {
-				if (!stored?.has(key)) return true;
-
-				const previousValue = stored.get(key);
-				const currentValue: unknown = Reflect.get(currentNode, key);
-
-				if (isComparableProxy(previousValue) && isComparableProxy(currentValue)) {
-					if (nodeChanged(partition, previousValue, currentValue, visiting)) return true;
-
-					continue;
-				}
-
-				if (!Object.is(previousValue, currentValue)) return true;
-			}
-		}
-
-		const hasKeys = used[HAS_KEY_PROPERTY];
-
-		if (hasKeys !== undefined) {
-			const stored = partition.previousHas.get(previousNode);
-
-			for (const key of hasKeys) {
-				if (!stored?.has(key)) return true;
-
-				if (Reflect.has(currentNode, key) !== stored.get(key)) return true;
-			}
-		}
-
-		const hasOwnKeys = used[HAS_OWN_KEY_PROPERTY];
-
-		if (hasOwnKeys !== undefined) {
-			const stored = partition.previousHasOwn.get(previousNode);
-
-			for (const key of hasOwnKeys) {
-				if (!stored?.has(key)) return true;
-
-				if ((Reflect.getOwnPropertyDescriptor(currentNode, key) !== undefined) !== stored.get(key)) return true;
-			}
-		}
-
-		if (used[ALL_OWN_KEYS_PROPERTY] === true) {
-			const previousKeys = partition.previousOwnKeys.get(previousNode);
-
-			if (previousKeys === undefined) return true;
-
-			const currentKeys = Reflect.ownKeys(currentNode);
-
-			if (currentKeys.length !== previousKeys.length) return true;
-
-			for (let index = 0; index < currentKeys.length; index += 1) {
-				if (currentKeys[index] !== previousKeys[index]) return true;
-			}
-		}
-
-		return false;
+		if (isObjectLike(value) && isLiveProxy(value)) partition.identityReads.add(value);
 	};
 
 	const toReadProxy = (writeProxy: object, partition: SourcePartition): object => {
@@ -341,7 +193,7 @@ export function createReadTracker(): ReadTracker {
 				const used = trackUsage(partition, writeProxy);
 
 				recordKey(used, KEYS_PROPERTY, prop);
-				storeValue(partition, writeProxy, prop, value);
+				recordIdentity(partition, value);
 
 				if (typeof value === "function") {
 					const method = getPrototypeMethod(target, prop);
@@ -365,7 +217,6 @@ export function createReadTracker(): ReadTracker {
 				const used = trackUsage(partition, writeProxy);
 
 				recordKey(used, HAS_KEY_PROPERTY, prop);
-				storeHas(partition, writeProxy, prop);
 
 				return Reflect.has(writeProxy, prop);
 			},
@@ -373,7 +224,6 @@ export function createReadTracker(): ReadTracker {
 				const used = trackUsage(partition, writeProxy);
 
 				recordKey(used, HAS_OWN_KEY_PROPERTY, prop);
-				storeHasOwn(partition, writeProxy, prop);
 
 				return Reflect.getOwnPropertyDescriptor(writeProxy, prop);
 			},
@@ -381,7 +231,6 @@ export function createReadTracker(): ReadTracker {
 				const used = trackUsage(partition, writeProxy);
 
 				used[ALL_OWN_KEYS_PROPERTY] = true;
-				storeOwnKeys(partition, writeProxy);
 
 				return Reflect.ownKeys(writeProxy);
 			},
@@ -413,16 +262,6 @@ export function createReadTracker(): ReadTracker {
 			return toReadProxy(writeProxy, partition) as T;
 		},
 
-		readsChanged(writeProxy: object): boolean {
-			const partition = partitions.get(writeProxy);
-
-			if (partition === undefined) return false;
-
-			if (partition.affected.size === 0) return false;
-
-			return nodeChanged(partition, writeProxy, writeProxy, new Map());
-		},
-
 		captureReads(): void {
 			learnNonRenderDispatcher();
 
@@ -434,11 +273,7 @@ export function createReadTracker(): ReadTracker {
 
 			for (const partition of partitions.values()) {
 				partition.affected.clear();
-				partition.previousValues.clear();
-				partition.previousHas.clear();
-				partition.previousHasOwn.clear();
-				partition.previousOwnKeys.clear();
-				partition.versionAtRecord.clear();
+				partition.identityReads.clear();
 			}
 		},
 

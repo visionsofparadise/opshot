@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { proxy, snapshot, unstable_getInternalStates } from "valtio/vanilla";
+import { proxy, unstable_getInternalStates } from "valtio/vanilla";
 
 import { ignore } from "../ignore";
 import { installBoundary } from "../valtio/boundary";
@@ -12,6 +12,14 @@ const { proxyStateMap } = unstable_getInternalStates();
 const rawTargetOf = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
 
 const emptyDirty = (): DirtyIndex => ({ edges: new WeakMap(), nodes: new WeakSet() });
+
+const edgesDirty = (node: object, keys: ReadonlyArray<string | symbol>): DirtyIndex => {
+	const dirty = emptyDirty();
+
+	dirty.edges.set(rawTargetOf(node), new Set(keys));
+
+	return dirty;
+};
 
 installBoundary();
 
@@ -41,65 +49,6 @@ describe("ReadTracker", () => {
 		expect(isReadProxy(readProxy)).toBe(true);
 		expect(peelReadProxy(readProxy)).toBe(state);
 		expect(isReadProxy(state)).toBe(false);
-	});
-
-	it("tracks enumerable public fields and stays silent for siblings", () => {
-		const state = createLive({ a: 1, b: 2 });
-		const readTracker = createReadTracker();
-		const readProxy = readTracker.wrap(state);
-
-		void readProxy.a;
-		expect(readTracker.readsChanged(state)).toBe(false);
-
-		state.b = 3;
-		expect(readTracker.readsChanged(state)).toBe(false);
-
-		state.a = 4;
-		expect(readTracker.readsChanged(state)).toBe(true);
-	});
-
-	it("detects nested tracked reads and alias mutations", () => {
-		const shared = { value: 1 };
-		const state = createLive({ left: shared, right: shared });
-		const readTracker = createReadTracker();
-		const readProxy = readTracker.wrap(state);
-
-		void readProxy.left.value;
-		expect(readTracker.readsChanged(state)).toBe(false);
-
-		state.right.value = 2;
-		expect(readTracker.readsChanged(state)).toBe(true);
-	});
-
-	it("keeps empty reads silent", () => {
-		const state = createLive({ count: 0 });
-		const readTracker = createReadTracker();
-
-		readTracker.wrap(state);
-		state.count = 1;
-		expect(readTracker.readsChanged(state)).toBe(false);
-	});
-
-	it("compares against the value stored at read time, not the value live at comparison", () => {
-		const state = createLive({ count: 0 });
-		const readTracker = createReadTracker();
-		const readProxy = readTracker.wrap(state);
-
-		void readProxy.count;
-		readProxy.count = 5;
-		expect(readTracker.readsChanged(state)).toBe(true);
-	});
-
-	it("compares against the value stored at the first read of the window, not the last", () => {
-		const state = createLive({ count: 0 });
-		const readTracker = createReadTracker();
-		const readProxy = readTracker.wrap(state);
-
-		void readProxy.count;
-		readProxy.count = 5;
-		void readProxy.count;
-
-		expect(readTracker.readsChanged(state)).toBe(true);
 	});
 
 	it("resets read lifecycle without clearing readProxy identity", () => {
@@ -136,55 +85,6 @@ describe("ReadTracker", () => {
 		expect(next.right).toBe(right);
 	});
 
-	it("partitions reads by source root", () => {
-		const a = createLive({ count: 0 });
-		const b = createLive({ count: 0 });
-		const readTracker = createReadTracker();
-		const wrapA = readTracker.wrap(a);
-		const wrapB = readTracker.wrap(b);
-
-		void wrapA.count;
-		void wrapB.count;
-
-		b.count = 1;
-		expect(readTracker.readsChanged(a)).toBe(false);
-		expect(readTracker.readsChanged(b)).toBe(true);
-	});
-
-	it("covers array index, push, length growth, and truncation", () => {
-		const state = createLive({ items: [1, 2] as Array<number | undefined> });
-		const readTracker = createReadTracker();
-		const readProxy = readTracker.wrap(state);
-
-		void readProxy.items.length;
-		void readProxy.items[0];
-
-		state.items.push(3);
-		expect(readTracker.readsChanged(state)).toBe(true);
-
-		readTracker.resetReads();
-		const again = readTracker.wrap(state);
-
-		void again.items.length;
-		state.items.length = 10;
-		expect(readTracker.readsChanged(state)).toBe(true);
-		expect((snapshot(state.items) as Array<unknown>).length).toBe(10);
-
-		readTracker.resetReads();
-		const third = readTracker.wrap(state);
-
-		void third.items[0];
-		state.items.length = 1;
-		expect(readTracker.readsChanged(state)).toBe(false);
-
-		readTracker.resetReads();
-		const fourth = readTracker.wrap(state);
-
-		void fourth.items.length;
-		state.items.length = 0;
-		expect(readTracker.readsChanged(state)).toBe(true);
-	});
-
 	it("passes through ignore and frozen leaves without wrapping", () => {
 		const ignored = ignore({ secret: 1 });
 		const frozen = Object.freeze({ n: 1 });
@@ -218,24 +118,10 @@ describe("ReadTracker", () => {
 		expect(first).toBe(second);
 		expect(first()).toBe(1);
 		expect(state.count).toBe(1);
-		expect(readTracker.readsChanged(state)).toBe(true);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state, ["count"]))).toBe(true);
 	});
 
-	it("records own function fields as leaves so replacement is visible", () => {
-		const first = () => 1;
-		const second = () => 2;
-		const state = createLive({ run: first, count: 0 });
-		const readTracker = createReadTracker();
-		const readProxy = readTracker.wrap(state);
-
-		expect(readProxy.run).toBe(first);
-		expect(readTracker.readsChanged(state)).toBe(false);
-
-		state.run = second;
-		expect(readTracker.readsChanged(state)).toBe(true);
-	});
-
-	it("keeps a prototype-method lookup from ever comparing changed", () => {
+	it("records a prototype-method lookup as that key, not instance fields", () => {
 		class Counter {
 			count = 0;
 
@@ -251,8 +137,8 @@ describe("ReadTracker", () => {
 		const readProxy = readTracker.wrap(state);
 
 		void readProxy.bump;
-		state.count = 9;
-		expect(readTracker.readsChanged(state)).toBe(false);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state, ["count"]))).toBe(false);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state, ["bump"]))).toBe(true);
 	});
 
 	it("records a nested object read only through a prototype method, so unread siblings stay silent", () => {
@@ -272,8 +158,8 @@ describe("ReadTracker", () => {
 
 		void readProxy.counter.read;
 
-		state.counter.other = 9;
-		expect(readTracker.readsChanged(state)).toBe(false);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state.counter, ["other"]))).toBe(false);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state.counter, ["read"]))).toBe(true);
 	});
 
 	it("throws when wrap receives a non-proxy", () => {
@@ -342,22 +228,16 @@ describe("ReadTracker", () => {
 			return readProxy;
 		});
 
-		expect(readTracker.readsChanged(documents[0] as object)).toBe(false);
-
 		readTracker.dispose();
 		await Promise.resolve();
 
 		for (const document of documents) {
-			expect(readTracker.readsChanged(document)).toBe(false);
+			expect(readsIntersectDirty(readTracker, edgesDirty(document, ["id"]))).toBe(false);
 		}
 
 		for (const readProxy of retained) {
 			expect(isReadProxy(readProxy)).toBe(true);
 			expect(readProxy.body.text).toBe("x");
-		}
-
-		for (const document of documents) {
-			expect(readTracker.readsChanged(document)).toBe(false);
 		}
 	});
 
@@ -373,9 +253,7 @@ describe("ReadTracker", () => {
 
 		await Promise.resolve();
 
-		state.shown = 1;
-
-		expect(readTracker.readsChanged(state)).toBe(true);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state, ["shown"]))).toBe(true);
 	});
 
 	it("stops reporting reads once a dispose has settled", async () => {
@@ -389,9 +267,7 @@ describe("ReadTracker", () => {
 
 		await Promise.resolve();
 
-		state.shown = 1;
-
-		expect(readTracker.readsChanged(state)).toBe(false);
+		expect(readsIntersectDirty(readTracker, edgesDirty(state, ["shown"]))).toBe(false);
 	});
 });
 
