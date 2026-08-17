@@ -3,7 +3,7 @@ import { getRegisteredReadProxyTarget, registerReadProxyTarget } from "../identi
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
 import type { DirtyIndex } from "../handle";
 
-const { refSet, proxyStateMap } = unstable_getInternalStates();
+const { proxyStateMap } = unstable_getInternalStates();
 
 const KEYS_PROPERTY = "k";
 const HAS_KEY_PROPERTY = "h";
@@ -206,8 +206,6 @@ export function createReadTracker(): ReadTracker {
 				if (!isObjectLike(value)) return value;
 
 				if (typeof value === "function") return value;
-
-				if (refSet.has(value)) return value;
 
 				if (!isLiveProxy(value)) return value;
 

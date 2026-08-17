@@ -11,7 +11,7 @@ import { nonWritablePropertyError, rejectionError, snapshotDonationError } from 
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
-const { proxyStateMap, proxyCache, refSet } = unstable_getInternalStates();
+const { proxyStateMap, proxyCache } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
@@ -53,7 +53,7 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 
 	visits.add(value);
 
-	if (refSet.has(value) || pendingIgnore.has(value)) return;
+	if (pendingIgnore.has(value)) return;
 
 	for (const entry of walkDataEntries(value)) {
 		const child: unknown = entry.value;
@@ -77,7 +77,7 @@ const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>,
 			continue;
 		}
 
-		if (refSet.has(child) || pendingIgnore.has(child)) continue;
+		if (pendingIgnore.has(child)) continue;
 
 		if (proxyStateMap.has(child)) {
 			continue;

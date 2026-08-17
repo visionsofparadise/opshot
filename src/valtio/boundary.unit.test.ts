@@ -1140,7 +1140,7 @@ describe("boundary: strict false", () => {
 		expect(nonStrictHeard.map((emission) => emission.ops)).toEqual(strictHeard.map((emission) => emission.ops));
 	});
 
-	it("still leaves a refSet member untracked", () => {
+	it("still leaves an ignore()d member untracked", () => {
 		const element = ignore({ node: "dom" });
 		const state = createMutableState({ element }, { strict: false });
 		const emissions = recordEmissions(state);

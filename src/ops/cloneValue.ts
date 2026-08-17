@@ -6,11 +6,11 @@ import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import type { OperationPath } from "./path";
 
-const { refSet, proxyStateMap } = unstable_getInternalStates();
+const { proxyStateMap } = unstable_getInternalStates();
 
 const isInstrumented = (value: object): boolean => proxyStateMap.has(value) || getRegisteredTarget(value) !== undefined;
 
-export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value) && !refSet.has(value);
+export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value);
 
 export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" &&

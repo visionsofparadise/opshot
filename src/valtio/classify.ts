@@ -1,7 +1,3 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
-
-const { refSet } = unstable_getInternalStates();
-
 export type ValueKind = "plain" | "plainArray" | "arraySubclass" | "cleanClass" | "privateClass" | "nativeClass";
 
 const sourceCache = new WeakMap<Function, string>();
@@ -54,8 +50,6 @@ export type AdmissionDecision =
 
 export function admissionDecision(value: unknown): AdmissionDecision {
 	if (typeof value !== "object" || value === null) return { lane: "leaf" };
-
-	if (refSet.has(value)) return { lane: "untracked" };
 
 	if (Object.isFrozen(value)) return { lane: "untracked" };
 
