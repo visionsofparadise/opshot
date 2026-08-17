@@ -4,10 +4,6 @@ import { getEmitter } from "./emit/emitterRegistry";
 /**
  * Runs changes in one batch and notifies listeners with optional `meta`.
  *
- * Every subscriber covering a written key hears it, at any depth above or below `state`.
- * Listeners run before this returns, and a throwing one never skips another.
- * Nesting a `transact` inside another delivers the inner one's `meta` only to its own node.
- *
  * @param state - State to change.
  * @param mutate - Function that writes the state.
  * @param meta - Passed to listeners.

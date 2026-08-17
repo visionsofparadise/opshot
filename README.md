@@ -85,8 +85,6 @@ const Child = scope<{ user: User }>(({ user }) => <p>{user.age}</p>);
 
 This is how you optimize re-rendering across your component tree: place `scope` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useMutableState` is a boundary itself.
 
-`scope` searches props for states through plain data, following the same constraints as state creation, and ignoring React internals.
-
 ## Creating State
 
 ```tsx
@@ -197,8 +195,6 @@ subscribe(state.a, (ops) => {
 });
 ```
 
-Do not mutate the subscribed state inside the listener — that re-enters the listener and loops forever.
-
 ## Ops
 
 An op is an invertible pair of `Operation` halves. Every half uses one of two verbs:
@@ -261,8 +257,6 @@ const Counter = () => {
 ```
 
 Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception.
-
-Ops are **idempotent**.
 
 If your state is JSON serializable, **then ops are too**.
 

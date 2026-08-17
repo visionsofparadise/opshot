@@ -22,8 +22,7 @@ export interface Channel<M extends object> {
 	transact(state: object, mutate: () => void, meta?: Partial<M>): void;
 
 	/**
-	 * Listens for changes from a group's states, including nested groups.
-	 * Outer groups run first.
+	 * Listens for changes from a group's states.
 	 *
 	 * @param group - Group to listen to.
 	 * @param listener - Called on each change.

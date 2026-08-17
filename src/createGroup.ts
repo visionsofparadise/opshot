@@ -3,13 +3,12 @@ import type { GroupListeners } from "./emit/emitterRegistry";
 import type { StateSettings } from "./settings";
 
 /**
- * Creates states and receives their changes on one stream, including from nested groups.
+ * Creates states and receives their changes on one stream.
  *
  * @example
- * const app = createGroup()
- * const docs = createGroup(app)
- * const doc = docs.createMutableState({ title: "" })
- * subscribe(docs, (state, ops, meta) => {})
+ * const group = createGroup()
+ * const doc = group.createMutableState({ title: "" })
+ * subscribe(group, (state, ops, meta) => {})
  */
 export interface Group {
 	/**
