@@ -1,5 +1,11 @@
 import { brandTrackedPrototype, getAttachments, notifyAttachments, trackedBrand } from "./trackedWrapper";
 
+/**
+ * Tracked `Date` for use in state.
+ *
+ * @example
+ * createState({ when: new TrackedDate() })
+ */
 export class TrackedDate extends Date {
 	declare readonly [trackedBrand]: true;
 }

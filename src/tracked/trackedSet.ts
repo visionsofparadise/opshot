@@ -1,5 +1,10 @@
 import { brandTrackedPrototype, getAttachments, notifyAttachments, trackedBrand } from "./trackedWrapper";
 
+/**
+ * Tracked `Set` for use in state.
+ *
+ * @typeParam T - Member type.
+ */
 export class TrackedSet<T> extends Set<T> {
 	declare readonly [trackedBrand]: true;
 

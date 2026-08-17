@@ -9,11 +9,29 @@ import { installBoundary } from "./valtio/boundary";
 
 installBoundary();
 
+/**
+ * Payload delivered with an emission.
+ */
 export type Emission<Out extends object = {}> = { readonly isSideEffect: false; readonly meta: Out } | { readonly isSideEffect: true };
 
+/**
+ * Writes through a state.
+ *
+ * @typeParam T - State shape.
+ * @typeParam In - Meta accepted by `mutate`.
+ */
 export type Mutate<T extends object, In extends object = {}> = (callback: (mutable: T) => void, ...meta: {} extends In ? [meta?: In] : [meta: In]) => void;
+
+/**
+ * Listener for a state's emissions.
+ *
+ * @typeParam T - State shape.
+ */
 export type StateListener<T extends object, In extends object = {}, Out extends object = {}> = (state: State<T, In, Out>, ops: Array<Op>, emission: Emission<Out>) => void;
 
+/**
+ * Handle attached at `state.op`.
+ */
 export interface OpshotHandle<T extends object, In extends object = {}, Out extends object = {}> {
 	readonly unsafeMutable: object;
 	readonly isMutating: boolean;
@@ -22,12 +40,28 @@ export interface OpshotHandle<T extends object, In extends object = {}, Out exte
 	readonly unwrap: () => Snapshot<T>;
 }
 
+/**
+ * A state snapshot with `mutate` and `op`.
+ *
+ * @typeParam T - State shape.
+ */
 export type State<T extends object, In extends object = {}, Out extends object = {}> = Snapshot<T> & {
 	readonly mutate: Mutate<T, In>;
 	readonly op: OpshotHandle<T, In, Out>;
 };
 
+/**
+ * Function that returns the initial fields.
+ *
+ * @typeParam T - State shape.
+ */
 export type Initializer<T extends object, In extends object = {}, Out extends object = {}> = (mutate: Mutate<T, In>, get: () => State<T, In, Out>) => T;
+
+/**
+ * Initial fields.
+ *
+ * @typeParam T - State shape.
+ */
 export type InitialProperties<T extends object> = T;
 
 export const stateBrand: unique symbol = Symbol.for("opshot.state");
@@ -51,6 +85,14 @@ export const augmentSideEffectCycleError = (error: unknown): Error | undefined =
 	);
 };
 
+/**
+ * Creates a state object.
+ *
+ * @typeParam T - State shape.
+ * @param initializer - Initial fields, or a function that returns them.
+ * @param meta - Optional meta token from `createMeta`.
+ * @returns The state.
+ */
 export function createState<T extends object, In extends object = {}, Out extends object = {}>(
 	initializer: Initializer<T, In, Out> | InitialProperties<T>,
 	meta?: Meta<In, Out>,

@@ -10,6 +10,12 @@ const materializeEntries = (entries: ReadonlyArray<readonly [unknown, unknown]>)
 	return entries.map(([key, value]) => [key, isCloneable(value) ? cloneValue(value, memo, "a TrackedMap value") : value] as const);
 };
 
+/**
+ * Tracked `Map` for use in state.
+ *
+ * @typeParam K - Key type.
+ * @typeParam V - Value type.
+ */
 export class TrackedMap<K, V> extends Map<K, V> {
 	declare readonly [trackedBrand]: true;
 

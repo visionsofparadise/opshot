@@ -1,6 +1,13 @@
 import { hasOwn } from "./utils/hasOwn";
 
 declare const metaIn: unique symbol;
+
+/**
+ * Meta token for `mutate` and subscribers.
+ *
+ * @typeParam In - Meta accepted by `mutate`.
+ * @typeParam Out - Meta delivered to listeners.
+ */
 export interface Meta<In extends object = {}, Out extends object = {}> {
 	readonly defaults?: Out;
 	readonly [metaIn]?: (value: In) => void; // phantom: keeps In inferable; never present at runtime
@@ -12,6 +19,13 @@ interface BrandedMeta<In extends object, Out extends object> extends Meta<In, Ou
 	readonly [metaBrand]: true;
 }
 
+/**
+ * Declares a meta type for `mutate` and subscribers.
+ *
+ * @typeParam M - Meta shape.
+ * @param defaults - Optional defaults merged into each call's meta.
+ * @returns A meta token.
+ */
 export function createMeta<M extends object>(): Meta<M, M>;
 export function createMeta<M extends object>(defaults: M): Meta<Partial<M>, M>;
 export function createMeta<M extends object>(defaults?: M): Meta<Partial<M>, M> {

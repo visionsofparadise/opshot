@@ -1,5 +1,8 @@
 import { cloneValue, isCloneable } from "./cloneValue";
 
+/**
+ * A half of a change.
+ */
 export type Operation =
 	| { readonly op: "add"; readonly path: string; readonly value: unknown }
 	| { readonly op: "replace"; readonly path: string; readonly value: unknown }
@@ -12,6 +15,9 @@ export type Operation =
 	| { readonly op: "setEntries"; readonly path: string; readonly members: ReadonlyArray<unknown> }
 	| { readonly op: "dateSet"; readonly path: string; readonly epoch: number };
 
+/**
+ * A change with do and undo halves.
+ */
 export interface Op { readonly isPatch: true; readonly do: Operation; readonly undo: Operation }
 
 const operationBrand = Symbol.for("opshot.operation");

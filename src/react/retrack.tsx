@@ -167,10 +167,24 @@ function setAtPath<T>(object: T, path: PropPath, value: unknown): T {
 	return clone as T;
 }
 
+/**
+ * Options for `retrack`.
+ */
 export interface RetrackOptions {
+	/**
+	 * Prop walk depth.
+	 */
 	readonly maxDepth?: number;
 }
 
+/**
+ * Wraps a component so it re-renders when states in its props change.
+ *
+ * @typeParam P - Props type.
+ * @param component - Component to wrap.
+ * @param options - Optional walk depth.
+ * @returns The wrapped component.
+ */
 export function retrack<P extends object>(component: FC<P>, options?: RetrackOptions): FC<P> {
 	const componentName = component.displayName ?? component.name;
 	const maxDepth = options?.maxDepth ?? 10;

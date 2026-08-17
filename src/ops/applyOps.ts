@@ -105,6 +105,14 @@ const applyWrapperOperation = (root: object, operation: WrapperVariantOperation)
 	}
 };
 
+/**
+ * Applies operation halves to a state.
+ *
+ * @param state - State to change.
+ * @param operations - Halves to apply (`op.do` or `op.undo`).
+ * @param meta - Passed to listeners.
+ * @returns Nothing.
+ */
 export function applyOps<T extends object, In extends object = {}, Out extends object = {}>(
 	state: State<T, In, Out>,
 	operations: ReadonlyArray<Operation>,

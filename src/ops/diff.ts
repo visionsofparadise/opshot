@@ -110,6 +110,13 @@ const diffValue = (before: unknown, after: unknown, path: Path, ops: Array<Op>, 
 	ops.push(replacePair(toPointer(path), before, after));
 };
 
+/**
+ * Diffs two snapshots into ops.
+ *
+ * @param before - Earlier snapshot.
+ * @param after - Later snapshot.
+ * @returns Ops from before to after.
+ */
 export function diffSnapshots(before: unknown, after: unknown): Array<Op> {
 	const ops: Array<Op> = [];
 
