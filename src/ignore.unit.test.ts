@@ -63,6 +63,77 @@ describe("ignore", () => {
 		]);
 	});
 
+	it("untracks a nested ignore under every occupancy of a shared node", () => {
+		const holder = { nested: ignore({ n: 1 }) };
+		const state = createMutableState({ a: holder, b: holder, tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.a.nested = { n: 9 };
+			state.tick = 1;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
+
+		heard.length = 0;
+
+		transact(state, () => {
+			state.b.nested = { n: 8 };
+			state.tick = 2;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 2 }, undo: { verb: "assign", path: ["tick"], value: 1 } },
+		]);
+	});
+
+	it("instruments a tracked occupancy when another occupancy of the node is ignored", () => {
+		const holder = { nested: { n: 1 } };
+		const state = createMutableState({ a: ignore(holder), b: holder, tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.a.nested = { n: 3 };
+			state.tick = 1;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
+
+		heard.length = 0;
+
+		transact(state, () => {
+			state.b.nested = { n: 9 };
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{
+				do: { verb: "assign", path: ["b", "nested"], value: { n: 9 } },
+				undo: { verb: "assign", path: ["b", "nested"], value: { n: 1 } },
+			},
+		]);
+
+		heard.length = 0;
+
+		transact(state, () => {
+			state.b.nested.n = 10;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{
+				do: { verb: "assign", path: ["b", "nested", "n"], value: 10 },
+				undo: { verb: "assign", path: ["b", "nested", "n"], value: 9 },
+			},
+		]);
+	});
+
 	it("lands a live ignore() assignment as a ride-along-bearing object", () => {
 		const obj = { n: 1 };
 		const state = createMutableState<{ foo: unknown }>({ foo: null });

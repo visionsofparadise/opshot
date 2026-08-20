@@ -82,17 +82,17 @@ This is how you optimize re-rendering across your component tree: place `scope` 
 ## Creating State
 
 ```tsx
-import { ignore, unsafeTrack, useMutableState, type Ignored, type UnsafeTracked } from "opshot";
+import { ignore, unsafeTrack, useMutableState } from "opshot";
 
 interface PlayerState {
 	position: number;
-	element: Ignored<HTMLAudioElement>;
-	queue: UnsafeTracked<Playlist>;
+	element: HTMLAudioElement;
+	queue: Playlist;
 	seek: (position: number) => void;
 }
 
 const Player = () => {
-	const player = useMutableState<PlayerState>({
+	const player: PlayerState = useMutableState({
 		position: 0,
 
 		// ignore() on a value in the factory argument makes the edge at that path untracked.

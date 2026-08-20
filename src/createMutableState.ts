@@ -57,49 +57,97 @@ const isUnsafeWrapper = (value: unknown): value is UnsafeTracked<unknown> =>
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
-const consumeMarkerTree = (
-	node: object,
-	path: OperationPath,
+const isStrictlyUnderPathKey = (candidate: string, prefix: string): boolean =>
+	prefix === "/" ? candidate !== "/" && candidate.startsWith("/") : candidate.startsWith(`${prefix}/`);
+
+const copyMarkerPathSuffixes = (
+	firstPath: OperationPath,
+	laterPath: OperationPath,
 	ignoredAt: Set<string>,
 	unsafeAt: Set<string>,
-	visits: Set<object>,
 ): void => {
-	if (visits.has(node) || Object.isFrozen(node)) return;
+	const firstKey = formatOperationPath(firstPath);
+	const laterKey = formatOperationPath(laterPath);
 
-	visits.add(node);
+	const copyInto = (flags: Set<string>): void => {
+		const additions = new Array<string>();
+
+		for (const key of flags) {
+			if (!isStrictlyUnderPathKey(key, firstKey)) continue;
+
+			const suffix = firstKey === "/" ? key : key.slice(firstKey.length);
+
+			additions.push(laterKey === "/" ? suffix : `${laterKey}${suffix}`);
+		}
+
+		for (const addition of additions) flags.add(addition);
+	};
+
+	copyInto(ignoredAt);
+	copyInto(unsafeAt);
+};
+
+interface MarkerWalk {
+	readonly ignoredAt: Set<string>;
+	readonly unsafeAt: Set<string>;
+	readonly firstOccupancyByNode: Map<object, OperationPath>;
+	readonly laterOccupanciesByNode: Map<object, Array<OperationPath>>;
+}
+
+const consumeMarkerTree = (node: object, path: OperationPath, walk: MarkerWalk): void => {
+	if (Object.isFrozen(node)) return;
+
+	const firstPath = walk.firstOccupancyByNode.get(node);
+
+	if (firstPath !== undefined) {
+		const laterOccupancies = walk.laterOccupanciesByNode.get(node);
+
+		if (laterOccupancies === undefined) walk.laterOccupanciesByNode.set(node, [path]);
+		else laterOccupancies.push(path);
+
+		return;
+	}
+
+	walk.firstOccupancyByNode.set(node, path);
 
 	for (const entry of walkDataEntries(node)) {
 		const childPath = appendOperationPath(path, segmentFor(node, entry.key));
-		const next = unwrapValue(entry.value, childPath, ignoredAt, unsafeAt, visits);
+		const next = unwrapValue(entry.value, childPath, walk);
 
 		if (!Object.is(next, entry.value) && entry.writable) Reflect.set(node, entry.key, next);
 	}
 };
 
-const unwrapValue = (
-	value: unknown,
-	path: OperationPath,
-	ignoredAt: Set<string>,
-	unsafeAt: Set<string>,
-	visits: Set<object>,
-): unknown => {
+const unwrapValue = (value: unknown, path: OperationPath, walk: MarkerWalk): unknown => {
 	let current = value;
 
 	while (isIgnoredWrapper(current) || isUnsafeWrapper(current)) {
 		const pathKey = formatOperationPath(path);
 
 		if (isIgnoredWrapper(current)) {
-			ignoredAt.add(pathKey);
+			walk.ignoredAt.add(pathKey);
 			current = current[ignoreMarker];
 		} else {
-			unsafeAt.add(pathKey);
+			walk.unsafeAt.add(pathKey);
 			current = current[unsafeMarker];
 		}
 	}
 
-	if (typeof current === "object" && current !== null) consumeMarkerTree(current, path, ignoredAt, unsafeAt, visits);
+	if (typeof current === "object" && current !== null) consumeMarkerTree(current, path, walk);
 
 	return current;
+};
+
+const applyCopiedMarkerPaths = (walk: MarkerWalk): void => {
+	for (const [node, firstPath] of walk.firstOccupancyByNode) {
+		const laterOccupancies = walk.laterOccupanciesByNode.get(node);
+
+		if (laterOccupancies === undefined) continue;
+
+		for (const laterPath of laterOccupancies) {
+			copyMarkerPathSuffixes(firstPath, laterPath, walk.ignoredAt, walk.unsafeAt);
+		}
+	}
 };
 
 /**
@@ -144,7 +192,16 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	const base = Object.create(Reflect.getPrototypeOf(root)) as object;
 
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(root));
-	consumeMarkerTree(base, createOperationPath([]), ignoredAt, unsafeAt, new Set());
+
+	const walk: MarkerWalk = {
+		ignoredAt,
+		unsafeAt,
+		firstOccupancyByNode: new Map(),
+		laterOccupanciesByNode: new Map(),
+	};
+
+	consumeMarkerTree(base, createOperationPath([]), walk);
+	applyCopiedMarkerPaths(walk);
 
 	if (decision.lane === "dangerous" && strict && !unsafeAt.has("/")) {
 		throw rejectionError(base, decision.kind);

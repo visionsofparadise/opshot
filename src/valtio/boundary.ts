@@ -41,28 +41,15 @@ const handleOwning = (target: object): Handle | undefined => {
 const segmentForProp = (parent: object, prop: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(prop) ? Number(prop) : prop;
 
-const pathOfCurrentAssignment = (): { handle: Handle; path: OperationPath } | undefined => {
+interface AssignmentOccupancies {
+	readonly handle: Handle;
+	readonly paths: ReadonlyArray<OperationPath>;
+}
+
+const reconstructedOccupancyOfCurrentAssignment = (): AssignmentOccupancies | undefined => {
 	const current = setFrameStack[setFrameStack.length - 1];
 
 	if (current === undefined || typeof current.prop !== "string") return undefined;
-
-	const currentRaw = rawTargetOf(current.target);
-
-	for (const handle of handlesOf(current.target)) {
-		const routes = handle.routes.get(currentRaw);
-
-		if (routes !== undefined && routes.length > 0) {
-			const route = routes[0];
-
-			if (route === undefined) continue;
-
-			return { handle, path: appendOperationPath(route, segmentForProp(current.target, current.prop)) };
-		}
-
-		if (rawTargetOf(handle.proxy.root) === currentRaw) {
-			return { handle, path: createOperationPath([segmentForProp(current.target, current.prop)]) };
-		}
-	}
 
 	let owner: Handle | undefined;
 	let ownerIndex = 0;
@@ -92,7 +79,33 @@ const pathOfCurrentAssignment = (): { handle: Handle; path: OperationPath } | un
 		segments.push(segmentForProp(frame.target, frame.prop));
 	}
 
-	return { handle: owner, path: createOperationPath(segments) };
+	return { handle: owner, paths: [createOperationPath(segments)] };
+};
+
+const occupanciesOfCurrentAssignment = (): AssignmentOccupancies | undefined => {
+	const current = setFrameStack[setFrameStack.length - 1];
+
+	if (current === undefined || typeof current.prop !== "string") return undefined;
+
+	const currentRaw = rawTargetOf(current.target);
+	const segment = segmentForProp(current.target, current.prop);
+
+	for (const handle of handlesOf(current.target)) {
+		const routes = handle.routes.get(currentRaw);
+
+		if (routes !== undefined && routes.length > 0) {
+			return {
+				handle,
+				paths: routes.map((route) => appendOperationPath(route, segment)),
+			};
+		}
+
+		if (rawTargetOf(handle.proxy.root) === currentRaw) {
+			return { handle, paths: [createOperationPath([segment])] };
+		}
+	}
+
+	return reconstructedOccupancyOfCurrentAssignment();
 };
 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>, unsafe = false): AdmissionLane => {
@@ -291,15 +304,22 @@ class MissingMutationTrapError extends Error {
 }
 
 const canProxyCurrentAssignment = (value: unknown): boolean => {
-	const assignment = pathOfCurrentAssignment();
+	const assignment = occupanciesOfCurrentAssignment();
 
-	if (assignment !== undefined) {
-		if (isUnderIgnoredOccupancy(assignment.handle, assignment.path)) return false;
+	if (assignment === undefined) return canProxy(value, currentSetParentOf());
 
-		return canProxy(value, currentSetParentOf(), isUnderUnsafeOccupancy(assignment.handle, assignment.path));
+	let anyTracked = false;
+	let anyUnsafe = false;
+
+	for (const path of assignment.paths) {
+		if (!isUnderIgnoredOccupancy(assignment.handle, path)) anyTracked = true;
+
+		if (isUnderUnsafeOccupancy(assignment.handle, path)) anyUnsafe = true;
 	}
 
-	return canProxy(value, currentSetParentOf());
+	if (!anyTracked) return false;
+
+	return canProxy(value, currentSetParentOf(), anyUnsafe || !assignment.handle.strict);
 };
 
 let installed = false;
