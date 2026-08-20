@@ -3,7 +3,8 @@ import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
-import { OccupancyRefusalError } from "../occupancy";
+import { handleOf } from "../handle";
+import { OccupancyRefusalError, predatingRoutesOf } from "../occupancy";
 import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -1117,5 +1118,249 @@ describe("diffObjects: occupancy omission", () => {
 		expect(errors).toEqual([]);
 		expect(pathOf(heard[0])).toEqual([["tick"]]);
 		expect(heard[0]?.some((operation) => operation.do.path[0] === "wrap")).toBe(false);
+	});
+});
+
+describe("diffObjects: decomposition and ref selection", () => {
+	it("a last-route delete of a cyclic node decomposes with the re-entrant guard minting a plain removal pair", () => {
+		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
+
+		transact(state, () => {
+			const node: { m: number; self?: object } = { m: 1 };
+
+			node.self = node;
+			state.node = node;
+		});
+
+		const held = state.node;
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.node;
+		});
+
+		const delivered = heard[0] ?? [];
+		const selfPair = delivered.find(
+			(pair) => pair.do.path.length === 2 && pair.do.path[0] === "node" && pair.do.path[1] === "self",
+		);
+
+		expect(shapeOps(delivered.filter((pair) => pair !== selfPair))).toEqual([
+			{ do: { verb: "delete", path: ["node", "m"] }, undo: { verb: "assign", path: ["node", "m"], value: 1 } },
+			{ do: { verb: "delete", path: ["node"] }, undo: { verb: "assign", path: ["node"], value: {} } },
+		]);
+		expect(selfPair?.do).toMatchObject({ verb: "delete", path: ["node", "self"] });
+		expect(selfPair?.undo.verb).toBe("assign");
+
+		replayUndo(state, delivered);
+		expect(state.node).toBe(held);
+		expect(state.node?.self).toBe(state.node);
+	});
+
+	it("a last-route delete of an aliased array decomposes so undo restores its sharing", () => {
+		const state = createMutableState<{ n: number; node?: Array<{ n: number }> }>({ n: 1 });
+
+		transact(state, () => {
+			const shared = { n: 1 };
+
+			state.node = [shared, shared];
+		});
+
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.node;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered.some((pair) => pair.do.verb === "delete" && pair.do.path[0] === "node")).toBe(true);
+		expect(delivered.length).toBeGreaterThan(1);
+
+		replayUndo(state, delivered);
+		expect(state.node?.[0]).toBe(state.node?.[1]);
+		expect(state.node?.[0]?.n).toBe(1);
+	});
+
+	it("replacing a self-referential container decomposes both halves", () => {
+		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
+
+		transact(state, () => {
+			const node: { m: number; self?: object } = { m: 1 };
+
+			node.self = node;
+			state.node = node;
+		});
+
+		const heard = record(state);
+
+		transact(state, () => {
+			const next: { m: number; self?: object } = { m: 2 };
+
+			next.self = next;
+			state.node = next;
+		});
+
+		const delivered = heard[0] ?? [];
+		const verbs = delivered.map((pair) => pair.do.verb);
+		const paths = pathOf(delivered);
+
+		expect(delivered.length).toBeGreaterThan(2);
+		expect(verbs).toContain("delete");
+		expect(verbs).toContain("assign");
+		expect(verbs).toContain("link");
+		expect(paths.some((path) => path.length === 1 && path[0] === "node")).toBe(true);
+		expect(paths.some((path) => path[0] === "node" && path[1] === "self")).toBe(true);
+		expect(state.node?.self).toBe(state.node);
+		expect(state.node?.m).toBe(2);
+
+		replayUndo(state, delivered);
+		expect(state.node?.m).toBe(1);
+		expect(state.node?.self).toBe(state.node);
+	});
+
+	it("carries by value when the only candidate ref resolves under the container being assigned", () => {
+		const state = createMutableState<{ box: { inner: { n: number }; extra?: number } }>({
+			box: { inner: { n: 1 } },
+		});
+		const inner = state.box.inner;
+		const heard = record(state);
+
+		transact(state, () => {
+			state.box = { inner, extra: 2 };
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered.some((pair) => pair.do.verb === "link")).toBe(false);
+		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(state.box.inner).toBe(inner);
+		expect(state.box.extra).toBe(2);
+	});
+
+	it("a second alias links to the route recorded earlier in the same batch", () => {
+		const state = createMutableState<{
+			first?: { n: number };
+			wrapper?: { alias: { n: number } };
+		}>({});
+		const heard = record(state);
+
+		transact(state, () => {
+			const node = { n: 1 };
+
+			state.first = node;
+			state.wrapper = { alias: node };
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(shapeOps(delivered)).toEqual([
+			{ do: { verb: "assign", path: ["first"], value: { n: 1 } }, undo: { verb: "delete", path: ["first"] } },
+			{ do: { verb: "assign", path: ["wrapper"], value: {} }, undo: { verb: "delete", path: ["wrapper"] } },
+			{
+				do: { verb: "link", path: ["wrapper", "alias"], ref: ["first"] },
+				undo: { verb: "delete", path: ["wrapper", "alias"] },
+			},
+		]);
+		expect(state.wrapper?.alias).toBe(state.first);
+	});
+
+	it("route recording stops at an ignore()d edge and visits a shared descendant once", () => {
+		type Shared = { n: number; self?: Shared };
+		const shared: Shared = { n: 1 };
+
+		shared.self = shared;
+
+		const state = createMutableState({
+			bag: {
+				wrap: ignore({ secret: { n: 1 } }),
+				left: { child: shared },
+				right: { child: shared },
+			},
+			tick: 0,
+		});
+		const handle = handleOf(state);
+		const heard = record(state);
+
+		expect(handle).toBeDefined();
+		expect(handle?.ignoredAt.has("/bag/wrap")).toBe(true);
+		expect(predatingRoutesOf(handle!, state.bag.wrap.secret)).toEqual([]);
+		expect(predatingRoutesOf(handle!, state.bag.left.child)).toEqual([
+			["bag", "left", "child"],
+			["bag", "left", "child", "self"],
+			["bag", "right", "child"],
+		]);
+
+		transact(state, () => {
+			state.tick = 1;
+		});
+
+		expect(pathOf(heard[0])).toEqual([["tick"]]);
+		expect(predatingRoutesOf(handle!, state.bag.wrap.secret)).toEqual([]);
+		expect(predatingRoutesOf(handle!, state.bag.wrap)).toEqual([]);
+		expect(predatingRoutesOf(handle!, state.bag.left.child)).toEqual([
+			["bag", "left", "child"],
+			["bag", "left", "child", "self"],
+			["bag", "right", "child"],
+		]);
+		expect(state.bag.left.child).toBe(state.bag.right.child);
+		expect(state.bag.left.child.self).toBe(state.bag.left.child);
+	});
+
+	it("a decomposed sparse-array addition skips holes and restores them on undo", () => {
+		const shared = { n: 1 };
+		const state = createMutableState<{ keep: { n: number }; list?: Array<{ n: number } | undefined> }>({
+			keep: shared,
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			const list = new Array<{ n: number } | undefined>(4);
+
+			list[0] = state.keep;
+			list[3] = { n: 2 };
+			state.list = list;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(shapeOps(delivered)).toEqual([
+			{ do: { verb: "assign", path: ["list"], value: [] }, undo: { verb: "delete", path: ["list"] } },
+			{
+				do: { verb: "assign", path: ["list", "length"], value: 4 },
+				undo: { verb: "assign", path: ["list", "length"], value: 0 },
+			},
+			{
+				do: { verb: "link", path: ["list", 0], ref: ["keep"] },
+				undo: { verb: "delete", path: ["list", 0] },
+			},
+			{
+				do: { verb: "assign", path: ["list", 3], value: { n: 2 } },
+				undo: { verb: "delete", path: ["list", 3] },
+			},
+		]);
+		expect(state.list).toHaveLength(4);
+		expect(state.list?.[0]).toBe(state.keep);
+		expect(Object.hasOwn(state.list ?? {}, 1)).toBe(false);
+		expect(Object.hasOwn(state.list ?? {}, 2)).toBe(false);
+
+		replayUndo(state, delivered);
+		expect(Object.hasOwn(state, "list")).toBe(false);
+
+		replayDo(state, delivered);
+		expect(state.list).toHaveLength(4);
+		expect(Object.hasOwn(state.list ?? {}, 1)).toBe(false);
+		expect(Object.hasOwn(state.list ?? {}, 2)).toBe(false);
+		expect(state.list?.[0]).toBe(state.keep);
+	});
+
+	it("throws IncompatibleObjectRootsError for a non-plain root and a plain-object/plain-array mismatch", () => {
+		const incompatible = {
+			name: "IncompatibleObjectRootsError",
+			message: "opshot: diffObjects requires compatible supported object roots",
+		};
+
+		expect(() => diffObjects({}, [])).toThrow(expect.objectContaining(incompatible));
+		expect(() => diffObjects(new Map(), new Map())).toThrow(expect.objectContaining(incompatible));
+		expect(() => diffObjects(new Date(), {})).toThrow(expect.objectContaining(incompatible));
 	});
 });

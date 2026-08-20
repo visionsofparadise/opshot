@@ -147,6 +147,75 @@ describe("applyOperations", () => {
 		);
 	});
 
+	it("throws when applying a stamped do batch that is not the next versions", () => {
+		const state = createMutableState({ n: 0 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.n = 1;
+		});
+		transact(state, () => {
+			state.n = 2;
+		});
+
+		expect(() => applyOperations(state, heard[0] ?? [], "do")).toThrow(
+			"opshot: applyOperations applies only the next or previous operations",
+		);
+	});
+
+	it("throws when a batch mixes this state's stamped operations with unstamped ones", () => {
+		const state = createMutableState({ n: 0, extra: 0 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.n = 1;
+		});
+
+		const unstamped: Operation = {
+			do: createAssignMutation(["extra"], 1),
+			undo: createAssignMutation(["extra"], 0),
+		};
+
+		expect(() => applyOperations(state, [...(heard[0] ?? []), unstamped], "do")).toThrow(
+			"opshot: applyOperations applies a state's operations only to that state",
+		);
+		expect(state.n).toBe(1);
+		expect(state.extra).toBe(0);
+	});
+
+	it("throws when applyOperations runs inside a transact callback", () => {
+		const state = createMutableState({ n: 0 });
+		const ops: Array<Operation> = [{ do: createAssignMutation(["n"], 1), undo: createAssignMutation(["n"], 0) }];
+
+		expect(() =>
+			transact(state, () => {
+				applyOperations(state, ops, "do");
+			}),
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
+		expect(state.n).toBe(0);
+	});
+
+	it("an organic write to a restored node emits ops addressed at its path", () => {
+		const state = createMutableState<{ item?: { n: number } }>({ item: { n: 1 } });
+		const heard = record(state);
+
+		transact(state, () => {
+			delete state.item;
+		});
+
+		applyOperations(state, heard[0] ?? [], "undo");
+		heard.length = 0;
+
+		transact(state, () => {
+			if (state.item) state.item.n = 2;
+		});
+
+		expect(heard[0]?.map((operation) => [...operation.do.path])).toEqual([["item", "n"]]);
+		expect(state.item?.n).toBe(2);
+	});
+
 	it("undo then redo of stamped operations restores identity", () => {
 		const state = createMutableState<{ item: { n: number } }>({ item: { n: 1 } });
 		const held = state.item;
