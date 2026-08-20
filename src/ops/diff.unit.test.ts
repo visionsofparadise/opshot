@@ -987,18 +987,15 @@ describe("diffObjects: link batch construction", () => {
 	});
 
 	it("carries by value a node reachable only through an ignore()d container", () => {
-		const state = createMutableState<{
-			hold?: { n: number };
-			wrapped: { held: { n: number } };
-			slot?: { n: number };
-		}>({
-			hold: { n: 1 },
+		const state = createMutableState({
+			hold: { n: 1 } as { n: number } | undefined,
 			wrapped: ignore({ held: { n: 0 } }),
+			slot: undefined as { n: number } | undefined,
 		});
 
 		const node = state.hold!;
 
-		state.wrapped = ignore({ held: node });
+		state.wrapped = { held: node };
 		delete state.hold;
 
 		transact(state, () => undefined);
@@ -1014,18 +1011,15 @@ describe("diffObjects: link batch construction", () => {
 		expect(delivered).toHaveLength(1);
 		expect(delivered[0]?.do.verb).toBe("assign");
 
-		const replica = createMutableState<{
-			hold?: { n: number };
-			wrapped: { held: { n: number } };
-			slot?: { n: number };
-		}>({
-			hold: { n: 1 },
+		const replica = createMutableState({
+			hold: { n: 1 } as { n: number } | undefined,
 			wrapped: ignore({ held: { n: 0 } }),
+			slot: undefined as { n: number } | undefined,
 		});
 
 		const replicaNode = replica.hold!;
 
-		replica.wrapped = ignore({ held: replicaNode });
+		replica.wrapped = { held: replicaNode };
 		delete replica.hold;
 
 		applyOperations(replica, projectTransport(delivered), "do");

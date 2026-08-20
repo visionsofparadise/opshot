@@ -35,10 +35,10 @@ describe("discoverStateKeys", () => {
 		expect(discoveredKeys(root.list)).toEqual(["1"]);
 	});
 
-	it("finds a state inside an unsafeTrack'd dangerous-kind container", () => {
+	it("does not search a live unsafeTrack() wrapper for states", () => {
 		const state = createState();
 
-		expect(discoverStateKeys({ container: unsafeTrack(new PrivateHolder(state)) }).size > 0).toBe(true);
+		expect(discoveredKeys({ container: unsafeTrack(new PrivateHolder(state)) })).toEqual([]);
 	});
 
 	it("leaves a frozen nested container unsearched", () => {

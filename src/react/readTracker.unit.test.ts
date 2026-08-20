@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { proxy, unstable_getInternalStates } from "valtio/vanilla";
 
+import { createMutableState } from "../createMutableState";
 import type { DirtyIndex } from "../handle";
 import { ignore } from "../ignore";
 import { installBoundary } from "../valtio/boundary";
@@ -26,9 +27,9 @@ const createLive = <T extends object>(properties: T): T => proxy(properties);
 
 describe("ReadTracker", () => {
 	it("passes through ignore and frozen leaves without wrapping", () => {
-		const ignored = ignore({ secret: 1 });
+		const ignored = { secret: 1 };
 		const frozen = Object.freeze({ n: 1 });
-		const state = createLive({ ignored, frozen });
+		const state = createMutableState({ ignored: ignore(ignored), frozen });
 		const readTracker = createReadTracker();
 		const readProxy = readTracker.wrap(state);
 

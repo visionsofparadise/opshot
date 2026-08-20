@@ -5,6 +5,7 @@ import {
 	bindVisitedOccupancy,
 	dropOccupancyRoutesUnder,
 	isUnderIgnoredOccupancy,
+	isUnderUnsafeOccupancy,
 	markDirtyPath,
 	occupancyOmissionsOf,
 	type OccupancyVisit,
@@ -144,7 +145,8 @@ const admitEmitPath = (
 	if (isObjectLike(liveChild)) rememberPredatingRoutes(context, liveChild);
 
 	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
-	const visit = bindVisitedOccupancy(context.handle, path, liveParent, lastSegment, liveChild, sameOccupant);
+	const unsafe = isUnderUnsafeOccupancy(context.handle, path);
+	const visit = bindVisitedOccupancy(context.handle, path, liveParent, lastSegment, liveChild, sameOccupant, unsafe);
 
 	if (visit === "continue" && isObjectLike(liveChild)) {
 		rememberFirstRouteThisBatch(context, liveChild, path);
@@ -158,6 +160,7 @@ const recordDescendantRoutes = (
 	path: OperationPath,
 	visits: Set<object> = new Set(),
 	sameOccupant = false,
+	unsafe = false,
 ): void => {
 	if (!writesTables(context)) return;
 
@@ -171,23 +174,32 @@ const recordDescendantRoutes = (
 
 	visits.add(nodeKey);
 
-	if (isUnderIgnoredOccupancy(context.handle, path) || context.handle.ignoredAt.has(formatOperationPath(path))) {
-		return;
-	}
+	const nodeUnsafe = unsafe || isUnderUnsafeOccupancy(context.handle, path);
+
+	if (isUnderIgnoredOccupancy(context.handle, path)) return;
 
 	for (const entry of walkDataEntries(liveNode)) {
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
 		const childPath = appendOperationPath(path, segmentFor(liveNode, entry.key));
+		const childUnsafe = nodeUnsafe || context.handle.unsafeAt.has(formatOperationPath(childPath));
 
 		rememberPredatingRoutes(context, entry.value);
 
-		const visit = bindVisitedOccupancy(context.handle, childPath, liveNode, entry.key, entry.value, sameOccupant);
+		const visit = bindVisitedOccupancy(
+			context.handle,
+			childPath,
+			liveNode,
+			entry.key,
+			entry.value,
+			sameOccupant,
+			childUnsafe,
+		);
 
 		if (visit !== "continue") continue;
 
 		rememberFirstRouteThisBatch(context, entry.value, childPath);
-		recordDescendantRoutes(context, childPath, visits, sameOccupant);
+		recordDescendantRoutes(context, childPath, visits, sameOccupant, childUnsafe);
 	}
 };
 
@@ -421,19 +433,7 @@ const mintAssignment = (
 	after: unknown,
 	beforePresent: boolean,
 ): void => {
-	if (isSkippedPath(context, path)) {
-		if (isOmittedPath(context, path)) return;
-
-		if (beforePresent) {
-			commitOperation(context, changePair(path, before, after));
-
-			return;
-		}
-
-		commitOperation(context, additionPair(path, after));
-
-		return;
-	}
+	if (isSkippedPath(context, path)) return;
 
 	const assigned = withoutOmittedChildren(context, after, path);
 
@@ -514,13 +514,15 @@ const pushAddition = (context: DiffContext, path: OperationPath, after: unknown)
 
 	if (visit === "skip" && isOmittedPath(context, path)) return;
 
+	if (context.handle !== undefined && isUnderIgnoredOccupancy(context.handle, path)) return;
+
 	markChangedPath(context, path);
 
 	mintAssignment(context, path, undefined, after, false);
 };
 
 const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): void => {
-	if (isSkippedPath(context, path) && isOmittedPath(context, path)) return;
+	if (isSkippedPath(context, path)) return;
 
 	if (isObjectLike(before) && context.linksEnabled) {
 		rememberPredatingRoutes(context, before);
@@ -772,6 +774,8 @@ const diffValue = (context: DiffContext, before: unknown, after: unknown, path: 
 		if (isOmittedPath(context, path) || Object.is(before, after)) return;
 
 		if (isObjectLike(before) && isObjectLike(after) && sharesStorageIdentity(before, after)) return;
+
+		if (context.handle !== undefined && isUnderIgnoredOccupancy(context.handle, path)) return;
 
 		markChangedPath(context, path);
 

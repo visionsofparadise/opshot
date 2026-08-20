@@ -1,11 +1,12 @@
 import { getUntracked } from "proxy-compare";
 import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
-import { handlesOf } from "../handle";
+import { handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget } from "../identity";
-import { pendingIgnore } from "../ignore";
-import { discardPendingOccupancy, recordPendingOccupancy } from "../occupancy";
+import { isUnderIgnoredOccupancy, isUnderUnsafeOccupancy } from "../occupancy";
+import { isPlainArray } from "../ops/cloneValue";
+import { appendOperationPath, createOperationPath, type OperationPath } from "../ops/path";
+import { isCanonicalArrayIndexString } from "../ops/predicates";
 import { peelReadProxy } from "../peelReadProxy";
-import { pendingUnsafe } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
 import { nonWritablePropertyError, rejectionError, snapshotDonationError } from "./boundaryErrors";
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
@@ -15,16 +16,89 @@ const { proxyStateMap, proxyCache } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
-const setTargetStack = new Array<object>();
+interface SetFrame {
+	readonly target: object;
+	readonly prop: string | symbol;
+}
 
-const currentSetParentOf = (): object | undefined => setTargetStack[setTargetStack.length - 1];
+const setFrameStack = new Array<SetFrame>();
 
-const certifyAdmission = (value: object, path?: ReadonlyArray<string>): AdmissionLane => {
-	if (pendingIgnore.has(value) || pendingUnsafe.has(value)) return admissionDecision(value).lane;
+const currentSetParentOf = (): object | undefined => setFrameStack[setFrameStack.length - 1]?.target;
 
+const dataPathKey = (path: ReadonlyArray<string>): string => (path.length === 0 ? "/" : `/${path.join("/")}`);
+
+const handleOwning = (target: object): Handle | undefined => {
+	const handles = handlesOf(target);
+	const raw = rawTargetOf(target);
+
+	for (const handle of handles) {
+		if (rawTargetOf(handle.proxy.root) === raw) return handle;
+	}
+
+	return handles[0];
+};
+
+const segmentForProp = (parent: object, prop: string): string | number =>
+	isPlainArray(parent) && isCanonicalArrayIndexString(prop) ? Number(prop) : prop;
+
+const pathOfCurrentAssignment = (): { handle: Handle; path: OperationPath } | undefined => {
+	const current = setFrameStack[setFrameStack.length - 1];
+
+	if (current === undefined || typeof current.prop !== "string") return undefined;
+
+	const currentRaw = rawTargetOf(current.target);
+
+	for (const handle of handlesOf(current.target)) {
+		const routes = handle.routes.get(currentRaw);
+
+		if (routes !== undefined && routes.length > 0) {
+			const route = routes[0];
+
+			if (route === undefined) continue;
+
+			return { handle, path: appendOperationPath(route, segmentForProp(current.target, current.prop)) };
+		}
+
+		if (rawTargetOf(handle.proxy.root) === currentRaw) {
+			return { handle, path: createOperationPath([segmentForProp(current.target, current.prop)]) };
+		}
+	}
+
+	let owner: Handle | undefined;
+	let ownerIndex = 0;
+
+	for (let index = 0; index < setFrameStack.length; index++) {
+		const frame = setFrameStack[index];
+
+		if (frame === undefined) continue;
+
+		const found = handleOwning(frame.target);
+
+		if (found !== undefined) {
+			owner = found;
+			ownerIndex = index;
+		}
+	}
+
+	if (owner === undefined) return undefined;
+
+	const segments = new Array<string | number>();
+
+	for (let index = ownerIndex; index < setFrameStack.length; index++) {
+		const frame = setFrameStack[index];
+
+		if (frame === undefined || typeof frame.prop !== "string") return undefined;
+
+		segments.push(segmentForProp(frame.target, frame.prop));
+	}
+
+	return { handle: owner, path: createOperationPath(segments) };
+};
+
+const certifyAdmission = (value: object, path?: ReadonlyArray<string>, unsafe = false): AdmissionLane => {
 	const decision = admissionDecision(value);
 
-	if (decision.lane === "dangerous") throw rejectionError(value, decision.kind, path);
+	if (decision.lane === "dangerous" && !unsafe) throw rejectionError(value, decision.kind, path);
 
 	return decision.lane;
 };
@@ -46,58 +120,63 @@ const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 
 export type DataPathWalkMode = "admission" | "rootsOnly";
 
-const walkDataPaths = (value: unknown, path: Array<string>, visits: Set<object>, mode: DataPathWalkMode): void => {
+const walkDataPaths = (
+	value: unknown,
+	path: Array<string>,
+	visits: Set<object>,
+	mode: DataPathWalkMode,
+	ignoredAt: ReadonlySet<string>,
+	unsafeAt: ReadonlySet<string>,
+	ignored: boolean,
+	unsafe: boolean,
+): void => {
 	if (typeof value !== "object" || value === null) return;
 
 	if (visits.has(value)) return;
 
 	visits.add(value);
 
-	if (pendingIgnore.has(value)) return;
+	if (ignored) return;
 
 	for (const entry of walkDataEntries(value)) {
+		const childPath = [...path, entry.key];
+		const childKey = dataPathKey(childPath);
+		const childIgnored = ignoredAt.has(childKey);
+		const childUnsafe = unsafe || unsafeAt.has(childKey);
 		const child: unknown = entry.value;
 
-		if (
-			mode === "admission" &&
-			classifyValue(value) === "cleanClass" &&
-			!pendingUnsafe.has(value) &&
-			typeof child === "function"
-		)
-			throw rejectionError(value, "cleanClass", [...path, entry.key]);
+		if (mode === "admission" && classifyValue(value) === "cleanClass" && !unsafe && typeof child === "function")
+			throw rejectionError(value, "cleanClass", childPath);
 
 		if (typeof child !== "object" || child === null) continue;
 
-		const childPath = [...path, entry.key];
-
 		if (!entry.writable) {
-			if (mode === "admission" && !pendingIgnore.has(child) && admissionLane(child) !== "untracked")
+			if (mode === "admission" && !childIgnored && !childUnsafe && admissionLane(child) !== "untracked")
 				throw nonWritablePropertyError(child, childPath);
 
 			continue;
 		}
 
-		if (pendingIgnore.has(child)) continue;
+		if (childIgnored) continue;
 
-		if (proxyStateMap.has(child)) {
-			continue;
-		}
+		if (proxyStateMap.has(child)) continue;
 
 		if (mode === "admission") {
-			if (pendingUnsafe.has(child)) {
-				walkDataPaths(child, childPath, visits, mode);
+			if (childUnsafe) {
+				walkDataPaths(child, childPath, visits, mode, ignoredAt, unsafeAt, childIgnored, childUnsafe);
 
 				continue;
 			}
 
-			if (certifyAdmission(child, childPath) === "tracked") walkDataPaths(child, childPath, visits, mode);
+			if (certifyAdmission(child, childPath, childUnsafe) === "tracked")
+				walkDataPaths(child, childPath, visits, mode, ignoredAt, unsafeAt, childIgnored, childUnsafe);
 
 			continue;
 		}
 
 		if (admissionLane(child) === "untracked") continue;
 
-		walkDataPaths(child, childPath, visits, mode);
+		walkDataPaths(child, childPath, visits, mode, ignoredAt, unsafeAt, childIgnored, childUnsafe);
 	}
 };
 
@@ -106,8 +185,19 @@ export const assertSafeDataPaths = (
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode = "admission",
+	ignoredAt: ReadonlySet<string> = new Set(),
+	unsafeAt: ReadonlySet<string> = new Set(),
 ): void => {
-	walkDataPaths(value, path, visits, mode);
+	walkDataPaths(
+		value,
+		path,
+		visits,
+		mode,
+		ignoredAt,
+		unsafeAt,
+		ignoredAt.has(dataPathKey(path)),
+		unsafeAt.has(dataPathKey(path)),
+	);
 };
 
 const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
@@ -168,16 +258,23 @@ const refusesWrite = (target: object, property: string | symbol, value: unknown)
 	return !Object.isExtensible(target);
 };
 
-export function canProxy(value: unknown, parentTarget?: object): boolean {
+export function canProxy(value: unknown, parentTarget?: object, unsafe = false): boolean {
 	if (typeof value !== "object" || value === null) return false;
-
-	if (pendingIgnore.has(value)) return false;
 
 	if (admissionLane(value) === "tracked") return true;
 
-	if (pendingUnsafe.has(value)) return true;
+	if (unsafe) return true;
 
 	if (proxyStateMap.has(value)) return true;
+
+	const rootHandle = handleOwning(value);
+
+	if (
+		rootHandle !== undefined &&
+		rawTargetOf(rootHandle.proxy.root) === rawTargetOf(value) &&
+		(!rootHandle.strict || rootHandle.unsafeAt.has("/"))
+	)
+		return true;
 
 	if (parentTarget === undefined) return false;
 
@@ -193,6 +290,18 @@ class MissingMutationTrapError extends Error {
 	}
 }
 
+const canProxyCurrentAssignment = (value: unknown): boolean => {
+	const assignment = pathOfCurrentAssignment();
+
+	if (assignment !== undefined) {
+		if (isUnderIgnoredOccupancy(assignment.handle, assignment.path)) return false;
+
+		return canProxy(value, currentSetParentOf(), isUnderUnsafeOccupancy(assignment.handle, assignment.path));
+	}
+
+	return canProxy(value, currentSetParentOf());
+};
+
 let installed = false;
 
 export function installBoundary(): void {
@@ -200,7 +309,7 @@ export function installBoundary(): void {
 
 	installed = true;
 
-	unstable_replaceInternalFunction("canProxy", () => (value) => canProxy(value, currentSetParentOf()));
+	unstable_replaceInternalFunction("canProxy", () => (value) => canProxyCurrentAssignment(value));
 
 	unstable_replaceInternalFunction("createSnapshot", () => createSnapshotPreservingAccessors);
 
@@ -220,62 +329,30 @@ export function installBoundary(): void {
 
 					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 
-					const previous: unknown = Reflect.get(target, prop, receiver);
-
-					setTargetStack.push(target);
+					setFrameStack.push({ target, prop });
 
 					try {
 						if (typeof resolved === "object" && resolved !== null) {
 							if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
-							const ignoreWrap = pendingIgnore.has(resolved);
-							const unsafeWrap = !ignoreWrap && pendingUnsafe.has(resolved);
-							const alreadyTracked = proxyStateMap.has(resolved) || proxyCache.has(resolved);
-
 							if (refusesWrite(target, prop, resolved)) return false;
 
-							const instrumented = !alreadyTracked && canProxy(resolved, target) ? proxy(resolved) : resolved;
+							const alreadyTracked = proxyStateMap.has(resolved) || proxyCache.has(resolved);
+							const instrumented =
+								!alreadyTracked && canProxyCurrentAssignment(resolved) ? proxy(resolved) : resolved;
 
-							const result = defaultSet(target, prop, instrumented, receiver);
-
-							if (result) discardPendingOccupancy(target, prop);
-
-							if (ignoreWrap || unsafeWrap) {
-								const stored: unknown = Reflect.get(target, prop);
-
-								if (result && typeof stored === "object" && stored !== null) {
-									recordPendingOccupancy(target, prop, rawTargetOf(stored), ignoreWrap ? "ignore" : "unsafe");
-								}
-
-								if (ignoreWrap) pendingIgnore.delete(resolved);
-
-								if (unsafeWrap) pendingUnsafe.delete(resolved);
-
-								if (Object.is(previous, stored) || Object.is(previous, resolved)) {
-									notifyUpdate(["set", [prop], resolved, previous]);
-								}
-							}
-
-							return result;
+							return defaultSet(target, prop, instrumented, receiver);
 						}
 
 						if (refusesWrite(target, prop, resolved)) return false;
 
-						const result = defaultSet(target, prop, resolved, receiver);
-
-						if (result) discardPendingOccupancy(target, prop);
-
-						return result;
+						return defaultSet(target, prop, resolved, receiver);
 					} finally {
-						setTargetStack.pop();
+						setFrameStack.pop();
 					}
 				},
 				deleteProperty(target, prop) {
-					const result = defaultDelete(target, prop);
-
-					if (result) discardPendingOccupancy(target, prop);
-
-					return result;
+					return defaultDelete(target, prop);
 				},
 				defineProperty(target, prop, descriptor) {
 					return Reflect.defineProperty(target, prop, descriptor);

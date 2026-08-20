@@ -1,7 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { pendingIgnore } from "../ignore";
-import { pendingUnsafe } from "../unsafeTrack";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import type { OperationPath } from "./path";
@@ -16,14 +14,10 @@ export const isPlainObject = (value: unknown): value is Record<string, unknown> 
 	typeof value === "object" &&
 	value !== null &&
 	!Array.isArray(value) &&
-	!pendingIgnore.has(value) &&
 	(admissionLane(value) === "tracked" || isInstrumented(value));
 
 const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
-	typeof value === "object" &&
-	value !== null &&
-	!pendingIgnore.has(value) &&
-	(admissionLane(value) === "tracked" || isInstrumented(value));
+	typeof value === "object" && value !== null && (admissionLane(value) === "tracked" || isInstrumented(value));
 
 export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path: OperationPath): unknown => {
 	if (!isCloneable(value)) return value;
@@ -52,8 +46,6 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 			Object.defineProperty(clone, key, descriptor);
 		}
 	}
-
-	if (!array && admissionLane(value) === "dangerous") pendingUnsafe.add(clone);
 
 	return clone;
 };

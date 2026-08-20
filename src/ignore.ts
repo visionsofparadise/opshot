@@ -1,23 +1,21 @@
-export const pendingIgnore = new WeakSet<object>();
-
-declare const ignoredMarker: unique symbol;
+export const ignoreMarker: unique symbol = Symbol("opshot.ignore");
 
 /**
- * A value wrapped with `ignore`.
+ * A factory-argument marker wrapping `T`.
  *
  * @typeParam T - Value type.
  */
-export type Ignored<T extends object> = T & { readonly [ignoredMarker]: true };
+export interface Ignored<T> {
+	readonly [ignoreMarker]: T;
+}
 
 /**
- * Keeps a value out of reactivity and ops.
+ * Marks a factory-argument value so the edge at that path is untracked in that state.
  *
  * @typeParam T - Value type.
  * @param value - Value to ignore.
- * @returns The same value.
+ * @returns A marker consumed at create.
  */
-export function ignore<T extends object>(value: T): Ignored<T> {
-	pendingIgnore.add(value);
-
-	return value as Ignored<T>;
+export function ignore<T>(value: T): Ignored<T> {
+	return { [ignoreMarker]: value };
 }

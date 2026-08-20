@@ -19,7 +19,7 @@ export interface MutableNodeOptions {
 	readonly emitOn?: EmissionScheduler;
 
 	/**
-	 * When false, tracks values that would otherwise be rejected. Defaults to true.
+	 * When true, throws at a dangerous edge, at the cause. Defaults to true.
 	 */
 	readonly strict?: boolean;
 }

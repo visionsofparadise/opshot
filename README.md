@@ -95,10 +95,10 @@ const Player = () => {
 	const player = useMutableState<PlayerState>({
 		position: 0,
 
-		// ignore() keeps a value out of reactivity and ops.
+		// ignore() on a value in the factory argument makes the edge at that path untracked.
 		element: ignore(new Audio()),
 
-		// unsafeTrack() tracks all the values it can, even if there is weird behaviour
+		// unsafeTrack() on a value in the factory argument disables strict at and under that path.
 		queue: unsafeTrack(new Playlist()),
 
 		seek(position: number) {
@@ -125,7 +125,9 @@ It can't track:
 - Own function properties on class instances
 - Non-writable properties that hold an object
 
-Use `ignore` or `unsafeTrack` when dealing with these.
+`strict: true` throws at a dangerous edge, at the cause.
+
+Use `ignore` on a value in the factory argument to make the edge at that path untracked. Use `unsafeTrack` on a value in the factory argument to disable strict at and under that path.
 
 ## Tracked collections
 

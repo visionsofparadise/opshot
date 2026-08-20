@@ -1,6 +1,5 @@
 import { createMutableState } from "./createMutableState";
-import { isSameIdentity } from "./identity";
-import { ignore } from "./ignore";
+import { ignore, ignoreMarker } from "./ignore";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
@@ -17,45 +16,62 @@ describe("ignore", () => {
 		expect(state.element).toBe(element);
 	});
 
-	it("A.foo = ignore(obj) is untracked on A and B.foo = obj is ordinary", () => {
-		const obj = { n: 1 };
-		const stateA = createMutableState<{ foo: { n: number } | null; tick: number }>({ foo: null, tick: 0 });
-		const stateB = createMutableState<{ foo: { n: number } | null }>({ foo: null });
-		const heardA = new Array<Array<Operation>>();
-		const heardB = new Array<Array<Operation>>();
+	it("leaves an ignore(2) factory edge untracked", () => {
+		const state = createMutableState({ n: ignore(2), tick: 0 });
+		const heard = new Array<Array<Operation>>();
 
-		subscribe(stateA, (ops) => heardA.push([...ops]));
-		subscribe(stateB, (ops) => heardB.push([...ops]));
+		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(stateA, () => {
-			stateA.foo = ignore(obj);
-		});
-		transact(stateB, () => {
-			stateB.foo = obj;
+		transact(state, () => {
+			state.n = 9;
+			state.tick = 1;
 		});
 
-		expect(stateA.foo).toBe(obj);
-		expect(stateB.foo !== null && isSameIdentity(stateB.foo, obj)).toBe(true);
+		expect(state.n).toBe(9);
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
+	});
 
-		heardA.length = 0;
-		heardB.length = 0;
+	it("keeps a create-time ignored path untracked after reassignment", () => {
+		const first = { n: 1 };
+		const second = { n: 2 };
+		const state = createMutableState({ foo: ignore(first), tick: 0 });
+		const heard = new Array<Array<Operation>>();
 
-		transact(stateA, () => {
-			stateA.foo!.n = 5;
-			stateA.tick = 1;
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.foo = second;
+			state.tick = 1;
 		});
 
-		expect(shapeOps(heardA[0] ?? [])).toEqual([
+		expect(state.foo).toBe(second);
+		expect(shapeOps(heard[0] ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
 		]);
 
-		heardB.length = 0;
+		heard.length = 0;
 
-		transact(stateB, () => {
-			stateB.foo!.n = 7;
+		transact(state, () => {
+			state.foo.n = 5;
+			state.tick = 2;
 		});
 
-		expect(heardB).toHaveLength(1);
-		expect(heardB[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["foo", "n"], value: 7 });
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 2 }, undo: { verb: "assign", path: ["tick"], value: 1 } },
+		]);
+	});
+
+	it("lands a live ignore() assignment as a ride-along-bearing object", () => {
+		const obj = { n: 1 };
+		const state = createMutableState<{ foo: unknown }>({ foo: null });
+
+		transact(state, () => {
+			state.foo = ignore(obj);
+		});
+
+		expect(state.foo).not.toBe(obj);
+		expect(typeof state.foo === "object" && state.foo !== null && Object.hasOwn(state.foo, ignoreMarker)).toBe(true);
 	});
 });

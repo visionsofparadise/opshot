@@ -1,6 +1,8 @@
-import { createMutableState } from "../createMutableState";
+import { createMutableState, type Unmarked } from "../createMutableState";
+import { ignore, type Ignored } from "../ignore";
 import { type Operation, type OperationPath } from "../index";
 import { transact } from "../transact/transact";
+import { unsafeTrack, type UnsafeTracked } from "../unsafeTrack";
 
 interface Doc {
 	count: number;
@@ -28,5 +30,18 @@ describe("typing", () => {
 		transact(state, () => {
 			state.view = "detail";
 		});
+	});
+
+	it("collapses factory-argument markers in the return type", () => {
+		const state = createMutableState({
+			count: ignore(0),
+			lookup: unsafeTrack(new Map<string, number>()),
+		});
+
+		expectTypeOf(state).toEqualTypeOf<{ count: number; lookup: Map<string, number> }>();
+		expectTypeOf<Unmarked<{ count: Ignored<number>; lookup: UnsafeTracked<Map<string, number>> }>>().toEqualTypeOf<{
+			count: number;
+			lookup: Map<string, number>;
+		}>();
 	});
 });

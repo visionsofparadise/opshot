@@ -28,8 +28,8 @@ export interface Handle {
 	emitOn?: EmissionScheduler;
 	strict: boolean;
 	onError?: (error: unknown) => void;
-	unsafeAt: Map<string, object>;
-	ignoredAt: Map<string, object>;
+	unsafeAt: ReadonlySet<string>;
+	ignoredAt: ReadonlySet<string>;
 	members: WeakSet<object>;
 	routes: WeakMap<object, ReadonlyArray<OperationPath>>;
 	lastDirty?: DirtyIndex;

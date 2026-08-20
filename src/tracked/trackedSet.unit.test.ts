@@ -37,8 +37,8 @@ describe("TrackedSet", () => {
 			x = 1;
 		}
 
-		const member = ignore(new Point());
-		const state = createMutableState({ set: new TrackedSet([member]) });
+		const member = new Point();
+		const state = createMutableState({ set: ignore(new TrackedSet([member])) });
 		const heard = record(state);
 		const held = [...state.set][0];
 

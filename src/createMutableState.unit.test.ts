@@ -124,17 +124,12 @@ describe("createMutableState", () => {
 	});
 
 	it("carries an ignore() field through without producing ops for its internals", () => {
-		interface Log {
-			index: number;
-			readonly entries: Array<string>;
-			append: (entry: string) => void;
-		}
-
-		const state = createMutableState<Log>({
+		const entries = new Array<string>();
+		const state = createMutableState({
 			index: 0,
-			entries: ignore(new Array<string>()),
-			append(entry) {
-				this.entries.push(entry);
+			entries: ignore(entries),
+			append(entry: string) {
+				entries.push(entry);
 				this.index += 1;
 			},
 		});

@@ -1,4 +1,4 @@
-import { createMutableState } from "./createMutableState";
+import { createMutableState, type Unmarked } from "./createMutableState";
 import type { GroupListeners } from "./emit/emitterRegistry";
 import type { MutableNodeOptions } from "./settings";
 
@@ -19,7 +19,7 @@ export interface Group {
 	 * @param options - Creation options.
 	 * @returns The state.
 	 */
-	createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): T;
+	createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): Unmarked<T>;
 }
 
 class UnknownGroupError extends Error {
@@ -65,7 +65,7 @@ export function createGroup(parent?: Group): Group {
 
 	const listeners: GroupListeners = new Map();
 	const group: Group = {
-		createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): T {
+		createMutableState<T extends object>(properties: T, options?: MutableNodeOptions): Unmarked<T> {
 			return createMutableState(properties, { ...options, group });
 		},
 	};

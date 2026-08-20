@@ -1,7 +1,5 @@
-import { pendingIgnore } from "../ignore";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
-import { pendingUnsafe } from "../unsafeTrack";
 import { walkDataEntries, type DataEntry } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 
@@ -45,9 +43,7 @@ const childRole = (value: unknown, writable: boolean, mode: WalkMode): ChildRole
 
 	if (isState(value)) return "state";
 
-	if (pendingIgnore.has(value)) return "skip";
-
-	if (pendingUnsafe.has(value) || admissionLane(value) === "tracked") return "descend";
+	if (admissionLane(value) === "tracked") return "descend";
 
 	return "skip";
 };
@@ -151,9 +147,7 @@ export function discoverStateKeys(container: object): ReadonlySet<string> {
 
 	if (isReactOwnNode(container)) return noStateKeys;
 
-	if (pendingIgnore.has(container)) return noStateKeys;
-
-	if (admissionLane(container) !== "tracked" && !pendingUnsafe.has(container)) return noStateKeys;
+	if (admissionLane(container) !== "tracked") return noStateKeys;
 
 	const pass = createDiscoveryPass();
 

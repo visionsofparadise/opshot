@@ -247,8 +247,8 @@ describe("boundary: dangerous", () => {
 
 describe("boundary: ignore", () => {
 	it("makes the assigned edge untracked", () => {
-		const lookup = ignore(new Map<string, number>());
-		const state = createMutableState({ lookup, tick: 0 });
+		const lookup = new Map<string, number>();
+		const state = createMutableState({ lookup: ignore(lookup), tick: 0 });
 		const emissions = recordEmissions(state);
 
 		expect(state.lookup).toBe(lookup);
@@ -261,20 +261,20 @@ describe("boundary: ignore", () => {
 		expect(lookup.get("hits")).toBe(1);
 	});
 
-	it("makes the edge untracked at the assigning line", () => {
-		interface Box {
-			box: Map<string, number> | null;
-		}
-
-		const state = createMutableState<Box>({ box: null });
+	it("keeps a create-time ignored path untracked after a later assign", () => {
+		const state = createMutableState({ box: ignore(new Map([["k", 1]])), tick: 0 });
 		const emissions = recordEmissions(state);
-		const kept = ignore(new Map([["k", 1]]));
+		const kept = new Map([["k", 2]]);
 
 		transact(state, () => {
 			state.box = kept;
+			state.tick = 1;
 		});
 
 		expect(emissions).toHaveLength(1);
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
 		expect(state.box).toBe(kept);
 	});
 
@@ -282,22 +282,14 @@ describe("boundary: ignore", () => {
 		const lookup = new Map<string, number>();
 
 		expect(() => createMutableState({ kept: ignore({ lookup }) })).not.toThrow();
-
-		const state = createMutableState<{ box: unknown }>({ box: null });
-
-		transact(state, () => {
-			state.box = ignore({ lookup });
-		});
-
-		expect((state.box as { lookup: Map<string, number> }).lookup).toBe(lookup);
 	});
 
 	it("tracks a child reached by a separately assigned tracked edge", () => {
 		const child = { n: 1 };
 		const ignored = { child };
-		const state = createMutableState<{ ignored: typeof ignored; tracked?: { n: number } }>({
+		const state = createMutableState({
 			ignored: ignore(ignored),
-		});
+		}) as { ignored: typeof ignored; tracked?: { n: number } };
 		const emissions = recordEmissions(state);
 
 		transact(state, () => {

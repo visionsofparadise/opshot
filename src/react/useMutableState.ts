@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { snapshot } from "valtio/vanilla";
-import { createMutableState, type MutableStateOptions } from "../createMutableState";
+import { createMutableState, type MutableStateOptions, type Unmarked } from "../createMutableState";
 import { handlesOf, type Handle } from "../handle";
 import { subscribe } from "../subscribe";
 import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
@@ -20,9 +20,15 @@ interface MutableStateHolder<T extends object> {
  * @param options - Creation options.
  * @returns The state.
  */
-export function useMutableState<T extends object>(properties: (() => T) | T, options?: MutableStateOptions): T {
-	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<T> => ({
-		writeProxy: createMutableState(typeof properties === "function" ? properties() : properties, options),
+export function useMutableState<T extends object>(
+	properties: (() => T) | T,
+	options?: MutableStateOptions,
+): Unmarked<T> {
+	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<Unmarked<T> & object> => ({
+		writeProxy: createMutableState(
+			typeof properties === "function" ? properties() : properties,
+			options,
+		) as Unmarked<T> & object,
 		readTracker: createReadTracker(),
 	}));
 	const [, bump] = useReducer((value: number) => value + 1, 0);

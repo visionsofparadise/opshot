@@ -1,23 +1,21 @@
-export const pendingUnsafe = new WeakSet<object>();
-
-declare const unsafeTrackedBrand: unique symbol;
+export const unsafeMarker: unique symbol = Symbol("opshot.unsafe");
 
 /**
- * A value wrapped with `unsafeTrack`.
+ * A factory-argument marker wrapping `T`.
  *
  * @typeParam T - Value type.
  */
-export type UnsafeTracked<T extends object> = T & { readonly [unsafeTrackedBrand]: true };
+export interface UnsafeTracked<T> {
+	readonly [unsafeMarker]: T;
+}
 
 /**
- * Tracks a value that would otherwise be rejected.
+ * Marks a factory-argument value so strict is disabled at and under that path.
  *
  * @typeParam T - Value type.
- * @param value - Value to track.
- * @returns The same value.
+ * @param value - Value to track without strict.
+ * @returns A marker consumed at create.
  */
-export function unsafeTrack<T extends object>(value: T): UnsafeTracked<T> {
-	pendingUnsafe.add(value);
-
-	return value as UnsafeTracked<T>;
+export function unsafeTrack<T>(value: T): UnsafeTracked<T> {
+	return { [unsafeMarker]: value };
 }
