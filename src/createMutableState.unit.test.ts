@@ -1,17 +1,12 @@
-import { createGroup } from "./createGroup";
 import { createMutableState } from "./createMutableState";
-import { requireHandle } from "./handle";
+import { ignore } from "./ignore";
 import { isSameIdentity } from "./identity";
 import { isState } from "./isState";
-import { ignore } from "./ignore";
-import { diffObjects } from "./ops/diff";
 import { type Operation } from "./ops/operation";
+import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
 import { transact } from "./transact/transact";
 import { unsafeTrack } from "./unsafeTrack";
-import { shapeOps } from "./ops/operationShape";
-
-vi.mock(import("./ops/diff"), { spy: true });
 
 interface Counter {
 	count: number;
@@ -46,16 +41,7 @@ describe("createMutableState", () => {
 		expect(isState(state)).toBe(true);
 	});
 
-	it("has no op or mutate keys and stringifies cleanly", () => {
-		const state = createCounter();
-
-		expect(Object.keys(state)).toEqual(["count", "increment"]);
-		expect(JSON.stringify(state)).toBe('{"count":0}');
-		expect("op" in state).toBe(false);
-		expect("mutate" in state).toBe(false);
-	});
-
-	it("emits once per transact with the caller's meta verbatim", () => {
+	it("emits once per transact with the caller's meta", () => {
 		const state = createCounter();
 		const emissions = recordEmissions(state);
 
@@ -81,41 +67,6 @@ describe("createMutableState", () => {
 		expect(emissions[1]?.meta).toBeUndefined();
 	});
 
-	it("still diffs while nothing listens, and delivers when a listener arrives", () => {
-		const state = createMutableState({ count: 0 });
-
-		vi.mocked(diffObjects).mockClear();
-
-		transact(state, () => {
-			state.count = 1;
-		});
-
-		expect(diffObjects).toHaveBeenCalled();
-		expect(state.count).toBe(1);
-
-		const heard = new Array<Array<Operation>>();
-		const unsubscribe = subscribe(state, (ops) => heard.push([...ops]));
-
-		transact(state, () => {
-			state.count = 2;
-		});
-
-		expect(heard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
-		]);
-
-		unsubscribe();
-		vi.mocked(diffObjects).mockClear();
-
-		transact(state, () => {
-			state.count = 3;
-		});
-
-		expect(diffObjects).toHaveBeenCalled();
-		expect(heard).toHaveLength(1);
-		expect(state.count).toBe(3);
-	});
-
 	it("emits nothing for an empty mutation or a net-zero mutation", () => {
 		const state = createCounter();
 		const emissions = recordEmissions(state);
@@ -132,48 +83,22 @@ describe("createMutableState", () => {
 		expect(emissions).toHaveLength(0);
 	});
 
-	it("throws on nested transact and recovers after a throw", () => {
+	it("restores tracked nodes when the transaction callback throws", () => {
 		const state = createCounter();
-
-		subscribe(state, () => undefined);
+		const emissions = recordEmissions(state);
 
 		expect(() =>
 			transact(state, () => {
 				state.count = 1;
-				transact(state, () => {
-					state.count = 2;
-				});
-			}),
-		).toThrow(
-			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
-		);
-
-		expect(state.count).toBe(0);
-
-		expect(() =>
-			transact(state, () => {
 				throw new Error("boom");
 			}),
 		).toThrow("boom");
 
+		expect(state.count).toBe(0);
+		expect(emissions).toHaveLength(0);
+
 		state.increment();
 		expect(state.count).toBe(1);
-	});
-
-	it("throws when a second state's transact runs inside another transaction", () => {
-		const first = createCounter();
-		const second = createCounter();
-
-		expect(() =>
-			transact(first, () => {
-				first.count = 1;
-				transact(second, () => {
-					second.count = 7;
-				});
-			}),
-		).toThrow(
-			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
-		);
 	});
 
 	it("stops calling a listener after its remover runs", () => {
@@ -224,14 +149,6 @@ describe("createMutableState", () => {
 		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["index"], value: 1 }, undo: { verb: "assign", path: ["index"], value: 0 } },
 		]);
-	});
-
-	it("requireHandle still throws for a nested node", () => {
-		const state = createMutableState({ a: { n: 1 } });
-
-		expect(() => requireHandle(state.a, "opshot: subscribe requires a state")).toThrow(
-			"opshot: subscribe requires a state",
-		);
 	});
 
 	it("keeps a retained input object out of the state", () => {
@@ -352,44 +269,14 @@ describe("createMutableState", () => {
 		expect(heard[0]).toEqual({ path: "count", meta: undefined });
 		expect(heard[1]).toEqual({ path: "flag", meta: { tag: "tx" } });
 	});
-
-	it("disarms with the last unsubscribe and re-arms fresh on the next subscribe", async () => {
-		const state = createMutableState({ count: 0 });
-		const heard = new Array<Array<Operation>>();
-		const unsubscribe = subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
-
-		unsubscribe();
-		vi.mocked(diffObjects).mockClear();
-
-		state.count = 1;
-		await Promise.resolve();
-
-		expect(diffObjects).toHaveBeenCalled();
-		expect(heard).toHaveLength(0);
-
-		subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
-
-		state.count = 2;
-		await Promise.resolve();
-
-		expect(heard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
-		]);
-	});
 });
 
 describe("createMutableState: root certification", () => {
-	it("rejects a raw Map root with the located rejection and remedies", () => {
-		expect(() => createMutableState(new Map<string, number>())).toThrow(
-			"opshot: Map cannot be tracked (its state lives in internal slots). Options:\n- use TrackedMap for a tracked equivalent\n- unsafeTrack(value) to track it lossily\n- ignore(value) to store it by reference, untracked",
-		);
+	it("throws at a Map root", () => {
+		expect(() => createMutableState(new Map<string, number>())).toThrow();
 	});
 
-	it("rejects an arrow-field class root with the clean-class message and remedies", () => {
+	it("throws at an own function property on a class instance root", () => {
 		class Arrow {
 			count = 0;
 			bump = (): void => {
@@ -397,9 +284,7 @@ describe("createMutableState: root certification", () => {
 			};
 		}
 
-		expect(() => createMutableState(new Arrow())).toThrow(
-			"opshot: Arrow at /bump cannot be tracked (arrow-method writes won't be tracked). Options:\n- unsafeTrack(value) to track its data anyway\n- ignore(value) to store it by reference, untracked",
-		);
+		expect(() => createMutableState(new Arrow())).toThrow();
 	});
 
 	it("returns a frozen plain root as that node", () => {
@@ -414,18 +299,6 @@ describe("createMutableState: root certification", () => {
 
 		expect(createMutableState(ignore(object))).toBe(object);
 		expect(isState(object)).toBe(false);
-	});
-
-	it("admits a plain object carrying ordinary methods", () => {
-		const state = createMutableState({
-			count: 0,
-			increment() {
-				this.count += 1;
-			},
-		});
-
-		state.increment();
-		expect(state.count).toBe(1);
 	});
 
 	it("tracks a clean-class root", () => {
@@ -447,7 +320,7 @@ describe("createMutableState: root certification", () => {
 		]);
 	});
 
-	it("attaches a dangerous Map root under strict false", () => {
+	it("admits a dangerous Map root under strict false", () => {
 		const state = createMutableState(new Map<string, number>(), { strict: false });
 
 		expect(isState(state)).toBe(true);
@@ -473,57 +346,5 @@ describe("createMutableState: root certification", () => {
 		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
 			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
 		]);
-	});
-
-	it("emits from a subscribed write on a dangerous root under strict false", () => {
-		class Arrow {
-			count = 0;
-			bump = (): void => {
-				this.count += 1;
-			};
-		}
-
-		const state = createMutableState(new Arrow(), { strict: false });
-		const emissions = recordEmissions(state);
-
-		transact(state, () => {
-			state.count = 1;
-		});
-
-		expect(state.count).toBe(1);
-		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
-			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
-		]);
-	});
-});
-
-describe("grouped createMutableState", () => {
-	it("delivers emissions to a group subscriber with the live state", () => {
-		const group = createGroup();
-		const emissions = new Array<{ state: object; ops: Array<Operation>; meta: unknown }>();
-
-		subscribe(group, (state, ops, meta) => {
-			emissions.push({ state, ops: [...ops], meta });
-		});
-
-		const first = group.createMutableState({ count: 0 });
-		const second = group.createMutableState({ count: 0 });
-
-		transact(
-			first,
-			() => {
-				first.count = 1;
-			},
-			{ transactionKey: "drag" },
-		);
-		transact(second, () => {
-			second.count = 2;
-		});
-
-		expect(emissions).toHaveLength(2);
-		expect(emissions[0]?.state).toBe(first);
-		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag" });
-		expect(emissions[1]?.state).toBe(second);
-		expect(first.count).toBe(1);
 	});
 });

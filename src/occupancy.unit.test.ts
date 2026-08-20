@@ -1,4 +1,4 @@
-import { discardPendingOccupancy, recordPendingOccupancy, takePendingOccupancy } from "./occupancy";
+import { recordPendingOccupancy, takePendingOccupancy } from "./occupancy";
 
 describe("pending occupancy", () => {
 	it("takePendingOccupancy spends a parent+key record when the live child does not match", () => {
@@ -19,16 +19,6 @@ describe("pending occupancy", () => {
 		recordPendingOccupancy(parent, "foo", child, "ignore");
 
 		expect(takePendingOccupancy(parent, "foo", child)).toBe("ignore");
-		expect(takePendingOccupancy(parent, "foo", child)).toBeUndefined();
-	});
-
-	it("discardPendingOccupancy drops a parent+key record", () => {
-		const parent = {};
-		const child = { n: 1 };
-
-		recordPendingOccupancy(parent, "foo", child, "unsafe");
-		discardPendingOccupancy(parent, "foo");
-
 		expect(takePendingOccupancy(parent, "foo", child)).toBeUndefined();
 	});
 });

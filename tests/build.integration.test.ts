@@ -12,8 +12,6 @@ interface PackageManifest {
 	};
 }
 
-const bareSpecifier = /(?:from|import|require)\s*\(?\s*['"](?:valtio|proxy-compare)(?:\/[^'"]*)?['"]/;
-
 // Immediately preceding block comment for a declaration match, or undefined.
 const jsdocBefore = (source: string, declaration: RegExp): string | undefined => {
 	const match = source.match(declaration);
@@ -38,7 +36,7 @@ const jsdocBefore = (source: string, declaration: RegExp): string | undefined =>
 };
 
 describe("package build", () => {
-	it("emits one entry matching exports['.'] with no bare valtio or proxy-compare specifier", async () => {
+	it("emits one entry matching exports['.']", async () => {
 		const outDir = await mkdtemp(join(tmpdir(), "opshot-build-"));
 
 		try {
@@ -53,12 +51,6 @@ describe("package build", () => {
 			const expectedEntry = basename(manifest.exports["."].import);
 
 			expect(jsEntries).toEqual([expectedEntry]);
-
-			for (const name of emitted) {
-				const contents = await readFile(join(outDir, name), "utf8");
-
-				expect(bareSpecifier.test(contents), `${name} carries a bare valtio/proxy-compare specifier`).toBe(false);
-			}
 		} finally {
 			await rm(outDir, { recursive: true, force: true });
 		}

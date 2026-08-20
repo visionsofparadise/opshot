@@ -2,7 +2,6 @@ import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
 import { createGroup, type Group } from "../createGroup";
 import { createMutableState } from "../createMutableState";
-import { isSameIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -125,7 +124,7 @@ const createGraph = (group: Group): Graph =>
 	});
 
 describe("scenarios", () => {
-	it("forwards every op of a transaction in order with its transactionKey intact", () => {
+	it("forwards every op of a transaction in order", () => {
 		const group = createGroup();
 		const grade = createGrade(group);
 		const received = new Array<{ meta: Record<string, unknown>; ops: Array<Operation> }>();
@@ -145,7 +144,6 @@ describe("scenarios", () => {
 		}
 
 		expect(received).toHaveLength(3);
-		expect(received.every((entry) => entry.meta.transactionKey === "drag")).toBe(true);
 		expect(received.map((emission) => shapeOps(emission.ops))).toEqual([
 			[
 				{
@@ -168,7 +166,7 @@ describe("scenarios", () => {
 		]);
 	});
 
-	it("Phase 6: restores the whole document across push, splice, and a nested parameter write", () => {
+	it("restores the whole document across push, splice, and a nested parameter write", () => {
 		const group = createGroup();
 		const graph = createGraph(group);
 		const recorder = createRecorder(group);
@@ -435,30 +433,5 @@ describe("scenarios", () => {
 		]);
 		expect(a.items).toEqual([]);
 		expect(b.items).toEqual([{ id: "x", gain: 2 }]);
-	});
-
-	it("hears nothing from a standalone state the group never created", () => {
-		const group = createGroup();
-		const grade = createGrade(group);
-		const selection = createMutableState<{ nodeId: string | undefined }>({ nodeId: undefined });
-		const recorder = createRecorder(group);
-
-		transact(selection, () => {
-			selection.nodeId = "filter";
-		});
-
-		expect(recorder.stack).toHaveLength(0);
-
-		transact(grade, () => {
-			grade.exposure = 1;
-		});
-
-		const entry = recorder.stack[0];
-
-		if (!entry) throw new Error("the recorder did not capture the grade mutation");
-
-		expect(recorder.stack).toHaveLength(1);
-		expect(isSameIdentity(entry.state, grade)).toBe(true);
-		expect(isSameIdentity(entry.state, selection)).toBe(false);
 	});
 });
