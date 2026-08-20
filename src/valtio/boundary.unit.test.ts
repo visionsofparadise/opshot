@@ -1,10 +1,12 @@
-import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { createProxy } from "proxy-compare";
+import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
-import { type Operation } from "../ops/operation";
 import { ignore } from "../ignore";
+import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
+import { subscribe } from "../subscribe";
+import { transact } from "../transact/transact";
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
 	const emissions = new Array<{ state: T; ops: Array<Operation> }>();
@@ -14,6 +16,34 @@ const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Arr
 	});
 
 	return emissions;
+};
+
+const expectRefusedWrite = <T extends object>(
+	state: T,
+	write: (live: T) => void,
+): Array<{ state: T; ops: Array<Operation> }> => {
+	const emissions = recordEmissions(state);
+
+	expect(() => {
+		transact(state, () => {
+			write(state);
+		});
+	}).toThrow(TypeError);
+
+	return emissions;
+};
+
+const holderWithNonWritable = (child: object): Record<string, unknown> => {
+	const holder: Record<string, unknown> = {};
+
+	Object.defineProperty(holder, "held", {
+		value: child,
+		enumerable: true,
+		writable: false,
+		configurable: true,
+	});
+
+	return holder;
 };
 
 describe("boundary: tracked", () => {
@@ -372,5 +402,117 @@ describe("boundary: strict false", () => {
 			});
 		}).toThrow("Map at /box cannot be tracked");
 		expect(strict.box).toBe(null);
+	});
+
+	it("walks past a non-writable and a frozen child and skips an already-tracked node", () => {
+		const frozen = Object.freeze({ n: 1 });
+		const locked = holderWithNonWritable({ n: 1 });
+
+		expect(() => createMutableState({ locked, frozen }, { strict: false })).not.toThrow();
+
+		const tracked = createMutableState({ inner: holderWithNonWritable({ n: 1 }) }, { strict: false });
+		const nested = createMutableState({ child: tracked });
+
+		expect(nested.child).toBe(tracked);
+	});
+});
+
+describe("boundary: refused writes", () => {
+	it("refuses a sealed array's length truncation over a non-configurable index", () => {
+		const state = createMutableState({ list: Object.seal([1, 2]) });
+		const emissions = expectRefusedWrite(state, (live) => {
+			live.list.length = 0;
+		});
+
+		expect(state.list).toEqual([1, 2]);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("refuses an index extension over a non-writable length, leaving no hole", () => {
+		const fixed = [1, 2];
+
+		Object.defineProperty(fixed, "length", { writable: false });
+
+		const state = createMutableState({ list: fixed });
+		const emissions = expectRefusedWrite(state, (live) => {
+			live.list[2] = 3;
+		});
+
+		expect(Object.hasOwn(state.list, 2)).toBe(false);
+		expect(state.list).toHaveLength(2);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("refuses a write to a non-writable data property like the raw engine", () => {
+		const raw: { a?: number } = {};
+		const box: { a?: number } = {};
+
+		Object.defineProperty(raw, "a", { value: 1, writable: false, enumerable: true, configurable: true });
+		Object.defineProperty(box, "a", { value: 1, writable: false, enumerable: true, configurable: true });
+
+		expect(() => {
+			raw.a = 1;
+		}).toThrow(TypeError);
+
+		const state = createMutableState({ box });
+		const emissions = expectRefusedWrite(state, (live) => {
+			live.box.a = 1;
+		});
+
+		expect(state.box.a).toBe(1);
+		expect(emissions).toHaveLength(0);
+	});
+
+	it("refuses a write to an inherited getter-only accessor, leaving no own key", () => {
+		class Gauge {
+			count = 2;
+
+			get doubled(): number {
+				return this.count * 2;
+			}
+		}
+
+		const state = createMutableState(new Gauge()) as Gauge & { doubled: number };
+		const emissions = expectRefusedWrite(state, (live) => {
+			live.doubled = 9;
+		});
+
+		expect(Object.hasOwn(state, "doubled")).toBe(false);
+		expect(state.doubled).toBe(4);
+		expect(emissions).toHaveLength(0);
+	});
+});
+
+describe("boundary: snapshot donation", () => {
+	it("refuses assigning a snapshot generation, including through a tracking wrapper", () => {
+		const source = createMutableState({ item: { value: 1 } });
+		const destination = createMutableState<{ box: unknown }>({ box: null });
+		const donated = snapshot(source).item;
+		const wrapped = createProxy(donated as object, new WeakMap(), new WeakMap(), new WeakMap());
+
+		const donate = (value: unknown): void => {
+			transact(destination, () => {
+				destination.box = value;
+			});
+		};
+
+		expect(() => donate(donated)).toThrow('opshot: cannot assign a snapshot generation at "box"');
+		expect(destination.box).toBe(null);
+
+		expect(() => donate(wrapped)).toThrow('opshot: cannot assign a snapshot generation at "box"');
+		expect(destination.box).toBe(null);
+	});
+});
+
+describe("boundary: meta-mutation", () => {
+	it("completes Object.setPrototypeOf on a tracked node with no op", () => {
+		const state = createMutableState({ count: 0 });
+		const emissions = recordEmissions(state);
+
+		Object.setPrototypeOf(state, null);
+		transact(state, () => undefined);
+
+		expect(Object.getPrototypeOf(state)).toBeNull();
+		expect(emissions).toHaveLength(0);
 	});
 });
