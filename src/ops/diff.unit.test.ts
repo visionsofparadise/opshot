@@ -3,6 +3,7 @@ import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
+import { OccupancyRefusalError } from "../occupancy";
 import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -1025,5 +1026,96 @@ describe("diffObjects: link batch construction", () => {
 		applyOperations(replica, projectTransport(delivered), "do");
 		expect(replica.slot).toEqual({ n: 1 });
 		expect(replica.slot).not.toBe(replicaNode);
+	});
+});
+
+describe("diffObjects: occupancy omission", () => {
+	it("a window with one refused occupancy emits sibling keys and nothing at or under the refused path", async () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState(
+			{ danger: null as unknown, sibling: 0, nested: { a: 1 } },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = record(state);
+
+		state.danger = new Map<string, number>();
+		state.sibling = 1;
+		state.nested.a = 2;
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect((errors[0] as OccupancyRefusalError).message).toContain("Map at /danger");
+		expect(pathOf(heard[0])).toEqual([["sibling"], ["nested", "a"]]);
+	});
+
+	it("an enclosing container assign strips the refused child from its payload value", async () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState(
+			{ bag: { keep: 1 } as { keep: number; drop?: Map<string, number> }, list: [1, 2, 3] as Array<unknown> },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = record(state);
+
+		state.bag = { keep: 1, drop: new Map<string, number>() };
+		state.list = [1, new Map<string, number>(), 3];
+
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+
+		const bagValue = readValue(
+			heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "bag")?.do ?? {
+				verb: "delete",
+				path: [],
+			},
+		);
+		const listValue = readValue(
+			heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "list")?.do ?? {
+				verb: "delete",
+				path: [],
+			},
+		);
+
+		expect(bagValue).toEqual({ keep: 1 });
+		expect(bagValue).not.toHaveProperty("drop");
+		expect(Array.isArray(listValue)).toBe(true);
+
+		const list = listValue as Array<unknown>;
+
+		expect(list).toHaveLength(3);
+		expect(list[0]).toBe(1);
+		expect(Object.hasOwn(list, 1)).toBe(false);
+		expect(list[2]).toBe(3);
+	});
+
+	it("a refusal under a create-time ignore() prefix omits without minting a change pair", async () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState(
+			{ wrap: ignore({ n: 0 as number, nested: undefined as Map<string, number> | undefined }), tick: 0 },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = record(state);
+
+		state.wrap = { n: 1, nested: new Map<string, number>() };
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		expect(errors).toEqual([]);
+		expect(pathOf(heard[0])).toEqual([["tick"]]);
+		expect(heard[0]?.some((operation) => operation.do.path[0] === "wrap")).toBe(false);
 	});
 });

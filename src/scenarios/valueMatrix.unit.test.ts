@@ -2,6 +2,7 @@ import { createMutableState } from "../createMutableState";
 import { ignore, type Ignored } from "../ignore";
 import { isSameIdentity } from "../identity";
 import { isState } from "../isState";
+import { OccupancyRefusalError } from "../occupancy";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
@@ -16,6 +17,28 @@ const record = <T extends object>(state: T): Array<Array<Operation>> => {
 	});
 
 	return heard;
+};
+
+const flushBareWrite = async <T extends object>(
+	initial: T,
+	mutate: (state: T) => void,
+): Promise<{ readonly state: T; readonly error: unknown; readonly heard: Array<Array<Operation>> }> => {
+	let error: unknown;
+	const state = createMutableState(initial, {
+		emitOn: (flush) => {
+			try {
+				flush();
+			} catch (caught) {
+				error = caught;
+			}
+		},
+	}) as T;
+	const heard = record(state);
+
+	mutate(state);
+	await Promise.resolve();
+
+	return { state, error, heard };
 };
 
 const cloneOperations = (ops: ReadonlyArray<Operation>): Array<Operation> =>
@@ -676,6 +699,17 @@ describe("dangerous exotic", () => {
 		}).toThrow();
 		expect(state.box).toBeUndefined();
 	});
+
+	it("write", async () => {
+		const { state, error, heard } = await flushBareWrite<{ box?: Map<string, number> }>({}, (live) => {
+			live.box = new Map();
+		});
+
+		expect(error).toBeInstanceOf(OccupancyRefusalError);
+		expect((error as Error).message).toContain("Map at /box");
+		expect(heard).toEqual([]);
+		expect(state.box).toBeInstanceOf(Map);
+	});
 });
 
 describe("dangerous private", () => {
@@ -692,6 +726,17 @@ describe("dangerous private", () => {
 			});
 		}).toThrow();
 		expect(state.box).toBeUndefined();
+	});
+
+	it("write", async () => {
+		const { state, error, heard } = await flushBareWrite<{ box?: PrivateBox }>({}, (live) => {
+			live.box = new PrivateBox();
+		});
+
+		expect(error).toBeInstanceOf(OccupancyRefusalError);
+		expect((error as Error).message).toContain("PrivateBox at /box");
+		expect(heard).toEqual([]);
+		expect(state.box).toBeInstanceOf(PrivateBox);
 	});
 });
 
@@ -710,6 +755,17 @@ describe("dangerous own function on class", () => {
 		}).toThrow();
 		expect(state.box).toBeUndefined();
 	});
+
+	it("write", async () => {
+		const { state, error, heard } = await flushBareWrite<{ box?: ArrowBox }>({}, (live) => {
+			live.box = new ArrowBox();
+		});
+
+		expect(error).toBeInstanceOf(OccupancyRefusalError);
+		expect((error as Error).message).toContain("ArrowBox at /box/bump");
+		expect(heard).toEqual([]);
+		expect(state.box).toBeInstanceOf(ArrowBox);
+	});
 });
 
 describe("dangerous non-writable object property", () => {
@@ -726,6 +782,18 @@ describe("dangerous non-writable object property", () => {
 			});
 		}).toThrow();
 		expect(state.box).toBeUndefined();
+	});
+
+	it("write", async () => {
+		const { state, error, heard } = await flushBareWrite<{ box?: object }>({}, (live) => {
+			live.box = nonWritableObjectCarrier();
+		});
+
+		expect(error).toBeInstanceOf(OccupancyRefusalError);
+		expect((error as Error).message).toContain("at /box/outer");
+		expect(heard[0]?.some((operation) => operation.do.path.includes("outer"))).toBeFalsy();
+		expect(state.box).toBeDefined();
+		expect(Object.getOwnPropertyDescriptor(state.box as object, "outer")?.writable).toBe(false);
 	});
 });
 

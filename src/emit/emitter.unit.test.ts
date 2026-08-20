@@ -1,8 +1,9 @@
 import { createMutableState } from "../createMutableState";
+import { OccupancyRefusalError } from "../occupancy";
 import { type Operation } from "../ops/operation";
+import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
-import { shapeOps } from "../ops/operationShape";
 
 type CyclicNode = { n: number; self?: CyclicNode };
 
@@ -206,5 +207,134 @@ describe("emitOn window", () => {
 
 		expect(heardA.map(shapeOps)).toEqual(expected);
 		expect(heardB.map(shapeOps)).toEqual(expected);
+	});
+});
+
+const tickAssign = (from: number, to: number) => [
+	{
+		do: { verb: "assign" as const, path: ["tick"], value: to },
+		undo: { verb: "assign" as const, path: ["tick"], value: from },
+	},
+];
+
+describe("write-window occupancy refusal", () => {
+	it("a bare write producing one dangerous occupancy throws the refusal out of the flush after sibling ops", async () => {
+		const scheduler = manualScheduler();
+		const state = createMutableState({ box: null as unknown, tick: 0 }, { emitOn: scheduler.emitOn });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		state.box = new Map<string, number>();
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+
+		let refusal: unknown;
+
+		try {
+			scheduler.flushAll();
+		} catch (error) {
+			refusal = error;
+		}
+
+		expect(refusal).toBeInstanceOf(OccupancyRefusalError);
+		expect((refusal as OccupancyRefusalError).message).toContain("Map at /box");
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+	});
+
+	it("a configured onError receives the refusal and nothing throws", async () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState(
+			{ box: null as unknown, tick: 0 },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		state.box = new Map<string, number>();
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect((errors[0] as Error).message).toContain("Map at /box");
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+	});
+
+	it("two dangerous occupancies in one window raise one OccupancyRefusalError whose cause is the AggregateError", async () => {
+		const scheduler = manualScheduler();
+		const state = createMutableState(
+			{ left: null as unknown, right: null as unknown, tick: 0 },
+			{ emitOn: scheduler.emitOn },
+		);
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		state.left = new Map<string, number>();
+		state.right = new Set<number>();
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		let refusal: unknown;
+
+		try {
+			scheduler.flushAll();
+		} catch (error) {
+			refusal = error;
+		}
+
+		expect(refusal).toBeInstanceOf(OccupancyRefusalError);
+		expect((refusal as OccupancyRefusalError).cause).toBeInstanceOf(AggregateError);
+		expect(((refusal as OccupancyRefusalError).cause as AggregateError).errors).toHaveLength(2);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+	});
+
+	it("a refused bare write commits the overlay so the next window diffs from the post-refusal snapshot", async () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState(
+			{ box: null as unknown, tick: 0 },
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		state.box = new Map<string, number>();
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+
+		heard.length = 0;
+		state.tick = 2;
+
+		await Promise.resolve();
+
+		expect(errors).toHaveLength(1);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(1, 2)]);
 	});
 });
