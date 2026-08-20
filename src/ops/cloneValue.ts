@@ -19,7 +19,7 @@ export const isPlainObject = (value: unknown): value is Record<string, unknown> 
 	!pendingIgnore.has(value) &&
 	(admissionLane(value) === "tracked" || isInstrumented(value));
 
-export const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
+const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
 	typeof value === "object" &&
 	value !== null &&
 	!pendingIgnore.has(value) &&

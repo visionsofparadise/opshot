@@ -203,10 +203,6 @@ export function dropOccupancyRoutesUnder(handle: Handle, path: OperationPath): v
 	}
 }
 
-export function occupancyRouteEntries(handle: Handle): IterableIterator<[object, Array<OperationPath>]> {
-	return routeTableOf(handle).entries();
-}
-
 export function restoreOccupancyTables(handle: Handle, snapshot: OccupancyTableSnapshot): void {
 	handle.ignoredAt = snapshot.ignoredAt;
 	handle.unsafeAt = snapshot.unsafeAt;
@@ -364,12 +360,7 @@ export function bindVisitedOccupancy(
 	const boundUnsafe = handle.unsafeAt.get(pathKey);
 	const matchesUnsafe = boundUnsafe !== undefined && isSameIdentity(boundUnsafe, childLive);
 
-	if (
-		handle.strict &&
-		kind !== "unsafe" &&
-		!matchesUnsafe &&
-		classifyValue(childLive) === "cleanClass"
-	) {
+	if (handle.strict && kind !== "unsafe" && !matchesUnsafe && classifyValue(childLive) === "cleanClass") {
 		for (const entry of walkDataEntries(childLive)) {
 			if (typeof entry.value !== "function") continue;
 
@@ -424,10 +415,6 @@ export function markDirtyPath(
 	}
 
 	edges.add(edge);
-}
-
-export function markDirtyNode(dirty: DirtyIndex, node: object): void {
-	dirty.nodes.add(rawTargetOf(node));
 }
 
 const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean): void => {

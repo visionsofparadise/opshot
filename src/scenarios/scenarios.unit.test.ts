@@ -384,18 +384,15 @@ describe("scenarios", () => {
 
 		expect(aHeard).toHaveLength(1);
 		expect(aHeard[0]?.meta).toBeUndefined();
-		expect(aHeard[0]?.ops).toHaveLength(1);
-		expect(aHeard[0]?.ops[0]?.do).toMatchObject({ verb: "assign", path: ["items"] });
-		expect(aHeard[0]?.ops[0] && "value" in aHeard[0].ops[0].do ? aHeard[0].ops[0].do.value : undefined).toEqual([]);
-		const sourceOps = aHeard[0]?.ops;
-
-		if (!sourceOps) throw new Error("the source operations were not heard");
-
-		const sourceUndo = [...sourceOps].reverse().map((pair) => pair.undo);
-
-		expect(sourceUndo[0]).toMatchObject({ verb: "assign", path: ["items"] });
-		expect(sourceUndo[0] && "value" in sourceUndo[0] ? sourceUndo[0].value : undefined).toEqual([
-			{ id: "x", gain: 1 },
+		expect(shapeOps(aHeard[0]?.ops ?? [])).toEqual([
+			{
+				do: { verb: "delete", path: ["items", 0] },
+				undo: { verb: "assign", path: ["items", 0], value: { id: "x", gain: 1 } },
+			},
+			{
+				do: { verb: "assign", path: ["items", "length"], value: 0 },
+				undo: { verb: "assign", path: ["items", "length"], value: 1 },
+			},
 		]);
 		expect(bHeard).toHaveLength(1);
 		expect(bHeard[0]?.meta).toBeUndefined();
@@ -403,10 +400,15 @@ describe("scenarios", () => {
 
 		if (!destinationOps) throw new Error("the destination operations were not heard");
 
-		expect(destinationOps).toHaveLength(1);
-		expect(destinationOps[0]?.do).toMatchObject({ verb: "assign", path: ["items"] });
-		expect(destinationOps[0] && "value" in destinationOps[0].do ? destinationOps[0].do.value : undefined).toEqual([
-			{ id: "x", gain: 1 },
+		expect(shapeOps(destinationOps)).toEqual([
+			{
+				do: { verb: "assign", path: ["items", "length"], value: 1 },
+				undo: { verb: "assign", path: ["items", "length"], value: 0 },
+			},
+			{
+				do: { verb: "assign", path: ["items", 0], value: { id: "x", gain: 1 } },
+				undo: { verb: "delete", path: ["items", 0] },
+			},
 		]);
 
 		await Promise.resolve();
