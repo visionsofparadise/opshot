@@ -1,12 +1,6 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import {
-	copyOccupancyTables,
-	OccupancyRefusalError,
-	restoreOccupancyTables,
-	syncHandleTables,
-	type CaptureTables,
-} from "../occupancy";
+import { OccupancyRefusalError, commitCapture, createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
 import { rollbackTransaction } from "../transact/rollback";
@@ -157,9 +151,8 @@ const captureRange = (
 	const from = handle.lastSnapshot;
 	const to = snapshot(handle.proxy.root);
 
-	const occupancyBaseline = copyOccupancyTables(handle);
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
-	const capture: CaptureTables = { refusals: [], omissions: new Set() };
+	const capture = createCaptureTables();
 
 	if (from === to) syncHandleTables(handle, capture);
 
@@ -171,12 +164,12 @@ const captureRange = (
 	const refusals = capture.refusals;
 
 	if (kind === "transaction" && refusals.length > 0) {
-		restoreOccupancyTables(handle, occupancyBaseline);
 		rollbackTransaction(handle);
 
 		throw occupancyRefusalOf(refusals);
 	}
 
+	commitCapture(handle, capture);
 	handle.lastSnapshot = to;
 
 	if (ops.length > 0 && !handle.replaying) {

@@ -3,10 +3,13 @@ import { getRegisteredTarget, isSameIdentity } from "../identity";
 import {
 	addOccupancyRoute,
 	bindVisitedOccupancy,
+	createCaptureTables,
 	dropOccupancyRoutesUnder,
 	isUnderIgnoredOccupancy,
 	isUnderUnsafeOccupancy,
 	markDirtyPath,
+	overlayRoutesOf,
+	predatingRoutesOf,
 	type CaptureTables,
 	type OccupancyVisit,
 } from "../occupancy";
@@ -41,9 +44,6 @@ interface DiffContext {
 	readonly ops: Array<Operation>;
 	readonly ancestors: Ancestors;
 	readonly ancestorPaths: Map<object, OperationPath>;
-	readonly predatingRoutes: Map<object, ReadonlyArray<OperationPath>>;
-	readonly firstRouteThisBatch: Map<object, OperationPath>;
-	readonly firstTouchedThisBatch: Map<object, OperationPath>;
 	readonly decomposingRemovals: Set<object>;
 	readonly beforeRoot: object;
 	readonly afterRoot: object;
@@ -97,32 +97,20 @@ const liveAtPath = (root: object, path: OperationPath): unknown => {
 const routesOfLive = (context: DiffContext, live: object): ReadonlyArray<OperationPath> => {
 	if (context.handle === undefined) return [];
 
-	return context.handle.routes.get(routeKeyOf(live)) ?? [];
+	return overlayRoutesOf(context.handle, context.capture, live);
 };
 
-const rememberPredatingRoutes = (context: DiffContext, live: object): void => {
-	if (context.handle === undefined) return;
+const predatingOf = (context: DiffContext, live: object): ReadonlyArray<OperationPath> => {
+	if (context.handle === undefined) return [];
 
-	const key = routeKeyOf(live);
-
-	if (context.predatingRoutes.has(key)) return;
-
-	context.predatingRoutes.set(key, context.handle.routes.get(key) ?? []);
+	return predatingRoutesOf(context.handle, live);
 };
 
-const rememberFirstRouteThisBatch = (context: DiffContext, live: object, path: OperationPath): void => {
-	const key = routeKeyOf(live);
+const earliestAddedRouteOf = (context: DiffContext, live: object): OperationPath | undefined =>
+	context.capture.routes.added.get(routeKeyOf(live))?.[0];
 
-	if (!context.firstTouchedThisBatch.has(key)) context.firstTouchedThisBatch.set(key, path);
-
-	if (context.firstRouteThisBatch.has(key)) return;
-
-	const predating = context.predatingRoutes.get(key) ?? [];
-
-	if (predating.some((route) => operationPathsEqual(route, path))) return;
-
-	context.firstRouteThisBatch.set(key, path);
-};
+const firstTouchedOf = (context: DiffContext, live: object): OperationPath | undefined =>
+	context.capture.routes.firstTouched.get(routeKeyOf(live));
 
 const writesTables = (context: DiffContext): context is DiffContext & { handle: Handle; dirty: DirtyIndex } =>
 	context.handle !== undefined && context.dirty !== undefined;
@@ -142,11 +130,10 @@ const admitEmitPath = (
 
 	if (!isObjectLike(liveParent) || lastSegment === undefined) return "continue";
 
-	if (isObjectLike(liveChild)) rememberPredatingRoutes(context, liveChild);
-
 	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
 	const unsafe = isUnderUnsafeOccupancy(context.handle, path);
-	const visit = bindVisitedOccupancy(
+
+	return bindVisitedOccupancy(
 		context.handle,
 		path,
 		liveParent,
@@ -156,12 +143,6 @@ const admitEmitPath = (
 		sameOccupant,
 		unsafe,
 	);
-
-	if (visit === "continue" && isObjectLike(liveChild)) {
-		rememberFirstRouteThisBatch(context, liveChild, path);
-	}
-
-	return visit;
 };
 
 const recordDescendantRoutes = (
@@ -193,8 +174,6 @@ const recordDescendantRoutes = (
 		const childPath = appendOperationPath(path, segmentFor(liveNode, entry.key));
 		const childUnsafe = nodeUnsafe || context.handle.unsafeAt.has(formatOperationPath(childPath));
 
-		rememberPredatingRoutes(context, entry.value);
-
 		const visit = bindVisitedOccupancy(
 			context.handle,
 			childPath,
@@ -208,7 +187,6 @@ const recordDescendantRoutes = (
 
 		if (visit !== "continue") continue;
 
-		rememberFirstRouteThisBatch(context, entry.value, childPath);
 		recordDescendantRoutes(context, childPath, visits, sameOccupant, childUnsafe);
 	}
 };
@@ -249,7 +227,7 @@ const refForMint = (context: DiffContext, live: object, container: OperationPath
 
 	if (external.length === 0) return undefined;
 
-	const predating = context.predatingRoutes.get(routeKeyOf(live)) ?? [];
+	const predating = predatingOf(context, live);
 	const predatingUsable = external.find(
 		(route) =>
 			predating.some((occupied) => operationPathsEqual(occupied, route)) ||
@@ -258,7 +236,7 @@ const refForMint = (context: DiffContext, live: object, container: OperationPath
 
 	if (predatingUsable !== undefined) return predatingUsable;
 
-	const firstThisBatch = context.firstRouteThisBatch.get(routeKeyOf(live));
+	const firstThisBatch = earliestAddedRouteOf(context, live);
 
 	if (firstThisBatch !== undefined && routeUnderPath(firstThisBatch, container)) return undefined;
 
@@ -394,8 +372,6 @@ const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before
 	}
 
 	context.decomposingRemovals.add(key);
-	rememberPredatingRoutes(context, live);
-	rememberFirstRouteThisBatch(context, live, path);
 
 	if (isPlainArray(before)) {
 		for (let index = 0; index < before.length; index++) {
@@ -465,7 +441,7 @@ const mintAssignment = (
 			return;
 		}
 
-		const recorded = context.firstRouteThisBatch.get(routeKeyOf(live));
+		const recorded = earliestAddedRouteOf(context, live);
 
 		if (
 			recorded !== undefined &&
@@ -493,9 +469,7 @@ const mintAssignment = (
 		}
 
 		if (writesTables(context)) {
-			rememberPredatingRoutes(context, live);
-			addOccupancyRoute(context.handle, live, path);
-			rememberFirstRouteThisBatch(context, live, path);
+			addOccupancyRoute(context.handle, live, path, context.capture);
 		}
 	}
 
@@ -534,20 +508,14 @@ const pushAddition = (context: DiffContext, path: OperationPath, after: unknown)
 const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): void => {
 	if (isSkippedPath(context, path)) return;
 
-	if (isObjectLike(before) && context.linksEnabled) {
-		rememberPredatingRoutes(context, before);
-		rememberFirstRouteThisBatch(context, before, path);
-	}
-
 	if (writesTables(context)) {
-		dropOccupancyRoutesUnder(context.handle, path);
+		dropOccupancyRoutesUnder(context.handle, path, context.capture);
 		markChangedPath(context, path);
 	}
 
 	if (isObjectLike(before) && context.linksEnabled) {
 		const live = liveOf(before);
-		const recorded =
-			context.firstTouchedThisBatch.get(routeKeyOf(live)) ?? context.firstRouteThisBatch.get(routeKeyOf(live));
+		const recorded = firstTouchedOf(context, live) ?? earliestAddedRouteOf(context, live);
 
 		if (recorded !== undefined && !operationPathsEqual(recorded, path)) {
 			const pair: Operation = {
@@ -774,7 +742,7 @@ const diffValue = (context: DiffContext, before: unknown, after: unknown, path: 
 	const replacing =
 		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
 
-	if (replacing && writesTables(context)) dropOccupancyRoutesUnder(context.handle, path);
+	if (replacing && writesTables(context)) dropOccupancyRoutesUnder(context.handle, path, context.capture);
 
 	const visit = admitEmitPath(context, path, before, after, isObjectLike(before) || before !== undefined);
 
@@ -928,16 +896,13 @@ export function diffObjects(
 		ops,
 		ancestors: new Map(),
 		ancestorPaths: new Map(),
-		predatingRoutes: new Map(),
-		firstRouteThisBatch: new Map(),
-		firstTouchedThisBatch: new Map(),
 		decomposingRemovals: new Set(),
 		beforeRoot: before,
 		afterRoot: after,
 		linksEnabled,
 		handle,
 		dirty,
-		capture: capture ?? { refusals: [], omissions: new Set() },
+		capture: capture ?? createCaptureTables(),
 	};
 
 	diffValue(context, before, after, createOperationPath([]));
