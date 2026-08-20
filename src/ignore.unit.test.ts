@@ -134,6 +134,24 @@ describe("ignore", () => {
 		]);
 	});
 
+	it("emits nothing for a write under a create-time ignored ancestor", () => {
+		const nested = { n: 1 };
+		const state = createMutableState({ box: ignore({ nested }), tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.box.nested.n = 2;
+			state.tick = 1;
+		});
+
+		expect(nested.n).toBe(2);
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
+	});
+
 	it("lands a live ignore() assignment as a ride-along-bearing object", () => {
 		const obj = { n: 1 };
 		const state = createMutableState<{ foo: unknown }>({ foo: null });

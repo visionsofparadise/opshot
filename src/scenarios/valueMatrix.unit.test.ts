@@ -584,6 +584,38 @@ describe("frozen", () => {
 		expect(heard).toEqual([]);
 	});
 
+	it("live freeze", () => {
+		const inner = { n: 1 };
+		const state = createMutableState({ box: { inner }, tick: 0 });
+		const heard = record(state);
+
+		Object.freeze(state.box);
+
+		transact(state, () => {
+			state.box.inner.n = 2;
+			state.tick = 1;
+		});
+
+		expect(inner.n).toBe(2);
+		expect(heard[0]?.map((operation) => operation.do.path)).toEqual([["tick"]]);
+	});
+
+	it("alias", () => {
+		const inner = { n: 1 };
+		const frozen = Object.freeze({ inner });
+		const state = createMutableState({ left: frozen, right: frozen, tick: 0 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.left.inner.n = 2;
+			state.right.inner.n = 3;
+			state.tick = 1;
+		});
+
+		expect(inner.n).toBe(3);
+		expect(heard[0]?.map((operation) => operation.do.path)).toEqual([["tick"]]);
+	});
+
 	it("rollback", () => {
 		const frozen = Object.freeze({ a: 1 });
 		const state = createMutableState({ box: frozen, tick: 0 });
