@@ -1,11 +1,11 @@
-import { createElement, memo, useEffect, useReducer, useRef, type ComponentType, type FC } from "react";
-import { emitWrites } from "../emit/emitter";
-import { lastDeliveryDirty } from "../emit/emitterDeliver";
+import { createElement, memo, useEffect, useReducer, useRef, useState, type ComponentType, type FC } from "react";
+import { snapshot } from "valtio/vanilla";
 import { handlesOf, type Handle } from "../handle";
 import { isSameIdentity } from "../identity";
 import { isState } from "../isState";
 import { subscribe } from "../subscribe";
 import { addressOf } from "../tracked/address";
+import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
 import { substituteStates } from "./propWalk";
 import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
@@ -70,6 +70,8 @@ const arePropsEqual = (previous: object, next: object): boolean => {
 export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 	const Scoped: FC<P> = (props) => {
 		const readTrackerRef = useRef<ReadTracker | undefined>(undefined);
+		const currentHandlesRef = useRef<ReadonlyArray<Handle>>([]);
+		const [gapSnapshots] = useState(() => new WeakMap<Handle, object>());
 
 		readTrackerRef.current ??= createReadTracker();
 
@@ -80,9 +82,13 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 
 		const { props: renderedProps, sources } = substituteStates(props, (source) => readTracker.wrap(source));
 		const uniqueHandles = uniqueHandlesOf(sources);
-		const dirtyAtRender = uniqueHandles.map((handle) => handle.lastDirty);
+
+		for (const handle of uniqueHandles) {
+			gapSnapshots.set(handle, snapshot(handle.proxy.root));
+		}
 
 		useCommitEffect(() => {
+			currentHandlesRef.current = uniqueHandles;
 			readTracker.captureReads();
 		});
 
@@ -97,14 +103,16 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 			const subscribedHandles = uniqueHandlesOf(sources);
 
 			for (const handle of subscribedHandles) {
-				if (handle.hasPendingWrites && handle.emitOn === undefined) emitWrites(handle);
+				const from = gapSnapshots.get(handle);
+
+				if (from !== undefined && readsIntersectDirty(readTracker, dirtySinceSnapshot(handle, from))) bump();
 			}
 
 			const unsubscribes = subscribedHandles.map((handle) =>
 				subscribe(handle.proxy.root, () => {
 					if (cancelled) return;
 
-					const dirty = lastDeliveryDirty(handle);
+					const dirty = handle.lastDirty;
 
 					if (dirty !== undefined && readsIntersectDirty(readTracker, dirty)) bump();
 				}),
@@ -113,28 +121,17 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 			return () => {
 				cancelled = true;
 
+				const currentHandles = new Set(currentHandlesRef.current);
+
+				for (const handle of subscribedHandles) {
+					if (currentHandles.has(handle)) continue;
+
+					gapSnapshots.set(handle, snapshot(handle.proxy.root));
+				}
+
 				for (const unsubscribe of unsubscribes) unsubscribe();
 			};
 		}, [sourcesKey(sources), readTracker]);
-
-		useEffect(() => {
-			let shouldBump = false;
-
-			for (let index = 0; index < uniqueHandles.length; index += 1) {
-				const handle = uniqueHandles[index];
-				const captured = dirtyAtRender[index];
-
-				if (handle === undefined) continue;
-
-				const current = handle.lastDirty;
-
-				if (current === undefined || current === captured) continue;
-
-				if (readsIntersectDirty(readTracker, current)) shouldBump = true;
-			}
-
-			if (shouldBump) bump();
-		});
 
 		return createElement(Component, renderedProps);
 	};

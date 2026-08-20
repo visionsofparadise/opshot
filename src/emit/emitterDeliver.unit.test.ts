@@ -1,6 +1,13 @@
+import { unstable_getInternalStates } from "valtio/vanilla";
+
 import { createMutableState } from "../createMutableState";
+import { handleOf, type DirtyIndex } from "../handle";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
+
+const { proxyStateMap } = unstable_getInternalStates();
+
+const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 const runCapturingUncaught = (run: () => void): unknown => {
 	let released: unknown;
@@ -299,7 +306,7 @@ describe("deliver", () => {
 		expect(heard).toEqual([1]);
 	});
 
-	it("delivers a pending bare write when its listener unsubscribes from inside a delivery", () => {
+	it("leaves a pending write on the window when its listener unsubscribes from inside a delivery", async () => {
 		const cause = createMutableState<Counter>({ n: 0 });
 		const effect = createMutableState<Counter>({ n: 0 });
 		const heard = new Array<number>();
@@ -314,7 +321,11 @@ describe("deliver", () => {
 			cause.n += 1;
 		});
 
-		expect(heard).toEqual([1]);
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
 	});
 
 	it("does not deliver a queued emission to a listener subscribed after it was queued", () => {
@@ -359,6 +370,38 @@ describe("deliver", () => {
 		});
 
 		expect(heard).toEqual(["first", "second", "third"]);
+	});
+
+	it("a listener that records lastDirty during the starting-Write delivery sees that Write's dirty", () => {
+		const state = createMutableState({ n: 0, extra: 0 });
+		const handle = handleOf(state);
+		const dirties = new Array<DirtyIndex | undefined>();
+
+		if (handle === undefined) throw new Error("expected a handle");
+
+		subscribe(state, () => {
+			dirties.push(handle.lastDirty);
+		});
+
+		state.n = 1;
+
+		transact(
+			state,
+			() => {
+				state.extra = 1;
+			},
+			{ tag: "tx" },
+		);
+
+		const rootRaw = rawTargetOf(state);
+
+		expect(dirties).toHaveLength(2);
+		expect(dirties[0]).not.toBe(dirties[1]);
+		expect(dirties[0]?.edges.get(rootRaw)?.has("n")).toBe(true);
+		expect(dirties[0]?.edges.get(rootRaw)?.has("extra")).toBe(false);
+		expect(dirties[1]?.edges.get(rootRaw)?.has("extra")).toBe(true);
+		expect(dirties[1]?.edges.get(rootRaw)?.has("n")).toBe(false);
+		expect(handle.lastDirty).toBe(dirties[1]);
 	});
 
 	it("flushes a listener's bare write after the delivery rather than inside it", async () => {

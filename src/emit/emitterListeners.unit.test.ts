@@ -196,7 +196,7 @@ describe("emitterListeners", () => {
 		expect(order).toEqual(["group", "own"]);
 	});
 
-	it("does not recapture when an ancestor listener already makes the record listened", async () => {
+	it("delivers an open window when an ancestor listener already makes the record listened", async () => {
 		const pending = new Array<() => void>();
 		const emitOn = (flush: () => void): void => {
 			pending.push(flush);
@@ -237,7 +237,7 @@ describe("emitterListeners", () => {
 		);
 	});
 
-	it("delivers a bare write pending at teardown before unsubscribe returns", async () => {
+	it("leaves a pending write on the window when unsubscribe returns", async () => {
 		const state = createMutableState({ count: 0 });
 		const firstHeard = new Array<ReadonlyArray<Operation>>();
 		const firstListener = (ops: ReadonlyArray<Operation>): void => {
@@ -247,10 +247,9 @@ describe("emitterListeners", () => {
 
 		state.count = 1;
 		unsubscribe();
+		await Promise.resolve();
 
-		expect(firstHeard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
-		]);
+		expect(firstHeard).toEqual([]);
 
 		const secondHeard = new Array<ReadonlyArray<Operation>>();
 		const secondListener = (ops: ReadonlyArray<Operation>): void => {
@@ -267,7 +266,7 @@ describe("emitterListeners", () => {
 		]);
 	});
 
-	it("survives a listener unsubscribing a sibling during settle at teardown", () => {
+	it("does not invoke listeners when a sibling unsubscribes with a pending Write", async () => {
 		const state = createMutableState({ count: 0 });
 		const order = new Array<string>();
 		let unsubscribeSecond: (() => void) | undefined;
@@ -289,7 +288,11 @@ describe("emitterListeners", () => {
 			unsubscribeFirst();
 		}).not.toThrow();
 
-		expect(order).toEqual(["first", "second"]);
+		expect(order).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(order).toEqual(["second"]);
 	});
 
 	it("does not settle on group unsubscription because a group retains none of its states", async () => {
@@ -369,36 +372,6 @@ describe("emitterListeners", () => {
 		duplicate();
 
 		expect(holdsBinding(duplicate)).toBe(false);
-	});
-
-	it("keeps its binding when a co-listener throws during the teardown fence, so the unsubscribe can be retried", () => {
-		const state = createMutableState({ count: 0 });
-		const heard = new Array<string>();
-		const failure = new Error("co-listener failure");
-
-		const stopThrower = subscribe(state, () => {
-			throw failure;
-		});
-
-		const stop = subscribe(state, () => heard.push("kept"));
-
-		state.count = 1;
-
-		expect(() => stop()).toThrow(failure);
-		expect(holdsBinding(stop)).toBe(true);
-
-		stop();
-
-		expect(holdsBinding(stop)).toBe(false);
-		expect(heard).toEqual(["kept"]);
-
-		stopThrower();
-
-		transact(state, () => {
-			state.count = 2;
-		});
-
-		expect(heard).toEqual(["kept"]);
 	});
 
 	it("releases a spent group unsubscribe's binding", () => {

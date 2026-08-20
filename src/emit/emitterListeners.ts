@@ -1,7 +1,5 @@
-import { snapshot } from "valtio/vanilla";
 import { requireHandle, type Handle } from "../handle";
-import { emitWrites } from "./emitter";
-import { hasListeners, type GroupDeliver, type GroupListeners, type StateDeliver } from "./emitterRegistry";
+import type { GroupDeliver, GroupListeners, StateDeliver } from "./emitterRegistry";
 
 interface StateBinding {
 	readonly handle: Handle;
@@ -17,6 +15,27 @@ interface GroupBinding {
 
 const bindings = new WeakMap<() => void, StateBinding | GroupBinding>();
 
+const dropListenerChannel = <Deliver>(
+	byListener: Map<Function, Map<object | undefined, Deliver>>,
+	listener: Function,
+	channelId: object | undefined,
+	unsubscribe: () => void,
+): void => {
+	const channels = byListener.get(listener);
+
+	if (channels?.has(channelId) !== true) {
+		bindings.delete(unsubscribe);
+
+		return;
+	}
+
+	channels.delete(channelId);
+
+	if (channels.size === 0) byListener.delete(listener);
+
+	bindings.delete(unsubscribe);
+};
+
 export const holdsBinding = (unsubscribe: () => void): boolean => bindings.has(unsubscribe);
 
 export function addStateListener(
@@ -26,10 +45,6 @@ export function addStateListener(
 	deliver: StateDeliver,
 ): () => void {
 	const handle = requireHandle(state, "opshot: subscribe requires a state");
-
-	if (!hasListeners(handle)) {
-		handle.lastSnapshot = snapshot(handle.proxy.root);
-	}
 
 	let byChannel = handle.subscribers.get(listener);
 
@@ -45,20 +60,7 @@ export function addStateListener(
 
 		if (held === undefined) return;
 
-		const channels = held.handle.subscribers.get(held.listener);
-
-		if (channels?.has(held.channelId) !== true) {
-			bindings.delete(unsubscribe);
-
-			return;
-		}
-
-		emitWrites(held.handle);
-		channels.delete(held.channelId);
-
-		if (channels.size === 0) held.handle.subscribers.delete(held.listener);
-
-		bindings.delete(unsubscribe);
+		dropListenerChannel(held.handle.subscribers, held.listener, held.channelId, unsubscribe);
 	};
 
 	bindings.set(unsubscribe, { handle, listener, channelId });
@@ -86,19 +88,7 @@ export function addGroupListener(
 
 		if (held === undefined) return;
 
-		const channels = held.listeners.get(held.listener);
-
-		if (channels?.has(held.channelId) !== true) {
-			bindings.delete(unsubscribe);
-
-			return;
-		}
-
-		channels.delete(held.channelId);
-
-		if (channels.size === 0) held.listeners.delete(held.listener);
-
-		bindings.delete(unsubscribe);
+		dropListenerChannel(held.listeners, held.listener, held.channelId, unsubscribe);
 	};
 
 	bindings.set(unsubscribe, { listeners: groupListeners, listener, channelId });

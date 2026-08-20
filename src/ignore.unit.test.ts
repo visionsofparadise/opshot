@@ -73,7 +73,7 @@ describe("ignore", () => {
 		expect(heardB[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["foo", "n"], value: 7 });
 	});
 
-	it("hydration recapture does not emit an ignore assign made with no subscribers", async () => {
+	it("empty-drains an ignore assign made with no subscribers", async () => {
 		const obj = { n: 1 };
 		const state = createMutableState<{ a: { n: number } | null; tick: number }>({ a: null, tick: 0 });
 
@@ -111,6 +111,7 @@ describe("ignore", () => {
 		subscribe(state, (ops) => heard.push([...ops]));
 		await Promise.resolve();
 
+		heard.length = 0;
 		obj.n = 9;
 		state.tick = 1;
 		await Promise.resolve();

@@ -88,7 +88,8 @@ describe("scope", () => {
 		expect(screen.getByTestId("value").textContent).toBe("2");
 	});
 
-	it("heals mutations that land before passive subscription attach", async () => {
+	it("heals mutations that land before passive subscription attach", () => {
+		const queued = new Array<() => void>();
 		let boundaryRenders = 0;
 
 		const Mutator: FC<{ state: { count: number } }> = ({ state }) => {
@@ -116,14 +117,16 @@ describe("scope", () => {
 		});
 
 		const Parent: FC = () => {
-			const state = useMutableState({ count: 0 });
+			const state = useMutableState({ count: 0 }, { emitOn: (flush) => queued.push(flush) });
 
 			return <Scoped state={state} />;
 		};
 
 		render(<Parent />);
+
 		expect(screen.getByTestId("early").textContent).toBe("7");
 		expect(boundaryRenders).toBe(2);
+		expect(queued).toHaveLength(0);
 	});
 
 	it("free-rider: unwrapped child reads ride the scoped boundary", async () => {
@@ -335,7 +338,7 @@ describe("scope", () => {
 		expect(screen.getByTestId("count").textContent).toBe("0");
 	});
 
-	it("does not bump from a source-switch unsubscribe flush", async () => {
+	it("does not bump from a departed source on source-switch", async () => {
 		const queuedA = new Array<() => void>();
 		const queuedB = new Array<() => void>();
 		const stateA = createMutableState({ count: 0 }, { emitOn: (flush) => queuedA.push(flush) });
@@ -371,6 +374,51 @@ describe("scope", () => {
 		});
 
 		expect(childRenders).toBe(2);
+	});
+
+	it("shows the live value when a departed source is written and then returned to", async () => {
+		const stateA = createMutableState({ count: 0 });
+		const stateB = createMutableState({ count: 0 });
+		let childRenders = 0;
+		let switchSource: ((value: "a" | "b") => void) | undefined;
+
+		const Child = scope<{ state: { count: number } }>(({ state }) => {
+			childRenders += 1;
+
+			return <span data-testid="count">{state.count}</span>;
+		});
+
+		const Parent: FC = () => {
+			const [which, setWhich] = useState<"a" | "b">("a");
+
+			switchSource = setWhich;
+
+			return <Child state={which === "a" ? stateA : stateB} />;
+		};
+
+		render(<Parent />);
+		expect(childRenders).toBe(1);
+		expect(screen.getByTestId("count").textContent).toBe("0");
+
+		await act(async () => {
+			switchSource?.("b");
+		});
+
+		expect(childRenders).toBe(2);
+		expect(screen.getByTestId("count").textContent).toBe("0");
+
+		await act(async () => {
+			stateA.count = 1;
+		});
+
+		expect(childRenders).toBe(2);
+
+		await act(async () => {
+			switchSource?.("a");
+		});
+
+		expect(screen.getByTestId("count").textContent).toBe("1");
+		expect(childRenders).toBe(3);
 	});
 
 	it("renders a memoized component as an element and keeps it updating", async () => {

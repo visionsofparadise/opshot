@@ -1,5 +1,4 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import type { Handle } from "../handle";
 import type { Operation } from "../ops/operation";
 
 /**
@@ -37,6 +36,3 @@ export type GroupListeners = Map<Function, Map<object | undefined, GroupDeliver>
 const { proxyStateMap } = unstable_getInternalStates();
 
 export const targetOf = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
-
-export const hasListeners = (handle: Handle): boolean =>
-	handle.subscribers.size > 0 || (handle.groups?.some((map) => map.size > 0) ?? false);

@@ -174,9 +174,11 @@ describe("useMutableState", () => {
 		expect(screen.getByText("2")).toBeTruthy();
 	});
 
-	it("heals mutations that land before passive subscription attach", async () => {
+	it("heals mutations that land before passive subscription attach", () => {
+		const queued = new Array<() => void>();
+
 		const Early: FC = () => {
-			const state = useMutableState({ count: 0 });
+			const state = useMutableState({ count: 0 }, { emitOn: (flush) => queued.push(flush) });
 			const mutated = useRef(false);
 
 			useLayoutEffect(() => {
@@ -190,7 +192,9 @@ describe("useMutableState", () => {
 		};
 
 		render(<Early />);
+
 		expect(screen.getByText("7")).toBeTruthy();
+		expect(queued).toHaveLength(0);
 	});
 
 	it("handler reads do not subscribe the component", async () => {

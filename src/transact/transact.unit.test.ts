@@ -553,7 +553,7 @@ describe("transact", () => {
 		expect(state.n).toBe(0);
 	});
 
-	it("settles another state's pending Write when a listener unsubscribes that state", () => {
+	it("leaves another state's pending Write on that state's window when a listener unsubscribes that state", async () => {
 		const transacted = createMutableState({ x: 0 });
 		const other = createMutableState({ n: 0 });
 		const heard = new Array<unknown>();
@@ -570,7 +570,87 @@ describe("transact", () => {
 			{ tag: "outer" },
 		);
 
-		expect(heard).toEqual([undefined]);
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("keeps a transaction as one emission when a listener unsubscribes during the callback", () => {
+		const state = createMutableState({ a: 0, b: 0 });
+		const departingHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const remainingHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const stop = subscribe(state, (ops, meta) => {
+			departingHeard.push({ ops: [...ops], meta });
+		});
+
+		subscribe(state, (ops, meta) => {
+			remainingHeard.push({ ops: [...ops], meta });
+		});
+
+		transact(
+			state,
+			() => {
+				state.a = 1;
+				stop();
+				state.b = 2;
+			},
+			{ tag: "tx" },
+		);
+
+		expect(departingHeard).toEqual([]);
+		expect(remainingHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [
+					{ do: { verb: "assign", path: ["a"], value: 1 }, undo: { verb: "assign", path: ["a"], value: 0 } },
+					{ do: { verb: "assign", path: ["b"], value: 2 }, undo: { verb: "assign", path: ["b"], value: 0 } },
+				],
+				meta: { tag: "tx" },
+			},
+		]);
+	});
+
+	it("keeps a transaction as one emission after a starting Write when a listener unsubscribes during the callback", () => {
+		const state = createMutableState({ n: 0 });
+		const departingHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const remainingHeard = new Array<{ ops: Array<Operation>; meta: unknown }>();
+		const stop = subscribe(state, (ops, meta) => {
+			departingHeard.push({ ops: [...ops], meta });
+		});
+
+		subscribe(state, (ops, meta) => {
+			remainingHeard.push({ ops: [...ops], meta });
+		});
+
+		state.n = 1;
+
+		transact(
+			state,
+			() => {
+				state.n = 2;
+				stop();
+				state.n = 3;
+			},
+			{ tag: "tx" },
+		);
+
+		expect(departingHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				meta: undefined,
+			},
+		]);
+		expect(remainingHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 1 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
+				meta: undefined,
+			},
+			{
+				ops: [{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 1 } }],
+				meta: { tag: "tx" },
+			},
+		]);
 	});
 
 	it("reports every covering node exactly once, in no promised order", () => {

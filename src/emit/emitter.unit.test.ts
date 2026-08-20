@@ -105,7 +105,7 @@ describe("emitter", () => {
 });
 
 describe("emitOn window", () => {
-	it("recaptures baseline on first state subscribe of an unlistened grouped record", async () => {
+	it("delivers an open window to the first state subscriber of an unlistened grouped record", async () => {
 		const scheduler = manualScheduler();
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
@@ -121,11 +121,12 @@ describe("emitOn window", () => {
 
 		scheduler.flushAll();
 
-		expect(heard).toEqual([]);
-		expect(state.count).toBe(1);
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
+		]);
 	});
 
-	it("does not recapture when a group listener already makes the record listened", async () => {
+	it("delivers an open window when a group listener already makes the record listened", async () => {
 		const scheduler = manualScheduler();
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
@@ -152,7 +153,7 @@ describe("emitOn window", () => {
 		expect(groupHeard.map(shapeOps)).toEqual(stateHeard.map(shapeOps));
 	});
 
-	it("group subscribe does not recapture an open window", async () => {
+	it("group subscribe delivers an open window", async () => {
 		const scheduler = manualScheduler();
 		const group = createGroup();
 		const state = group.createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
@@ -321,7 +322,7 @@ describe("emitOn window", () => {
 		]);
 	});
 
-	it("the last unsubscribe delivers the pending write before returning", async () => {
+	it("the last unsubscribe leaves a pending write on the window", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
 		const heard = new Array<ReadonlyArray<Operation>>();
@@ -338,8 +339,25 @@ describe("emitOn window", () => {
 
 		stop();
 
-		expect(heard.map(shapeOps)).toEqual([
-			[{ do: { verb: "assign", path: ["count"], value: 1 }, undo: { verb: "assign", path: ["count"], value: 0 } }],
+		expect(heard).toEqual([]);
+
+		scheduler.flushAll();
+
+		expect(heard).toEqual([]);
+
+		const later = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			later.push([...ops]);
+		});
+
+		state.count = 2;
+
+		await Promise.resolve();
+		scheduler.flushAll();
+
+		expect(later.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
 		]);
 	});
 

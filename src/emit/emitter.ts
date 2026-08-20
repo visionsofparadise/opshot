@@ -159,10 +159,7 @@ const captureRange = (
 	const to = snapshot(handle.proxy.root);
 
 	const occupancyBaseline = copyOccupancyTables(handle);
-	const previousDirty = handle.lastDirty;
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
-
-	if (from !== to) handle.lastDirty = dirty;
 
 	beginOccupancyRefusals(handle);
 
@@ -175,7 +172,6 @@ const captureRange = (
 
 	if (kind === "transaction" && refusals.length > 0) {
 		restoreOccupancyTables(handle, occupancyBaseline);
-		handle.lastDirty = previousDirty;
 		beginOccupancyRefusals(handle);
 		rollbackTransaction(handle);
 
@@ -184,14 +180,8 @@ const captureRange = (
 
 	handle.lastSnapshot = to;
 
-	if (ops.length > 0) {
-		if (!handle.replaying) {
-			for (const operation of ops) stampOperation(handle, operation);
-		}
-
-		handle.lastDirty = dirty;
-	} else {
-		handle.lastDirty = previousDirty;
+	if (ops.length > 0 && !handle.replaying) {
+		for (const operation of ops) stampOperation(handle, operation);
 	}
 
 	return {

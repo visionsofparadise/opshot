@@ -964,6 +964,8 @@ describe("diffObjects: cyclic values", () => {
 
 		state.holder.cycle.self = state.holder.cycle;
 
+		transact(state, () => undefined);
+
 		const heard = record(state);
 
 		transact(state, () => {
@@ -1003,6 +1005,9 @@ describe("diffObjects: cyclic values", () => {
 
 	it("repairs a cycle with a delete whose undo link restores the cycle by identity", () => {
 		const { state, repair } = startRepair();
+
+		transact(state, () => undefined);
+
 		const heard = record(state);
 
 		transact(state, repair);
@@ -1032,6 +1037,10 @@ describe("diffObjects: cyclic values", () => {
 			}
 		};
 		const { state, repair } = startRepair({ emitOn });
+
+		await Promise.resolve();
+		await Promise.resolve();
+
 		const heard = record(state);
 
 		repair();
@@ -1363,6 +1372,8 @@ describe("diffObjects: cyclic values", () => {
 		const state = createMutableState<{ a: { self?: object } }>({ a: {} });
 
 		state.a.self = state.a;
+
+		transact(state, () => undefined);
 
 		const heard = record(state);
 
@@ -1888,6 +1899,8 @@ describe("diffObjects: link batch construction", () => {
 
 		state.bag.slot = state.keep;
 
+		transact(state, () => undefined);
+
 		const heard = record(state);
 
 		transact(state, () => {
@@ -1921,6 +1934,8 @@ describe("diffObjects: link batch construction", () => {
 		const state = createMutableState(start());
 
 		state.bag.slot = state.keep;
+
+		transact(state, () => undefined);
 
 		const heard = record(state);
 
@@ -1962,6 +1977,8 @@ describe("diffObjects: link batch construction", () => {
 
 		state.wrapped = ignore({ held: node });
 		delete state.hold;
+
+		transact(state, () => undefined);
 
 		const heard = record(state);
 
