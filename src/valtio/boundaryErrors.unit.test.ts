@@ -44,7 +44,9 @@ describe("boundaryErrors: rejection vocabulary", () => {
 			};
 		}
 
-		expect(() => createMutableState({ arrow: new Arrow() })).toThrow("opshot: Arrow at /arrow/bump cannot be tracked");
+		expect(() => createMutableState({ arrow: new Arrow() })).toThrow(
+			"opshot: Arrow at /arrow/bump cannot be tracked",
+		);
 	});
 
 	it("holds a frozen Map as that node", () => {
