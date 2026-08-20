@@ -2,10 +2,18 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { snapshot } from "valtio/vanilla";
 import { createMutableState, type MutableStateOptions, type Unmarked } from "../createMutableState";
 import { handlesOf, type Handle } from "../handle";
+import { isState } from "../isState";
 import { subscribe } from "../subscribe";
 import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
 import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
+
+export class LiveStatePropertiesError extends Error {
+	constructor() {
+		super("opshot: useMutableState properties cannot be a live state; use scope to consume external state");
+		this.name = "LiveStatePropertiesError";
+	}
+}
 
 interface MutableStateHolder<T extends object> {
 	readonly writeProxy: T;
@@ -24,13 +32,16 @@ export function useMutableState<T extends object>(
 	properties: (() => T) | T,
 	options?: MutableStateOptions,
 ): Unmarked<T> {
-	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<Unmarked<T> & object> => ({
-		writeProxy: createMutableState(
-			typeof properties === "function" ? properties() : properties,
-			options,
-		) as Unmarked<T> & object,
-		readTracker: createReadTracker(),
-	}));
+	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<Unmarked<T> & object> => {
+		const initial = typeof properties === "function" ? properties() : properties;
+
+		if (isState(initial)) throw new LiveStatePropertiesError();
+
+		return {
+			writeProxy: createMutableState(initial, options),
+			readTracker: createReadTracker(),
+		};
+	});
 	const [, bump] = useReducer((value: number) => value + 1, 0);
 	const currentHandlesRef = useRef<ReadonlyArray<Handle>>([]);
 	const [gapSnapshots] = useState(() => new WeakMap<Handle, object>());

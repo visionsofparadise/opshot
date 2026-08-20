@@ -3,9 +3,10 @@
 import { act, fireEvent, render, screen } from "../../tests/harness";
 import type { FC } from "react";
 
+import { createMutableState } from "../createMutableState";
 import { transact } from "../transact/transact";
 import { scope } from "./scope";
-import { useMutableState } from "./useMutableState";
+import { LiveStatePropertiesError, useMutableState } from "./useMutableState";
 
 describe("useMutableState", () => {
 	it("rerenders on tracked mutation and preserves read-your-writes", async () => {
@@ -246,5 +247,47 @@ describe("useMutableState", () => {
 
 		expect(renders.parent).toBe(1);
 		expect(renders.child).toBe(4);
+	});
+
+	it("throws when properties is a live state", () => {
+		const existing = createMutableState({ count: 0 });
+		const View: FC = () => {
+			useMutableState(existing);
+
+			return null;
+		};
+		const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		try {
+			expect(() => {
+				render(<View />);
+			}).toThrow(LiveStatePropertiesError);
+		} finally {
+			error.mockRestore();
+		}
+	});
+
+	it("accepts a plain-object properties argument", () => {
+		const View: FC = () => {
+			const state = useMutableState({ count: 0 });
+
+			return <span data-testid="plain">{state.count}</span>;
+		};
+
+		render(<View />);
+
+		expect(screen.getByTestId("plain").textContent).toBe("0");
+	});
+
+	it("accepts a properties function", () => {
+		const View: FC = () => {
+			const state = useMutableState(() => ({ count: 0 }));
+
+			return <span data-testid="factory">{state.count}</span>;
+		};
+
+		render(<View />);
+
+		expect(screen.getByTestId("factory").textContent).toBe("0");
 	});
 });
