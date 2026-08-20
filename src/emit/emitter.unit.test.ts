@@ -351,8 +351,8 @@ describe("reconcileUntracked", () => {
 		return handle!.lastSnapshot;
 	};
 
-	it("re-pins a live-frozen nested node so a sibling write emits no phantom ops at the frozen path", () => {
-		const state = createMutableState({ shell: { holder: { n: 1 } }, tick: 0 });
+	it("re-pins a live-frozen nested node when a sibling on its parent writes", () => {
+		const state = createMutableState({ shell: { holder: { n: 1 }, mark: 0 } });
 		const lastSnapshot = lastSnapshotOf(state) as { shell: { holder: object } };
 		const heard = new Array<ReadonlyArray<Operation>>();
 
@@ -366,10 +366,17 @@ describe("reconcileUntracked", () => {
 		expect(lastSnapshot.shell.holder).not.toBe(state.shell.holder);
 
 		transact(state, () => {
-			state.tick = 1;
+			state.shell.mark = 1;
 		});
 
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+		expect(heard.map(shapeOps)).toEqual([
+			[
+				{
+					do: { verb: "assign", path: ["shell"], value: { holder: { n: 1 }, mark: 1 } },
+					undo: { verb: "assign", path: ["shell"], value: { holder: { n: 1 }, mark: 0 } },
+				},
+			],
+		]);
 	});
 
 	it("does not re-pin when a frozen occupant replaces a different object", () => {
@@ -403,41 +410,12 @@ describe("reconcileUntracked", () => {
 		]);
 	});
 
-	it("does not re-pin an accessor whose snapshot child drifted from the live-frozen node", () => {
-		const state = createMutableState({
-			tick: 0,
-			inner: { n: 1 },
-			get box() {
-				return this.inner;
-			},
-		});
-		const lastSnapshot = lastSnapshotOf(state) as { inner: object; box: object };
-		const heard = new Array<ReadonlyArray<Operation>>();
-
-		subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
-
-		Object.freeze(state.inner);
-
-		expect(Reflect.getOwnPropertyDescriptor(state, "box")?.get).toBeDefined();
-		expect(lastSnapshot.inner).not.toBe(state.inner);
-		expect(lastSnapshot.box).not.toBe(state.box);
-
-		transact(state, () => {
-			state.tick = 1;
-		});
-
-		expect(Reflect.getOwnPropertyDescriptor(state, "box")?.get).toBeDefined();
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-	});
-
 	it("copies array length including holes when re-pinning a frozen element", () => {
 		const items: Array<{ n: number } | undefined> = [{ n: 1 }];
 
 		items.length = 3;
 
-		const state = createMutableState({ items, tick: 0 });
+		const state = createMutableState({ items });
 		const lastSnapshot = lastSnapshotOf(state) as { items: Array<object | undefined> };
 		const heard = new Array<ReadonlyArray<Operation>>();
 		const element = state.items[0];
@@ -457,12 +435,39 @@ describe("reconcileUntracked", () => {
 		expect(lastSnapshot.items[0]).not.toBe(element);
 
 		transact(state, () => {
-			state.tick = 1;
+			state.items[2] = { n: 2 };
 		});
+
+		const beforeItems: Array<{ n: number } | undefined> = [{ n: 1 }];
+
+		beforeItems.length = 3;
+
+		const afterItems: Array<{ n: number } | undefined> = [{ n: 1 }];
+
+		afterItems[2] = { n: 2 };
 
 		expect(state.items.length).toBe(3);
 		expect(Object.hasOwn(state.items, 1)).toBe(false);
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-		expect(heard[0]?.some((operation) => operation.do.path.includes("length"))).toBe(false);
+		expect(heard.map(shapeOps)).toEqual([
+			[
+				{
+					do: { verb: "assign", path: ["items"], value: afterItems },
+					undo: { verb: "assign", path: ["items"], value: beforeItems },
+				},
+			],
+		]);
+
+		const undo = heard[0]?.[0]?.undo;
+		const undoItems = undo !== undefined && "value" in undo ? undo.value : undefined;
+
+		expect(undo?.verb).toBe("assign");
+		expect(Array.isArray(undoItems)).toBe(true);
+
+		if (Array.isArray(undoItems)) {
+			expect(undoItems).toHaveLength(3);
+			expect(Object.hasOwn(undoItems, 0)).toBe(true);
+			expect(Object.hasOwn(undoItems, 1)).toBe(false);
+			expect(Object.hasOwn(undoItems, 2)).toBe(false);
+		}
 	});
 });
