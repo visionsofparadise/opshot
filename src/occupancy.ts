@@ -130,7 +130,7 @@ export function addOccupancyRoute(handle: Handle, node: object, path: OperationP
 	capture.routes.added.set(raw, [...added, path]);
 }
 
-export function dropOccupancyRoutesUnder(_handle: Handle, path: OperationPath, capture: CaptureTables): void {
+export function dropOccupancyRoutesUnder(path: OperationPath, capture: CaptureTables): void {
 	capture.routes.droppedUnder.push(path);
 }
 

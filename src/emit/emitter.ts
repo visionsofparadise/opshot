@@ -15,7 +15,7 @@ export interface CapturedRange {
 	readonly writeError: Error | undefined;
 }
 
-export function scheduleFlush(handle: Handle): void {
+function scheduleFlush(handle: Handle): void {
 	if (handle.isFlushScheduled) return;
 
 	handle.isFlushScheduled = true;
@@ -43,8 +43,6 @@ export function scheduleFlush(handle: Handle): void {
 }
 
 export function armWatch(handle: Handle): void {
-	if (handle.disarmWatch !== undefined) return;
-
 	handle.disarmWatch = valtioSubscribe(
 		handle.proxy.root,
 		() => {

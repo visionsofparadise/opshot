@@ -36,8 +36,6 @@ const dropListenerChannel = <Deliver>(
 	bindings.delete(unsubscribe);
 };
 
-export const holdsBinding = (unsubscribe: () => void): boolean => bindings.has(unsubscribe);
-
 export function addStateListener(
 	state: object,
 	listener: Function,

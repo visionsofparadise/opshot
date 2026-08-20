@@ -60,6 +60,27 @@ class IncompatibleObjectRootsError extends Error {
 	}
 }
 
+class MissingDiffHandleError extends Error {
+	constructor() {
+		super("opshot: diff context is missing a handle");
+		this.name = "MissingDiffHandleError";
+	}
+}
+
+class MissingDiffParentError extends Error {
+	constructor() {
+		super("opshot: admitEmitPath could not resolve a live parent");
+		this.name = "MissingDiffParentError";
+	}
+}
+
+class MissingAncestorPairError extends Error {
+	constructor() {
+		super("opshot: exitAncestorPair without matching enterAncestorPair");
+		this.name = "MissingAncestorPairError";
+	}
+}
+
 const additionPair = (path: OperationPath, after: unknown): Operation => ({
 	do: createAssignMutation(path, after),
 	undo: createDeleteMutation(path),
@@ -95,13 +116,13 @@ const liveAtPath = (root: object, path: OperationPath): unknown => {
 };
 
 const routesOfLive = (context: DiffContext, live: object): ReadonlyArray<OperationPath> => {
-	if (context.handle === undefined) return [];
+	if (context.handle === undefined) throw new MissingDiffHandleError();
 
 	return overlayRoutesOf(context.handle, context.capture, live);
 };
 
 const predatingOf = (context: DiffContext, live: object): ReadonlyArray<OperationPath> => {
-	if (context.handle === undefined) return [];
+	if (context.handle === undefined) throw new MissingDiffHandleError();
 
 	return predatingRoutesOf(context.handle, live);
 };
@@ -128,7 +149,7 @@ const admitEmitPath = (
 	const liveChild = liveAtPath(context.handle.proxy.root, path);
 	const lastSegment = path[path.length - 1];
 
-	if (!isObjectLike(liveParent) || lastSegment === undefined) return "continue";
+	if (!isObjectLike(liveParent) || lastSegment === undefined) throw new MissingDiffParentError();
 
 	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
 	const unsafe = isUnderUnsafeOccupancy(context.handle, path);
@@ -152,7 +173,7 @@ const recordDescendantRoutes = (
 	sameOccupant = false,
 	unsafe = false,
 ): void => {
-	if (!writesTables(context)) return;
+	if (context.handle === undefined) throw new MissingDiffHandleError();
 
 	const liveNode = liveAtPath(context.handle.proxy.root, path);
 
@@ -248,8 +269,6 @@ const refForMint = (context: DiffContext, live: object, container: OperationPath
 };
 
 const assignmentNeedsDecomposition = (context: DiffContext, value: object, formation: OperationPath): boolean => {
-	if (!context.linksEnabled) return false;
-
 	const seen = new Set<object>();
 
 	seen.add(liveOf(value));
@@ -302,16 +321,20 @@ const forEachCarriedUndo = (
 	opsStart: number,
 	visit: (pair: Operation, live: object, index: number) => boolean,
 ): void => {
-	for (let index = opsStart; index < context.ops.length; index++) {
-		const pair = context.ops[index];
+	let index = opsStart;
 
-		if (pair === undefined) continue;
-
+	for (const pair of context.ops.slice(opsStart)) {
 		const live = carriedUndoLiveOf(pair);
 
-		if (live === undefined) continue;
+		if (live === undefined) {
+			index += 1;
+
+			continue;
+		}
 
 		if (visit(pair, live, index)) return;
+
+		index += 1;
 	}
 };
 
@@ -509,7 +532,7 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 	if (isSkippedPath(context, path)) return;
 
 	if (writesTables(context)) {
-		dropOccupancyRoutesUnder(context.handle, path, context.capture);
+		dropOccupancyRoutesUnder(path, context.capture);
 		markChangedPath(context, path);
 	}
 
@@ -524,16 +547,16 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 			};
 			let insertAt = context.ops.length;
 
-			for (let index = 0; index < context.ops.length; index++) {
-				const existing = context.ops[index];
+			let index = 0;
 
-				if (existing === undefined) continue;
-
+			for (const existing of context.ops) {
 				if (existing.do.verb === "delete" && operationPathsEqual(existing.do.path, recorded)) {
 					insertAt = index;
 
 					break;
 				}
+
+				index += 1;
 			}
 
 			insertOperation(context, insertAt, pair);
@@ -573,7 +596,7 @@ const enterAncestorPair = (ancestors: Ancestors, before: object, after: object):
 const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): void => {
 	const afterSet = ancestors.get(before);
 
-	if (!afterSet) return;
+	if (afterSet === undefined) throw new MissingAncestorPairError();
 
 	afterSet.delete(after);
 
@@ -742,7 +765,7 @@ const diffValue = (context: DiffContext, before: unknown, after: unknown, path: 
 	const replacing =
 		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
 
-	if (replacing && writesTables(context)) dropOccupancyRoutesUnder(context.handle, path, context.capture);
+	if (replacing && writesTables(context)) dropOccupancyRoutesUnder(path, context.capture);
 
 	const visit = admitEmitPath(context, path, before, after, isObjectLike(before) || before !== undefined);
 
@@ -809,11 +832,9 @@ interface DoPathTrieNode {
 const createDoPathTrie = (ops: ReadonlyArray<Operation>): ((route: OperationPath, afterIndex: number) => boolean) => {
 	const root: DoPathTrieNode = { terminalMax: -1, children: new Map() };
 
-	for (let index = 0; index < ops.length; index++) {
-		const pair = ops[index];
+	let index = 0;
 
-		if (pair === undefined) continue;
-
+	for (const pair of ops) {
 		let current = root;
 
 		for (const segment of pair.do.path) {
@@ -828,12 +849,12 @@ const createDoPathTrie = (ops: ReadonlyArray<Operation>): ((route: OperationPath
 		}
 
 		current.terminalMax = Math.max(current.terminalMax, index);
+
+		index += 1;
 	}
 
 	return (route: OperationPath, afterIndex: number): boolean => {
 		let current = root;
-
-		if (current.terminalMax > afterIndex) return true;
 
 		for (const segment of route) {
 			const child = current.children.get(segment);

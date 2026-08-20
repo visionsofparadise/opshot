@@ -88,6 +88,13 @@ const getPrototypeMethod = (target: object, prop: string | symbol): Function | u
 export const isReadProxy = (value: unknown): boolean =>
 	isObjectLike(value) && getRegisteredReadProxyTarget(value) !== undefined;
 
+class UnregisteredReadTrackerError extends Error {
+	constructor() {
+		super("opshot: readsIntersectDirty received an unregistered tracker");
+		this.name = "UnregisteredReadTrackerError";
+	}
+}
+
 const trackerPartitions = new WeakMap<ReadTracker, Map<object, SourcePartition>>();
 
 const recordedKeysOf = (used: UsageRecord): Array<Set<string | symbol>> => {
@@ -105,7 +112,7 @@ const recordedKeysOf = (used: UsageRecord): Array<Set<string | symbol>> => {
 export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): boolean {
 	const partitions = trackerPartitions.get(tracker);
 
-	if (partitions === undefined) return false;
+	if (partitions === undefined) throw new UnregisteredReadTrackerError();
 
 	for (const partition of partitions.values()) {
 		for (const [writeProxy, used] of partition.affected) {

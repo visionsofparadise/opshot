@@ -134,7 +134,7 @@ const peelSnapshotsAndReadProxies = (value: unknown): unknown => {
 export type DataPathWalkMode = "admission" | "rootsOnly";
 
 const walkDataPaths = (
-	value: unknown,
+	value: object,
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode,
@@ -143,8 +143,6 @@ const walkDataPaths = (
 	ignored: boolean,
 	unsafe: boolean,
 ): void => {
-	if (typeof value !== "object" || value === null) return;
-
 	if (visits.has(value)) return;
 
 	visits.add(value);
@@ -194,7 +192,7 @@ const walkDataPaths = (
 };
 
 export const assertSafeDataPaths = (
-	value: unknown,
+	value: object,
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode = "admission",

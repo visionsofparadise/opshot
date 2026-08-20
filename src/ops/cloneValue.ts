@@ -6,6 +6,13 @@ import type { OperationPath } from "./path";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
+class MissingOwnDescriptorError extends Error {
+	constructor() {
+		super("opshot: carried own key has no property descriptor");
+		this.name = "MissingOwnDescriptorError";
+	}
+}
+
 const isInstrumented = (value: object): boolean => proxyStateMap.has(value) || getRegisteredTarget(value) !== undefined;
 
 export const isPlainArray = (value: unknown): value is Array<unknown> => Array.isArray(value);
@@ -35,7 +42,7 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 	for (const key of carriedOwnKeysOf(value)) {
 		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
 
-		if (!descriptor) continue;
+		if (descriptor === undefined) throw new MissingOwnDescriptorError();
 
 		if ("value" in descriptor) {
 			Object.defineProperty(clone, key, {

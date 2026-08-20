@@ -6,6 +6,13 @@ import { admissionLane } from "./classify";
 
 const { proxyStateMap, snapCache } = unstable_getInternalStates();
 
+class MissingOwnDescriptorError extends Error {
+	constructor() {
+		super("opshot: carried own key has no property descriptor");
+		this.name = "MissingOwnDescriptorError";
+	}
+}
+
 export const createSnapshotPreservingAccessors = <T extends object>(target: T, version: number): T => {
 	const cached = snapCache.get(target);
 
@@ -51,7 +58,7 @@ export const createSnapshotPreservingAccessors = <T extends object>(target: T, v
 
 		const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
 
-		if (!descriptor) continue;
+		if (descriptor === undefined) throw new MissingOwnDescriptorError();
 
 		if (descriptor.get || descriptor.set) {
 			Object.defineProperty(snap, key, {

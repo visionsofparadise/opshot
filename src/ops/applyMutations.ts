@@ -176,7 +176,7 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 	return { parent, segment: path[path.length - 1] };
 };
 
-export const resolveRefValue = (root: object, ref: OperationPath, linkPath: OperationPath): object => {
+const resolveRefValue = (root: object, ref: OperationPath, linkPath: OperationPath): object => {
 	if (ref.length === 0) return root;
 
 	let current: unknown = root;
