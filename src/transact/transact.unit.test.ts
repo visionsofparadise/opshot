@@ -1,9 +1,27 @@
 import { createMutableState } from "../createMutableState";
+import { handleOf } from "../handle";
 import { ignore } from "../ignore";
 import { OccupancyRefusalError } from "../occupancy";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "./transact";
+
+const captureUncaught = (run: () => void): Array<() => void> => {
+	const released = new Array<() => void>();
+	const originalQueueMicrotask = globalThis.queueMicrotask.bind(globalThis);
+
+	globalThis.queueMicrotask = (callback: () => void) => {
+		released.push(callback);
+	};
+
+	try {
+		run();
+
+		return released;
+	} finally {
+		globalThis.queueMicrotask = originalQueueMicrotask;
+	}
+};
 
 describe("transact", () => {
 	it("runs the callback synchronously and delivers its writes as one emission", () => {
@@ -201,5 +219,107 @@ describe("transact", () => {
 		} finally {
 			globalThis.queueMicrotask = originalQueueMicrotask;
 		}
+	});
+
+	it("a throwing subscriber does not fail transact and its failure surfaces from a queueMicrotask", () => {
+		const state = createMutableState({ n: 0 });
+		const failure = new Error("listener failed");
+
+		subscribe(state, () => {
+			throw failure;
+		});
+
+		const released = captureUncaught(() => {
+			transact(state, () => {
+				state.n = 1;
+			});
+		});
+
+		expect(state.n).toBe(1);
+		expect(released).toHaveLength(1);
+		expect(() => released[0]?.()).toThrow(failure);
+	});
+
+	it("two throwing subscribers release one AggregateError", () => {
+		const state = createMutableState({ n: 0 });
+		const first = new Error("first failure");
+		const second = new Error("second failure");
+
+		subscribe(state, () => {
+			throw first;
+		});
+		subscribe(state, () => {
+			throw second;
+		});
+
+		const released = captureUncaught(() => {
+			transact(state, () => {
+				state.n = 1;
+			});
+		});
+
+		expect(state.n).toBe(1);
+		expect(released).toHaveLength(1);
+
+		let thrown: unknown;
+
+		try {
+			released[0]?.();
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(AggregateError);
+		expect((thrown as AggregateError).message).toBe("opshot: listeners failed during delivery");
+		expect((thrown as AggregateError).errors).toEqual([first, second]);
+	});
+
+	it("a rollback that itself throws attaches as cause on the callback's error", () => {
+		const state = createMutableState({ n: 0 });
+		const callbackError = new Error("callback failed");
+		const rollbackError = new Error("rollback failed");
+		const handle = handleOf(state);
+
+		subscribe(state, () => undefined);
+
+		expect(handle).toBeDefined();
+		expect(() => {
+			transact(state, () => {
+				state.n = 99;
+				handle!.lastSnapshot = new Proxy(
+					{},
+					{
+						getPrototypeOf: () => {
+							throw rollbackError;
+						},
+						get: () => {
+							throw rollbackError;
+						},
+						ownKeys: () => {
+							throw rollbackError;
+						},
+					},
+				);
+
+				throw callbackError;
+			});
+		}).toThrow(callbackError);
+		expect(callbackError.cause).toBe(rollbackError);
+		expect(Object.getOwnPropertyDescriptor(callbackError, "cause")?.enumerable).toBe(false);
+	});
+
+	it("transact inside transact throws", () => {
+		const state = createMutableState({ n: 0 });
+
+		expect(() =>
+			transact(state, () => {
+				transact(state, () => {
+					state.n = 1;
+				});
+			}),
+		).toThrow(
+			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
+		);
+		expect(state.n).toBe(0);
 	});
 });

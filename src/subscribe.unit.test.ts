@@ -1,3 +1,4 @@
+import { createChannel } from "./createChannel";
 import { createMutableState } from "./createMutableState";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
@@ -66,5 +67,22 @@ describe("subscribe", () => {
 		expect(heard.map(shapeOps)).toEqual([
 			[{ do: { verb: "assign", path: ["n"], value: 3 }, undo: { verb: "assign", path: ["n"], value: 0 } }],
 		]);
+	});
+
+	it("a channel transact with no meta delivers the channel defaults verbatim", () => {
+		const defaults = { actor: "default", role: "writer" };
+		const channel = createChannel<{ actor: string; role: string }>(defaults);
+		const state = createMutableState({ count: 0 });
+		const heard = new Array<unknown>();
+
+		channel.subscribe(state, (_ops, context) => {
+			heard.push(context);
+		});
+
+		channel.transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(heard).toEqual([{ isTransaction: true, meta: { actor: "default", role: "writer" } }]);
 	});
 });

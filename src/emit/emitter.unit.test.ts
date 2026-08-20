@@ -1,4 +1,5 @@
 import { createMutableState } from "../createMutableState";
+import { ignore } from "../ignore";
 import { OccupancyRefusalError } from "../occupancy";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -336,5 +337,103 @@ describe("write-window occupancy refusal", () => {
 
 		expect(errors).toHaveLength(1);
 		expect(heard.map(shapeOps)).toEqual([tickAssign(1, 2)]);
+	});
+});
+
+describe("reconcileUntracked", () => {
+	it("an ignored object two levels deep keeps its live identity across an emission", () => {
+		const inner = { n: 1 };
+		const state = createMutableState({ outer: { inner: ignore(inner) }, tick: 0 });
+		const held = state.outer.inner;
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		transact(state, () => {
+			state.tick = 1;
+		});
+
+		expect(state.outer.inner).toBe(held);
+		expect(state.outer.inner).toBe(inner);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+	});
+
+	it("replacing the occupant of an ignored path emits no untracked re-pin and stays untracked", () => {
+		const first = { n: 1 };
+		const second = { n: 2 };
+		const state = createMutableState({ box: ignore(first), tick: 0 });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		transact(state, () => {
+			state.box = second;
+			state.tick = 1;
+		});
+
+		expect(state.box).toBe(second);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+
+		heard.length = 0;
+
+		transact(state, () => {
+			state.box.n = 9;
+			state.tick = 2;
+		});
+
+		expect(state.box.n).toBe(9);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(1, 2)]);
+	});
+
+	it("an accessor holding an untracked object is not re-pinned", () => {
+		const untracked = Object.freeze({ n: 1 });
+		const state = createMutableState({
+			tick: 0,
+			held: ignore(untracked),
+			get box() {
+				return untracked;
+			},
+		});
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		transact(state, () => {
+			state.tick = 1;
+		});
+
+		expect(state.box).toBe(untracked);
+		expect(state.held).toBe(untracked);
+		expect(Reflect.getOwnPropertyDescriptor(state, "box")?.get).toBeDefined();
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+	});
+
+	it("an array containing an ignored element reconciles without losing length", () => {
+		const element = { n: 1 };
+		const items: Array<{ n: number } | undefined> = [ignore(element) as unknown as { n: number }];
+
+		items.length = 3;
+
+		const state = createMutableState({ items, tick: 0 });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		transact(state, () => {
+			state.tick = 1;
+		});
+
+		expect(state.items.length).toBe(3);
+		expect(state.items[0]).toBe(element);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+		expect(heard[0]?.some((operation) => operation.do.path.includes("length"))).toBe(false);
 	});
 });
