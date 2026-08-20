@@ -1,5 +1,7 @@
+import { snapshot } from "valtio/vanilla";
+
 import { createMutableState } from "../createMutableState";
-import { ignore } from "../ignore";
+import { handleOf } from "../handle";
 import { OccupancyRefusalError } from "../occupancy";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -341,98 +343,125 @@ describe("write-window occupancy refusal", () => {
 });
 
 describe("reconcileUntracked", () => {
-	it("an ignored object two levels deep keeps its live identity across an emission", () => {
-		const inner = { n: 1 };
-		const state = createMutableState({ outer: { inner: ignore(inner) }, tick: 0 });
-		const held = state.outer.inner;
+	const lastSnapshotOf = (state: object): object => {
+		const handle = handleOf(state);
+
+		expect(handle).toBeDefined();
+
+		return handle!.lastSnapshot;
+	};
+
+	it("re-pins a live-frozen nested node so a sibling write emits no phantom ops at the frozen path", () => {
+		const state = createMutableState({ shell: { holder: { n: 1 } }, tick: 0 });
+		const lastSnapshot = lastSnapshotOf(state) as { shell: { holder: object } };
 		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
 
+		Object.freeze(state.shell.holder);
+
+		expect(snapshot(state).shell.holder).not.toBe(state.shell.holder);
+		expect(lastSnapshot.shell.holder).not.toBe(state.shell.holder);
+
 		transact(state, () => {
 			state.tick = 1;
 		});
 
-		expect(state.outer.inner).toBe(held);
-		expect(state.outer.inner).toBe(inner);
 		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
 	});
 
-	it("replacing the occupant of an ignored path emits no untracked re-pin and stays untracked", () => {
-		const first = { n: 1 };
-		const second = { n: 2 };
-		const state = createMutableState({ box: ignore(first), tick: 0 });
+	it("does not re-pin when a frozen occupant replaces a different object", () => {
+		const original = { n: 1 };
+		const replacement = Object.freeze({ n: 2 });
+		const state = createMutableState({ box: original, tick: 0 });
+		const lastSnapshot = lastSnapshotOf(state) as { box: object };
 		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
 
+		expect(lastSnapshot.box).not.toBe(state.box);
+		expect(lastSnapshot.box).not.toBe(replacement);
+
 		transact(state, () => {
-			state.box = second;
+			state.box = replacement;
 			state.tick = 1;
 		});
 
-		expect(state.box).toBe(second);
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-
-		heard.length = 0;
-
-		transact(state, () => {
-			state.box.n = 9;
-			state.tick = 2;
-		});
-
-		expect(state.box.n).toBe(9);
-		expect(heard.map(shapeOps)).toEqual([tickAssign(1, 2)]);
+		expect(state.box).toBe(replacement);
+		expect(heard.map(shapeOps)).toEqual([
+			[
+				{
+					do: { verb: "assign", path: ["box"], value: replacement },
+					undo: { verb: "assign", path: ["box"], value: { n: 1 } },
+				},
+				...tickAssign(0, 1),
+			],
+		]);
 	});
 
-	it("an accessor holding an untracked object is not re-pinned", () => {
-		const untracked = Object.freeze({ n: 1 });
+	it("does not re-pin an accessor whose snapshot child drifted from the live-frozen node", () => {
 		const state = createMutableState({
 			tick: 0,
-			held: ignore(untracked),
+			inner: { n: 1 },
 			get box() {
-				return untracked;
+				return this.inner;
 			},
 		});
+		const lastSnapshot = lastSnapshotOf(state) as { inner: object; box: object };
 		const heard = new Array<ReadonlyArray<Operation>>();
 
 		subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
 
+		Object.freeze(state.inner);
+
+		expect(Reflect.getOwnPropertyDescriptor(state, "box")?.get).toBeDefined();
+		expect(lastSnapshot.inner).not.toBe(state.inner);
+		expect(lastSnapshot.box).not.toBe(state.box);
+
 		transact(state, () => {
 			state.tick = 1;
 		});
 
-		expect(state.box).toBe(untracked);
-		expect(state.held).toBe(untracked);
 		expect(Reflect.getOwnPropertyDescriptor(state, "box")?.get).toBeDefined();
 		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
 	});
 
-	it("an array containing an ignored element reconciles without losing length", () => {
-		const element = { n: 1 };
-		const items: Array<{ n: number } | undefined> = [ignore(element) as unknown as { n: number }];
+	it("copies array length including holes when re-pinning a frozen element", () => {
+		const items: Array<{ n: number } | undefined> = [{ n: 1 }];
 
 		items.length = 3;
 
 		const state = createMutableState({ items, tick: 0 });
+		const lastSnapshot = lastSnapshotOf(state) as { items: Array<object | undefined> };
 		const heard = new Array<ReadonlyArray<Operation>>();
+		const element = state.items[0];
 
 		subscribe(state, (ops) => {
 			heard.push([...ops]);
 		});
+
+		expect(element).toBeDefined();
+		expect(lastSnapshot.items.length).toBe(3);
+		expect(Object.hasOwn(lastSnapshot.items, 1)).toBe(false);
+		expect(lastSnapshot.items[0]).not.toBe(element);
+
+		Object.freeze(element);
+
+		expect(snapshot(state).items[0]).not.toBe(element);
+		expect(lastSnapshot.items[0]).not.toBe(element);
 
 		transact(state, () => {
 			state.tick = 1;
 		});
 
 		expect(state.items.length).toBe(3);
-		expect(state.items[0]).toBe(element);
+		expect(Object.hasOwn(state.items, 1)).toBe(false);
 		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
 		expect(heard[0]?.some((operation) => operation.do.path.includes("length"))).toBe(false);
 	});
