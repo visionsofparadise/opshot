@@ -1,12 +1,11 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
 import {
-	beginOccupancyRefusals,
 	copyOccupancyTables,
-	markOccupancyRefusal,
-	occupancyRefusalsOf,
+	OccupancyRefusalError,
 	restoreOccupancyTables,
 	syncHandleTables,
+	type CaptureTables,
 } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
@@ -137,14 +136,14 @@ const reconcileUntracked = (snap: object, live: object, seen: WeakSet<object>): 
 	return result ?? snap;
 };
 
-const combinedRefusalOf = (refusals: ReadonlyArray<Error>): Error => {
+const occupancyRefusalOf = (refusals: ReadonlyArray<Error>): OccupancyRefusalError => {
 	if (refusals.length === 1) {
 		const only = refusals[0];
 
-		if (only !== undefined) return only;
+		if (only !== undefined) return new OccupancyRefusalError(only);
 	}
 
-	return new AggregateError(refusals, "opshot: dangerous occupancies were refused");
+	return new OccupancyRefusalError(new AggregateError(refusals, "opshot: dangerous occupancies were refused"));
 };
 
 const captureRange = (
@@ -160,22 +159,22 @@ const captureRange = (
 
 	const occupancyBaseline = copyOccupancyTables(handle);
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
+	const capture: CaptureTables = { refusals: [], omissions: new Set() };
 
-	beginOccupancyRefusals(handle);
-
-	if (from === to) syncHandleTables(handle);
+	if (from === to) syncHandleTables(handle, capture);
 
 	const ops =
-		from === to ? [] : diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty);
+		from === to
+			? []
+			: diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty, capture);
 
-	const refusals = occupancyRefusalsOf(handle);
+	const refusals = capture.refusals;
 
 	if (kind === "transaction" && refusals.length > 0) {
 		restoreOccupancyTables(handle, occupancyBaseline);
-		beginOccupancyRefusals(handle);
 		rollbackTransaction(handle);
 
-		throw combinedRefusalOf(refusals);
+		throw occupancyRefusalOf(refusals);
 	}
 
 	handle.lastSnapshot = to;
@@ -186,8 +185,7 @@ const captureRange = (
 
 	return {
 		delivery: ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, dirty) : undefined,
-		writeError:
-			kind === "write" && refusals.length > 0 ? markOccupancyRefusal(combinedRefusalOf(refusals)) : undefined,
+		writeError: kind === "write" && refusals.length > 0 ? occupancyRefusalOf(refusals) : undefined,
 	};
 };
 

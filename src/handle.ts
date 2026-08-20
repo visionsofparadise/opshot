@@ -30,8 +30,7 @@ export interface Handle {
 	onError?: (error: unknown) => void;
 	unsafeAt: ReadonlySet<string>;
 	ignoredAt: ReadonlySet<string>;
-	members: WeakSet<object>;
-	routes: WeakMap<object, ReadonlyArray<OperationPath>>;
+	routes: Map<object, ReadonlyArray<OperationPath>>;
 	lastDirty?: DirtyIndex;
 	stamp: object;
 	version: number;

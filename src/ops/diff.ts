@@ -7,7 +7,7 @@ import {
 	isUnderIgnoredOccupancy,
 	isUnderUnsafeOccupancy,
 	markDirtyPath,
-	occupancyOmissionsOf,
+	type CaptureTables,
 	type OccupancyVisit,
 } from "../occupancy";
 import { walkDataEntries } from "../utils/dataEntries";
@@ -50,7 +50,7 @@ interface DiffContext {
 	readonly linksEnabled: boolean;
 	readonly handle: Handle | undefined;
 	readonly dirty: DirtyIndex | undefined;
-	readonly omissions: ReadonlySet<string>;
+	readonly capture: CaptureTables;
 }
 
 class IncompatibleObjectRootsError extends Error {
@@ -146,7 +146,16 @@ const admitEmitPath = (
 
 	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
 	const unsafe = isUnderUnsafeOccupancy(context.handle, path);
-	const visit = bindVisitedOccupancy(context.handle, path, liveParent, lastSegment, liveChild, sameOccupant, unsafe);
+	const visit = bindVisitedOccupancy(
+		context.handle,
+		path,
+		liveParent,
+		lastSegment,
+		liveChild,
+		context.capture,
+		sameOccupant,
+		unsafe,
+	);
 
 	if (visit === "continue" && isObjectLike(liveChild)) {
 		rememberFirstRouteThisBatch(context, liveChild, path);
@@ -192,6 +201,7 @@ const recordDescendantRoutes = (
 			liveNode,
 			entry.key,
 			entry.value,
+			context.capture,
 			sameOccupant,
 			childUnsafe,
 		);
@@ -606,13 +616,13 @@ const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
 
 const isOmittedPath = (context: DiffContext, path: OperationPath): boolean => {
-	if (context.omissions.size === 0) return false;
+	if (context.capture.omissions.size === 0) return false;
 
 	const pathKey = formatOperationPath(path);
 
-	if (context.omissions.has(pathKey)) return true;
+	if (context.capture.omissions.has(pathKey)) return true;
 
-	for (const omitted of context.omissions) {
+	for (const omitted of context.capture.omissions) {
 		if (omitted === "/") return true;
 
 		if (pathKey.startsWith(`${omitted}/`)) return true;
@@ -630,7 +640,7 @@ const isSkippedPath = (context: DiffContext, path: OperationPath): boolean => {
 };
 
 const withoutOmittedChildren = (context: DiffContext, value: unknown, path: OperationPath): unknown => {
-	if (!isObjectLike(value) || context.omissions.size === 0) return value;
+	if (!isObjectLike(value) || context.capture.omissions.size === 0) return value;
 
 	let clone: Record<string, unknown> | Array<unknown> | undefined;
 
@@ -899,7 +909,13 @@ const rewriteSurvivingUndos = (context: DiffContext): void => {
  * @param after - Later value.
  * @returns Ops from before to after.
  */
-export function diffObjects(before: object, after: object, handle?: Handle, dirty?: DirtyIndex): Array<Operation> {
+export function diffObjects(
+	before: object,
+	after: object,
+	handle?: Handle,
+	dirty?: DirtyIndex,
+	capture?: CaptureTables,
+): Array<Operation> {
 	const beforeKind = getRootKind(before);
 	const afterKind = getRootKind(after);
 
@@ -921,7 +937,7 @@ export function diffObjects(before: object, after: object, handle?: Handle, dirt
 		linksEnabled,
 		handle,
 		dirty,
-		omissions: handle === undefined ? new Set() : occupancyOmissionsOf(handle),
+		capture: capture ?? { refusals: [], omissions: new Set() },
 	};
 
 	diffValue(context, before, after, createOperationPath([]));

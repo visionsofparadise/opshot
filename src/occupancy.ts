@@ -27,11 +27,17 @@ export interface OccupancyTableSnapshot {
 	readonly routes: Map<object, ReadonlyArray<OperationPath>>;
 }
 
-const occupancyRoutesByHandle = new WeakMap<Handle, Map<object, Array<OperationPath>>>();
+export interface CaptureTables {
+	refusals: Array<Error>;
+	omissions: Set<string>;
+}
 
-const occupancyRefusals = new WeakMap<Handle, Array<Error>>();
-
-const occupancyOmissions = new WeakMap<Handle, Set<string>>();
+export class OccupancyRefusalError extends Error {
+	constructor(refusal: Error) {
+		super(refusal.message, refusal instanceof AggregateError ? { cause: refusal } : undefined);
+		this.name = "OccupancyRefusalError";
+	}
+}
 
 const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
 	typeof key === "number" ? String(key) : key;
@@ -39,67 +45,26 @@ const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
-export function beginOccupancyRefusals(handle: Handle): void {
-	occupancyRefusals.set(handle, []);
-	occupancyOmissions.set(handle, new Set());
-}
-
-export function occupancyRefusalsOf(handle: Handle): Array<Error> {
-	return occupancyRefusals.get(handle) ?? [];
-}
-
-const occupancyRefusalErrors = new WeakSet<object>();
-
-export function markOccupancyRefusal(error: Error): Error {
-	occupancyRefusalErrors.add(error);
-
-	return error;
-}
-
-export function isOccupancyRefusal(error: unknown): boolean {
-	return typeof error === "object" && error !== null && occupancyRefusalErrors.has(error);
-}
-
-export function occupancyOmissionsOf(handle: Handle): Set<string> {
-	return occupancyOmissions.get(handle) ?? new Set();
-}
-
 const pathKeyOf = (path: OperationPath): string => formatOperationPath(path);
-
-const routeTableOf = (handle: Handle): Map<object, Array<OperationPath>> => {
-	let table = occupancyRoutesByHandle.get(handle);
-
-	if (table === undefined) {
-		table = new Map();
-		occupancyRoutesByHandle.set(handle, table);
-	}
-
-	return table;
-};
 
 const publishRoutes = (handle: Handle, node: object, paths: ReadonlyArray<OperationPath>): void => {
 	const raw = rawTargetOf(node);
-	const table = routeTableOf(handle);
 
 	if (paths.length === 0) {
-		table.delete(raw);
 		handle.routes.delete(raw);
-		handle.members.delete(raw);
 
 		return;
 	}
 
 	const copy = [...paths];
 
-	table.set(raw, copy);
 	handle.routes.set(raw, copy);
-	handle.members.add(raw);
 	registerHandle(raw, handle);
 };
 
 export function addOccupancyRoute(handle: Handle, node: object, path: OperationPath): void {
 	const raw = rawTargetOf(node);
-	const existing = routeTableOf(handle).get(raw) ?? [];
+	const existing = handle.routes.get(raw) ?? [];
 
 	if (existing.some((occupied) => operationPathsEqual(occupied, path))) return;
 
@@ -107,11 +72,7 @@ export function addOccupancyRoute(handle: Handle, node: object, path: OperationP
 }
 
 export function dropOccupancyRoutesUnder(handle: Handle, path: OperationPath): void {
-	const table = occupancyRoutesByHandle.get(handle);
-
-	if (table === undefined) return;
-
-	for (const [node, paths] of table) {
+	for (const [node, paths] of handle.routes) {
 		const next = paths.filter((occupied) => !routeUnderPath(occupied, path));
 
 		if (next.length === paths.length) continue;
@@ -121,14 +82,10 @@ export function dropOccupancyRoutesUnder(handle: Handle, path: OperationPath): v
 }
 
 export function restoreOccupancyTables(handle: Handle, snapshot: OccupancyTableSnapshot): void {
-	const table = routeTableOf(handle);
-
-	for (const node of [...table.keys()]) {
+	for (const node of [...handle.routes.keys()]) {
 		if (snapshot.routes.has(node)) continue;
 
-		table.delete(node);
 		handle.routes.delete(node);
-		handle.members.delete(node);
 	}
 
 	for (const [node, paths] of snapshot.routes) {
@@ -138,27 +95,17 @@ export function restoreOccupancyTables(handle: Handle, snapshot: OccupancyTableS
 
 export function copyOccupancyTables(handle: Handle): OccupancyTableSnapshot {
 	const routes = new Map<object, ReadonlyArray<OperationPath>>();
-	const table = occupancyRoutesByHandle.get(handle);
 
-	if (table !== undefined) {
-		for (const [node, paths] of table) routes.set(node, [...paths]);
-	}
+	for (const [node, paths] of handle.routes) routes.set(node, [...paths]);
 
 	return { routes };
 }
 
 const pathAsStrings = (path: OperationPath): Array<string> => path.map((segment) => String(segment));
 
-const collectRefusal = (handle: Handle, error: Error, pathKey: string): void => {
-	const refusals = occupancyRefusals.get(handle);
-
-	if (refusals === undefined) occupancyRefusals.set(handle, [error]);
-	else refusals.push(error);
-
-	const omissions = occupancyOmissions.get(handle);
-
-	if (omissions === undefined) occupancyOmissions.set(handle, new Set([pathKey]));
-	else omissions.add(pathKey);
+const collectRefusal = (capture: CaptureTables, error: Error, pathKey: string): void => {
+	capture.refusals.push(error);
+	capture.omissions.add(pathKey);
 };
 
 const occupancySetHasPrefix = (flags: ReadonlySet<string>, path: OperationPath): boolean => {
@@ -189,6 +136,7 @@ export function bindVisitedOccupancy(
 	parent: object,
 	key: string | number,
 	child: unknown,
+	capture: CaptureTables,
 	sameOccupant = false,
 	unsafe = false,
 ): OccupancyVisit {
@@ -208,7 +156,7 @@ export function bindVisitedOccupancy(
 
 		if (admitted || sameOccupant) return "continue";
 
-		collectRefusal(handle, rejectionError(parentRaw, parentKind, pathAsStrings(path)), pathKey);
+		collectRefusal(capture, rejectionError(parentRaw, parentKind, pathAsStrings(path)), pathKey);
 
 		return "omit";
 	}
@@ -226,7 +174,7 @@ export function bindVisitedOccupancy(
 
 		if (sameOccupant) return "skip";
 
-		collectRefusal(handle, nonWritablePropertyError(childLive, pathAsStrings(path)), pathKey);
+		collectRefusal(capture, nonWritablePropertyError(childLive, pathAsStrings(path)), pathKey);
 
 		return "omit";
 	}
@@ -244,7 +192,7 @@ export function bindVisitedOccupancy(
 
 		if (sameOccupant) return "skip";
 
-		collectRefusal(handle, rejectionError(childLive, decision.kind, pathAsStrings(path)), pathKey);
+		collectRefusal(capture, rejectionError(childLive, decision.kind, pathAsStrings(path)), pathKey);
 
 		return "omit";
 	}
@@ -256,7 +204,7 @@ export function bindVisitedOccupancy(
 			if (sameOccupant) break;
 
 			collectRefusal(
-				handle,
+				capture,
 				rejectionError(childLive, "cleanClass", pathAsStrings(appendOperationPath(path, entry.key))),
 				pathKey,
 			);
@@ -306,7 +254,7 @@ export function markDirtyPath(
 	edges.add(edge);
 }
 
-const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean): void => {
+const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: CaptureTables): void => {
 	const root = handle.proxy.root;
 
 	addOccupancyRoute(handle, rawTargetOf(root), createOperationPath([]));
@@ -327,7 +275,16 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean): void => {
 		for (const entry of walkDataEntries(node)) {
 			const childPath = appendOperationPath(path, segmentFor(node, entry.key));
 			const childUnsafe = nodeUnsafe || handle.unsafeAt.has(pathKeyOf(childPath));
-			const visit = bindVisitedOccupancy(handle, childPath, node, entry.key, entry.value, sameOccupant, childUnsafe);
+			const visit = bindVisitedOccupancy(
+				handle,
+				childPath,
+				node,
+				entry.key,
+				entry.value,
+				capture,
+				sameOccupant,
+				childUnsafe,
+			);
 
 			if (visit !== "continue") continue;
 
@@ -339,9 +296,9 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean): void => {
 };
 
 export function seedOccupancies(handle: Handle): void {
-	walkLiveOccupancies(handle, false);
+	walkLiveOccupancies(handle, false, { refusals: [], omissions: new Set() });
 }
 
-export function syncHandleTables(handle: Handle): void {
-	walkLiveOccupancies(handle, true);
+export function syncHandleTables(handle: Handle, capture: CaptureTables): void {
+	walkLiveOccupancies(handle, true, capture);
 }
