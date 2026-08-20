@@ -1,4 +1,4 @@
-import { createGroup } from "./createGroup";
+import { createGroup, type Group } from "./createGroup";
 import { isSameIdentity } from "./identity";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
@@ -77,5 +77,28 @@ describe("createGroup", () => {
 		});
 
 		expect(emissions).toHaveLength(0);
+	});
+
+	it("delivers a three-tier state to the root group, outer group first", () => {
+		const root = createGroup();
+		const mid = createGroup(root);
+		const leaf = createGroup(mid);
+		const order = new Array<string>();
+
+		subscribe(root, () => order.push("root"));
+		subscribe(mid, () => order.push("mid"));
+		subscribe(leaf, () => order.push("leaf"));
+
+		const state = leaf.createMutableState<Counter>({ count: 0 });
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		expect(order).toEqual(["root", "mid", "leaf"]);
+	});
+
+	it("throws when the parent is not a group", () => {
+		expect(() => createGroup({} as Group)).toThrow("opshot: parent is not a group");
 	});
 });

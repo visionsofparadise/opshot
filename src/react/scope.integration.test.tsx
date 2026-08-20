@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
 
 import { act, render, screen } from "../../tests/harness";
-import { Component, memo, useEffect, useState, type FC, type ReactNode } from "react";
+import {
+	Component,
+	memo,
+	StrictMode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type FC,
+	type ReactNode,
+} from "react";
 
 import { createMutableState } from "../createMutableState";
+import { handleOf } from "../handle";
 import { transact } from "../transact/transact";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
@@ -156,6 +167,144 @@ describe("scope", () => {
 
 		expect(screen.getByTestId("count").textContent).toBe("1");
 		expect(childRenders).toBe(3);
+	});
+
+	it("rerenders a write that lands between render and subscribe", () => {
+		const queued = new Array<() => void>();
+		let boundaryRenders = 0;
+
+		const Mutator: FC<{ state: { count: number } }> = ({ state }) => {
+			const mutated = useRef(false);
+
+			useLayoutEffect(() => {
+				if (mutated.current) return;
+
+				mutated.current = true;
+				state.count = 7;
+			});
+
+			return null;
+		};
+
+		const Scoped = scope<{ state: { count: number } }>(({ state }) => {
+			boundaryRenders += 1;
+
+			return (
+				<div>
+					<span data-testid="early">{state.count}</span>
+					<Mutator state={state} />
+				</div>
+			);
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0 }, { emitOn: (flush) => queued.push(flush) });
+
+			return <Scoped state={state} />;
+		};
+
+		render(<Parent />);
+
+		expect(screen.getByTestId("early").textContent).toBe("7");
+		expect(boundaryRenders).toBe(2);
+		expect(queued).toHaveLength(0);
+	});
+
+	it("rerenders for a write made while a source was departed", async () => {
+		const queuedA = new Array<() => void>();
+		const stateA = createMutableState({ count: 0 }, { emitOn: (flush) => queuedA.push(flush) });
+		const stateB = createMutableState({ count: 0 });
+		let childRenders = 0;
+		let switchSource: ((value: "a" | "b") => void) | undefined;
+
+		const Child = scope<{ state: { count: number } }>(({ state }) => {
+			childRenders += 1;
+
+			return <span data-testid="departed">{state.count}</span>;
+		});
+
+		const Parent: FC = () => {
+			const [which, setWhich] = useState<"a" | "b">("a");
+
+			switchSource = setWhich;
+
+			return <Child state={which === "a" ? stateA : stateB} />;
+		};
+
+		render(<Parent />);
+		expect(childRenders).toBe(1);
+		expect(screen.getByTestId("departed").textContent).toBe("0");
+
+		await act(async () => {
+			switchSource?.("b");
+		});
+
+		expect(childRenders).toBe(2);
+
+		await act(async () => {
+			stateA.count = 1;
+		});
+
+		expect(childRenders).toBe(2);
+
+		await act(async () => {
+			switchSource?.("a");
+		});
+
+		expect(screen.getByTestId("departed").textContent).toBe("1");
+		expect(childRenders).toBe(3);
+	});
+
+	it("subscribes once when the same state is passed on two props", async () => {
+		const state = createMutableState({ count: 0 });
+		const handle = handleOf(state);
+		let renders = 0;
+
+		const View = scope<{ left: { count: number }; right: { count: number } }>(({ left, right }) => {
+			renders += 1;
+
+			return <span data-testid="both">{left.count + right.count}</span>;
+		});
+
+		render(<View left={state} right={state} />);
+
+		expect(handle?.subscribers.size).toBe(1);
+		expect(renders).toBe(1);
+		expect(screen.getByTestId("both").textContent).toBe("0");
+
+		await act(async () => {
+			state.count = 1;
+		});
+
+		expect(renders).toBe(2);
+		expect(handle?.subscribers.size).toBe(1);
+		expect(screen.getByTestId("both").textContent).toBe("2");
+	});
+
+	it("keeps re-rendering a read field after StrictMode remounts in the same tick", async () => {
+		const state = createMutableState({ count: 0 });
+		let renders = 0;
+
+		const View = scope<{ state: { count: number } }>(({ state: scoped }) => {
+			renders += 1;
+
+			return <span data-testid="strict">{scoped.count}</span>;
+		});
+
+		render(
+			<StrictMode>
+				<View state={state} />
+			</StrictMode>,
+		);
+
+		const before = renders;
+
+		await act(async () => {
+			state.count = 1;
+		});
+
+		expect(renders).toBeGreaterThan(before);
+		expect(screen.getByTestId("strict").textContent).toBe("1");
 	});
 
 	it("renders a memoized component as an element and keeps it updating", async () => {

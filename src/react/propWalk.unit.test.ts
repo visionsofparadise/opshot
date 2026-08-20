@@ -162,4 +162,32 @@ describe("substituteStates", () => {
 		expect(result.sources[0]).toBe(state);
 		expect(result.props.inner).toEqual({ wrapper: state });
 	});
+
+	it("does not discover a state under a frozen container in props", () => {
+		const state = createState();
+		const frozen = Object.freeze({ inner: state });
+		const result = substituteStates({ frozen }, wrapSource);
+
+		expect(result.sources).toEqual([]);
+		expect(result.props.frozen).toBe(frozen);
+	});
+
+	it("does not discover a state inside a bare Map in props", () => {
+		const state = createState();
+		const bag = new Map([["key", state]]);
+		const result = substituteStates({ bag }, wrapSource);
+
+		expect(result.sources).toEqual([]);
+		expect(result.props.bag).toBe(bag);
+	});
+
+	it("rebuilds a shared container once so both aliases in the rebuilt props are the same object", () => {
+		const state = createState();
+		const shared = { inner: state };
+		const root = { left: { shared }, right: { shared } };
+		const result = substituteStates(root, wrapSource);
+
+		expect(result.props.left.shared).toBe(result.props.right.shared);
+		expect(result.props.left.shared).not.toBe(shared);
+	});
 });

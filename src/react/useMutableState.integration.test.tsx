@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen } from "../../tests/harness";
-import type { FC } from "react";
+import { useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { transact } from "../transact/transact";
@@ -289,5 +289,86 @@ describe("useMutableState", () => {
 		render(<View />);
 
 		expect(screen.getByTestId("factory").textContent).toBe("0");
+	});
+
+	it("rerenders a write that lands between render and subscribe", () => {
+		const queued = new Array<() => void>();
+		let renders = 0;
+
+		const Mutator: FC<{ state: { count: number } }> = ({ state }) => {
+			const mutated = useRef(false);
+
+			useLayoutEffect(() => {
+				if (mutated.current) return;
+
+				mutated.current = true;
+				state.count = 7;
+			});
+
+			return null;
+		};
+
+		const View: FC = () => {
+			const state = useMutableState({ count: 0 }, { emitOn: (flush) => queued.push(flush) });
+
+			renders += 1;
+
+			return (
+				<div>
+					<Mutator state={state} />
+					<span data-testid="early">{state.count}</span>
+				</div>
+			);
+		};
+
+		render(<View />);
+
+		expect(screen.getByTestId("early").textContent).toBe("7");
+		expect(renders).toBe(2);
+		expect(queued).toHaveLength(0);
+	});
+
+	it("rerenders for a write made while a source was departed", async () => {
+		let heldA: { count: number } | undefined;
+		let switchSource: ((value: "a" | "b") => void) | undefined;
+		let renders = 0;
+
+		const View: FC = () => {
+			const stateA = useMutableState({ count: 0 });
+			const stateB = useMutableState({ count: 0 });
+			const [which, setWhich] = useState<"a" | "b">("a");
+			const state = which === "a" ? stateA : stateB;
+
+			switchSource = setWhich;
+			heldA = stateA;
+			renders += 1;
+
+			return <span data-testid="count">{state.count}</span>;
+		};
+
+		render(<View />);
+		expect(renders).toBe(1);
+		expect(screen.getByTestId("count").textContent).toBe("0");
+
+		await act(async () => {
+			switchSource?.("b");
+		});
+
+		expect(renders).toBe(2);
+
+		await act(async () => {
+			if (heldA === undefined) throw new Error("missing state");
+
+			heldA.count = 1;
+		});
+
+		expect(renders).toBe(2);
+
+		await act(async () => {
+			switchSource?.("a");
+		});
+
+		expect(screen.getByTestId("count").textContent).toBe("1");
+		expect(renders).toBe(3);
 	});
 });
