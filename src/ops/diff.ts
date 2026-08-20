@@ -435,6 +435,22 @@ const mintDecomposedChange = (context: DiffContext, path: OperationPath, before:
 	mintDecomposedContents(context, path, after);
 };
 
+const collectDescendantOmissions = (context: DiffContext, path: OperationPath): void => {
+	if (!writesTables(context)) return;
+
+	recordDescendantRoutes(
+		{
+			...context,
+			capture: {
+				refusals: context.capture.refusals,
+				omissions: context.capture.omissions,
+				routes: { added: new Map(), droppedUnder: [], firstTouched: new Map() },
+			},
+		},
+		path,
+	);
+};
+
 const mintAssignment = (
 	context: DiffContext,
 	path: OperationPath,
@@ -444,10 +460,8 @@ const mintAssignment = (
 ): void => {
 	if (isSkippedPath(context, path)) return;
 
-	const assigned = withoutOmittedChildren(context, after, path);
-
-	if (isObjectLike(assigned) && context.linksEnabled) {
-		const live = liveOf(assigned);
+	if (isObjectLike(after) && context.linksEnabled) {
+		const live = liveOf(after);
 		const ancestorPath = context.ancestorPaths.get(live);
 
 		if (ancestorPath !== undefined) {
@@ -476,17 +490,14 @@ const mintAssignment = (
 			return;
 		}
 
-		if (
-			(isPlainObject(assigned) || isPlainArray(assigned)) &&
-			assignmentNeedsDecomposition(context, assigned, path)
-		) {
+		if ((isPlainObject(after) || isPlainArray(after)) && assignmentNeedsDecomposition(context, after, path)) {
 			if (!beforePresent) {
-				mintDecomposedAddition(context, path, assigned);
+				mintDecomposedAddition(context, path, after);
 
 				return;
 			}
 
-			mintDecomposedChange(context, path, before, assigned);
+			mintDecomposedChange(context, path, before, after);
 
 			return;
 		}
@@ -495,6 +506,10 @@ const mintAssignment = (
 			addOccupancyRoute(context.handle, live, path, context.capture);
 		}
 	}
+
+	if (isObjectLike(after)) collectDescendantOmissions(context, path);
+
+	const assigned = withoutOmittedChildren(context, after, path);
 
 	if (beforePresent) commitOperation(context, changePair(path, before, assigned));
 	else commitOperation(context, additionPair(path, assigned));

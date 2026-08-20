@@ -206,6 +206,9 @@ export function bindVisitedOccupancy(
 	if (isUnderIgnoredOccupancy(handle, path)) return "skip";
 
 	const pathKey = pathKeyOf(path);
+
+	if (capture.omissions.has(pathKey)) return "omit";
+
 	const parentRaw = liveOf(parent);
 	const occupancyKey = occupancyKeyOf(key);
 	const admitted = unsafe || !handle.strict;
