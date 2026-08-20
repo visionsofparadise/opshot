@@ -4,10 +4,12 @@ import { armWatch } from "./emit/emitter";
 import { requireObjectSnapshot } from "./emit/requireObjectSnapshot";
 import { registerHandle, type Handle } from "./handle";
 import { ignoreMarker, type Ignored } from "./ignore";
+import { isState } from "./isState";
 import { seedOccupancies } from "./occupancy";
 import { isPlainArray } from "./ops/cloneValue";
 import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./ops/path";
 import { isCanonicalArrayIndexString } from "./ops/predicates";
+import { peelReadProxy } from "./peelReadProxy";
 import { unsafeMarker, type UnsafeTracked } from "./unsafeTrack";
 import { walkDataEntries } from "./utils/dataEntries";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
@@ -183,6 +185,12 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	if (typeof root !== "object" || root === null) return root as Unmarked<T>;
 
 	if (Object.isFrozen(root)) return root as Unmarked<T>;
+
+	if (isState(root)) {
+		const peeled = peelReadProxy(root);
+
+		if (typeof peeled === "object" && peeled !== null) return peeled as Unmarked<T>;
+	}
 
 	const decision = admissionDecision(root);
 	const strict = options?.strict !== false;

@@ -289,6 +289,12 @@ describe("createMutableState: root certification", () => {
 		expect(isState(frozen)).toBe(false);
 	});
 
+	it("returns an already-tracked root as that node", () => {
+		const existing = createMutableState({ count: 0 });
+
+		expect(createMutableState(existing)).toBe(existing);
+	});
+
 	it("returns an ignore()d factory argument as that node", () => {
 		const object = { count: 0 };
 

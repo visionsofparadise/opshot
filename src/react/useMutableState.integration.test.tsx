@@ -4,9 +4,10 @@ import { act, fireEvent, render, screen } from "../../tests/harness";
 import { useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
+import { isSameIdentity } from "../identity";
 import { transact } from "../transact/transact";
 import { scope } from "./scope";
-import { LiveStatePropertiesError, useMutableState } from "./useMutableState";
+import { useMutableState } from "./useMutableState";
 
 describe("useMutableState", () => {
 	it("rerenders on tracked mutation and preserves read-your-writes", async () => {
@@ -249,22 +250,27 @@ describe("useMutableState", () => {
 		expect(renders.child).toBe(4);
 	});
 
-	it("throws when properties is a live state", () => {
+	it("rerenders when properties is a live state that later writes", async () => {
 		const existing = createMutableState({ count: 0 });
+		let seen: { count: number } | undefined;
 		const View: FC = () => {
-			useMutableState(existing);
+			const state = useMutableState(existing);
 
-			return null;
+			seen = state;
+
+			return <span data-testid="count">{state.count}</span>;
 		};
-		const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-		try {
-			expect(() => {
-				render(<View />);
-			}).toThrow(LiveStatePropertiesError);
-		} finally {
-			error.mockRestore();
-		}
+		render(<View />);
+
+		expect(seen !== undefined && isSameIdentity(seen, existing)).toBe(true);
+		expect(screen.getByTestId("count").textContent).toBe("0");
+
+		await act(async () => {
+			existing.count = 1;
+		});
+
+		expect(screen.getByTestId("count").textContent).toBe("1");
 	});
 
 	it("accepts a plain-object properties argument", () => {

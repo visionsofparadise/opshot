@@ -2,23 +2,18 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { snapshot } from "valtio/vanilla";
 import { createMutableState, type MutableStateOptions, type Unmarked } from "../createMutableState";
 import { handlesOf, type Handle } from "../handle";
-import { isState } from "../isState";
 import { subscribe } from "../subscribe";
 import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
 import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
 
-export class LiveStatePropertiesError extends Error {
-	constructor() {
-		super("opshot: useMutableState properties cannot be a live state; use scope to consume external state");
-		this.name = "LiveStatePropertiesError";
-	}
-}
-
-interface MutableStateHolder<T extends object> {
+interface MutableStateHolder<T> {
 	readonly writeProxy: T;
 	readonly readTracker: ReadTracker;
 }
+
+const isObjectLike = (value: unknown): value is object =>
+	value !== null && (typeof value === "object" || typeof value === "function");
 
 /**
  * Creates mutable state for a component.
@@ -32,10 +27,8 @@ export function useMutableState<T extends object>(
 	properties: (() => T) | T,
 	options?: MutableStateOptions,
 ): Unmarked<T> {
-	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<Unmarked<T> & object> => {
+	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<Unmarked<T>> => {
 		const initial = typeof properties === "function" ? properties() : properties;
-
-		if (isState(initial)) throw new LiveStatePropertiesError();
 
 		return {
 			writeProxy: createMutableState(initial, options),
@@ -45,11 +38,11 @@ export function useMutableState<T extends object>(
 	const [, bump] = useReducer((value: number) => value + 1, 0);
 	const currentHandlesRef = useRef<ReadonlyArray<Handle>>([]);
 	const [gapSnapshots] = useState(() => new WeakMap<Handle, object>());
-	const uniqueHandles = handlesOf(writeProxy);
+	const uniqueHandles = isObjectLike(writeProxy) ? handlesOf(writeProxy) : [];
 
 	readTracker.resetReads();
 
-	const readProxy = readTracker.wrap(writeProxy);
+	const readProxy = isObjectLike(writeProxy) ? readTracker.wrap(writeProxy) : writeProxy;
 
 	for (const handle of uniqueHandles) {
 		gapSnapshots.set(handle, snapshot(handle.proxy.root));
@@ -68,7 +61,7 @@ export function useMutableState<T extends object>(
 
 	useEffect(() => {
 		let cancelled = false;
-		const subscribedHandles = handlesOf(writeProxy);
+		const subscribedHandles = isObjectLike(writeProxy) ? handlesOf(writeProxy) : [];
 
 		for (const handle of subscribedHandles) {
 			const from = gapSnapshots.get(handle);
