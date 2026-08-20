@@ -361,6 +361,30 @@ export function bindVisitedOccupancy(
 		return "omit";
 	}
 
+	const boundUnsafe = handle.unsafeAt.get(pathKey);
+	const matchesUnsafe = boundUnsafe !== undefined && isSameIdentity(boundUnsafe, childLive);
+
+	if (
+		handle.strict &&
+		kind !== "unsafe" &&
+		!matchesUnsafe &&
+		classifyValue(childLive) === "cleanClass"
+	) {
+		for (const entry of walkDataEntries(childLive)) {
+			if (typeof entry.value !== "function") continue;
+
+			if (sameOccupant) break;
+
+			collectRefusal(
+				handle,
+				rejectionError(childLive, "cleanClass", pathAsStrings(appendOperationPath(path, entry.key))),
+				pathKey,
+			);
+
+			return "omit";
+		}
+	}
+
 	addOccupancyRoute(handle, childLive, path);
 
 	return "continue";
