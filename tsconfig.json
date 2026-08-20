@@ -19,8 +19,12 @@
 		"forceConsistentCasingInFileNames": true,
 		"jsx": "react-jsx",
 		"noEmit": true,
-		"types": ["vitest/globals"]
+		"types": ["vitest/globals"],
+		"baseUrl": ".",
+		"paths": {
+			"opshot-react-adapter": ["./tests/harness/adapterModern.ts"]
+		}
 	},
-	"include": ["src/**/*"],
+	"include": ["src/**/*", "tests/harness/**/*.ts"],
 	"exclude": ["node_modules", "dist", "out", "build", "coverage", "**/.*"]
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen } from "../../tests/harness";
 import { createElement, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";

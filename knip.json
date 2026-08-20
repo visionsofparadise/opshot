@@ -3,7 +3,12 @@
 	"project": ["src/**/*.{ts,tsx}"],
 	"ignore": [],
 	"ignoreDependencies": [
+		"@testing-library/dom",
+		"@types/react-dom",
+		"opshot-react16",
+		"opshot-react17",
 		"opshot-react18",
+		"react-dom",
 		"prettier",
 		"textlint-filter-rule-comments",
 		"textlint-rule-no-dead-link",

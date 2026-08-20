@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "../../tests/harness";
 import type { FC } from "react";
 
 import { transact } from "../transact/transact";
