@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { descendChains, edgeStatusOf, isIgnoredFrontier, slotStatusOf } from "../edges";
 import { getRegisteredTarget, isSameIdentity } from "../identity";
-import { internedIdOf, internNode, internSubtree } from "../intern";
+import { internedIdOf, internSubtree, stageVend } from "../intern";
 import {
 	bindVisitedOccupancy,
 	createCaptureTables,
@@ -10,6 +10,7 @@ import {
 	type OccupancyVisit,
 } from "../occupancy";
 import { walkDataEntries } from "../utils/dataEntries";
+import { admissionLane } from "../valtio/classify";
 import { isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
@@ -96,10 +97,10 @@ const liveAtPath = (root: object, path: OperationPath): unknown => {
 const writesTables = (context: DiffContext): context is DiffContext & { handle: Handle; dirty: DirtyIndex } =>
 	context.handle !== undefined && context.dirty !== undefined;
 
-const internedOccupied = (handle: Handle, node: object): boolean =>
-	internedIdOf(handle, node) !== undefined && edgeStatusOf(handle, occupancyNodeOf(node)).occupied;
+const internedOccupied = (handle: Handle, node: object, capture?: CaptureTables): boolean =>
+	internedIdOf(handle, node, capture) !== undefined && edgeStatusOf(handle, occupancyNodeOf(node)).occupied;
 
-const interiorReachesInternedOccupied = (handle: Handle, node: object): boolean => {
+const interiorReachesInternedOccupied = (handle: Handle, node: object, capture?: CaptureTables): boolean => {
 	const seen = new Set<object>();
 
 	const visit = (current: object): boolean => {
@@ -112,7 +113,7 @@ const interiorReachesInternedOccupied = (handle: Handle, node: object): boolean 
 		for (const entry of walkDataEntries(current)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
 
-			if (internedOccupied(handle, entry.value)) return true;
+			if (internedOccupied(handle, entry.value, capture)) return true;
 
 			if (visit(entry.value)) return true;
 		}
@@ -229,11 +230,12 @@ const linkUndo = (
 	before: unknown,
 	beforePresent: boolean,
 	handle: Handle | undefined,
+	capture?: CaptureTables,
 ): Operation["undo"] => {
 	if (!beforePresent) return createDeleteMutation(path);
 
-	if (handle !== undefined && isObjectLike(before) && internedOccupied(handle, before)) {
-		const id = internedIdOf(handle, before);
+	if (handle !== undefined && isObjectLike(before) && internedOccupied(handle, before, capture)) {
+		const id = internedIdOf(handle, before, capture);
 
 		if (id !== undefined) return createLinkMutation(path, id);
 	}
@@ -247,14 +249,21 @@ const linkOperation = (
 	before: unknown,
 	beforePresent: boolean,
 	handle: Handle | undefined,
+	capture?: CaptureTables,
 ): Operation => ({
 	do: createLinkMutation(path, ref),
-	undo: linkUndo(path, before, beforePresent, handle),
+	undo: linkUndo(path, before, beforePresent, handle, capture),
 });
 
-const changePair = (path: OperationPath, before: unknown, after: unknown, handle: Handle | undefined): Operation => ({
+const changePair = (
+	path: OperationPath,
+	before: unknown,
+	after: unknown,
+	handle: Handle | undefined,
+	capture?: CaptureTables,
+): Operation => ({
 	do: createAssignMutation(path, after),
-	undo: linkUndo(path, before, true, handle),
+	undo: linkUndo(path, before, true, handle, capture),
 });
 
 const commitOperation = (context: DiffContext, pair: Operation): void => {
@@ -268,7 +277,7 @@ const commitLink = (
 	before: unknown,
 	beforePresent: boolean,
 ): void => {
-	commitOperation(context, linkOperation(path, ref, before, beforePresent, context.handle));
+	commitOperation(context, linkOperation(path, ref, before, beforePresent, context.handle, context.capture));
 };
 
 const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : {});
@@ -276,7 +285,10 @@ const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : 
 const mintDecomposedContents = (context: DiffContext, path: OperationPath, after: object, residual: ChainSet): void => {
 	if (isPlainArray(after)) {
 		if (after.length > 0)
-			commitOperation(context, changePair(appendOperationPath(path, "length"), 0, after.length, context.handle));
+			commitOperation(
+				context,
+				changePair(appendOperationPath(path, "length"), 0, after.length, context.handle, context.capture),
+			);
 
 		for (let index = 0; index < after.length; index++) {
 			if (!Object.hasOwn(after, index)) continue;
@@ -309,14 +321,14 @@ const mintDecomposedChange = (
 ): void => {
 	commitOperation(context, {
 		do: createAssignMutation(path, emptyContainerOf(after), after),
-		undo: linkUndo(path, before, true, context.handle),
+		undo: linkUndo(path, before, true, context.handle, context.capture),
 	});
 	mintDecomposedContents(context, path, after, residual);
 };
 
 const internLiveSkippingOmissions = (context: DiffContext, handle: Handle, node: object, path: OperationPath): void => {
 	if (context.capture.omissions.size === 0) {
-		internSubtree(handle, node);
+		internSubtree(handle, node, undefined, context.capture);
 
 		return;
 	}
@@ -347,7 +359,7 @@ const internLiveSkippingOmissions = (context: DiffContext, handle: Handle, node:
 	};
 
 	collect(node, path);
-	internSubtree(handle, node, (_parent, _key, child) => omitted.has(occupancyNodeOf(child)));
+	internSubtree(handle, node, (_parent, _key, child) => omitted.has(occupancyNodeOf(child)), context.capture);
 };
 
 const mintAssignment = (
@@ -363,20 +375,23 @@ const mintAssignment = (
 	const handle = context.handle;
 
 	if (isObjectLike(after) && handle !== undefined) {
-		const internedId = internedIdOf(handle, after);
+		const internedId = internedIdOf(handle, after, context.capture);
 
-		if (internedId !== undefined && internedOccupied(handle, after)) {
-			const beforeId = isObjectLike(before) ? internedIdOf(handle, before) : undefined;
+		if (internedId !== undefined && internedOccupied(handle, after, context.capture)) {
+			const sameOccupant = isObjectLike(before) && occupancyNodeOf(before) === occupancyNodeOf(after);
+			const beforeInterned = isObjectLike(before) && internedIdOf(handle, before, context.capture) !== undefined;
+			const uninternedTrackedBefore =
+				isObjectLike(before) && !beforeInterned && admissionLane(before) !== "untracked";
 
-			if (beforeId !== internedId && (beforeId !== undefined || !isObjectLike(before))) {
+			if (!sameOccupant && !uninternedTrackedBefore) {
 				commitLink(context, path, internedId, before, beforePresent);
 
 				return;
 			}
 		} else if (isPlainObject(after) || isPlainArray(after)) {
-			internNode(handle, after);
+			stageVend(handle, context.capture, after);
 
-			if (interiorReachesInternedOccupied(handle, after)) {
+			if (interiorReachesInternedOccupied(handle, after, context.capture)) {
 				if (!beforePresent) {
 					mintDecomposedAddition(context, path, after, residual);
 
@@ -395,7 +410,7 @@ const mintAssignment = (
 
 	const assigned = withoutOmittedChildren(context, after, path);
 
-	if (beforePresent) commitOperation(context, changePair(path, before, assigned, handle));
+	if (beforePresent) commitOperation(context, changePair(path, before, assigned, handle, context.capture));
 	else commitOperation(context, additionPair(path, assigned));
 };
 
@@ -431,9 +446,9 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown,
 	const handle = context.handle;
 
 	if (isObjectLike(before) && handle !== undefined) {
-		const id = internedIdOf(handle, before);
+		const id = internedIdOf(handle, before, context.capture);
 
-		if (id !== undefined && internedOccupied(handle, before)) {
+		if (id !== undefined && internedOccupied(handle, before, context.capture)) {
 			commitOperation(context, {
 				do: createDeleteMutation(path),
 				undo: createLinkMutation(path, id),

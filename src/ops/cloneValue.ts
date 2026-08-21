@@ -24,7 +24,9 @@ export const isPlainObject = (value: unknown): value is Record<string, unknown> 
 	(admissionLane(value) === "tracked" || isInstrumented(value));
 
 const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
-	typeof value === "object" && value !== null && (admissionLane(value) === "tracked" || isInstrumented(value));
+	typeof value === "object" &&
+	value !== null &&
+	(Object.isFrozen(value) || admissionLane(value) === "tracked" || isInstrumented(value));
 
 export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path: OperationPath): unknown => {
 	if (!isCloneable(value)) return value;
@@ -53,6 +55,8 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 			Object.defineProperty(clone, key, descriptor);
 		}
 	}
+
+	if (Object.isFrozen(value)) Object.freeze(clone);
 
 	return clone;
 };

@@ -2,7 +2,9 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "./identity";
 import { peelReadProxy } from "./peelReadProxy";
 import { walkDataEntries } from "./utils/dataEntries";
+import { admissionLane } from "./valtio/classify";
 import type { Handle } from "./handle";
+import type { CaptureTables } from "./occupancy";
 
 const { proxyStateMap, proxyCache } = unstable_getInternalStates();
 
@@ -31,7 +33,7 @@ const departingNodes = new WeakMap<Handle, Set<object>>();
  * @param node - Node to intern.
  * @returns The intern id, minted or already assigned.
  */
-export function internNode(handle: Handle, node: object): number {
+function internNode(handle: Handle, node: object): number {
 	const raw = occupancyNodeOf(node);
 	const existing = handle.interned.get(raw);
 
@@ -51,8 +53,57 @@ export function internNode(handle: Handle, node: object): number {
 	return id;
 }
 
-export function internedIdOf(handle: Handle, node: object): number | undefined {
-	return handle.interned.get(occupancyNodeOf(node));
+export function internedIdOf(handle: Handle, node: object, capture?: CaptureTables): number | undefined {
+	const raw = occupancyNodeOf(node);
+	const committed = handle.interned.get(raw);
+
+	if (committed !== undefined) return committed;
+
+	if (capture === undefined) return undefined;
+
+	for (const mint of capture.mints) {
+		if (mint.node === raw) return mint.id;
+	}
+
+	return undefined;
+}
+
+export function stageVend(handle: Handle, capture: CaptureTables, node: object): number {
+	const raw = occupancyNodeOf(node);
+	const committed = handle.interned.get(raw);
+
+	if (committed !== undefined) {
+		handle.internedById.set(committed, new WeakRef(raw));
+		handle.departedHold.delete(committed);
+
+		return committed;
+	}
+
+	for (const mint of capture.mints) {
+		if (mint.node === raw) return mint.id;
+	}
+
+	const id = handle.nextInternId + capture.mints.length;
+
+	capture.mints.push({ node: raw, id });
+
+	return id;
+}
+
+export function commitVends(handle: Handle, capture: CaptureTables): void {
+	if (capture.mints.length === 0) return;
+
+	for (const { node, id } of capture.mints) {
+		handle.interned.set(node, id);
+		handle.internedById.set(id, new WeakRef(node));
+		handle.departedHold.delete(id);
+	}
+
+	const last = capture.mints[capture.mints.length - 1];
+
+	if (last !== undefined) handle.nextInternId = last.id + 1;
+
+	capture.mints.length = 0;
 }
 
 export function nodeOfInternedId(handle: Handle, id: number): object | undefined {
@@ -67,6 +118,7 @@ export function internSubtree(
 	handle: Handle,
 	node: object,
 	skip?: (parent: object, key: string, child: object) => boolean,
+	capture?: CaptureTables,
 ): void {
 	const visits = new Set<object>();
 
@@ -76,7 +128,11 @@ export function internSubtree(
 		if (visits.has(raw)) return;
 
 		visits.add(raw);
-		internNode(handle, current);
+
+		if (admissionLane(current) === "untracked") return;
+
+		if (capture === undefined) internNode(handle, current);
+		else stageVend(handle, capture, current);
 
 		for (const entry of walkDataEntries(current)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;

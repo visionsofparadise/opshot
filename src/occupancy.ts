@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { descendChains, isIgnoredFrontier, slotStatusOf } from "./edges";
 import { getRegisteredTarget } from "./identity";
-import { internNode } from "./intern";
+import { commitVends, stageVend } from "./intern";
 import { isPlainArray } from "./ops/cloneValue";
 import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./ops/path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./ops/predicates";
@@ -22,11 +22,13 @@ export type OccupancyVisit = "omit" | "skip" | "continue";
 export interface CaptureTables {
 	refusals: Array<Error>;
 	omissions: Set<string>;
+	mints: Array<{ readonly node: object; readonly id: number }>;
 }
 
 export const createCaptureTables = (): CaptureTables => ({
 	refusals: [],
 	omissions: new Set(),
+	mints: [],
 });
 
 export class OccupancyRefusalError extends Error {
@@ -181,7 +183,7 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 	const walk = (node: object, path: OperationPath, chains: ReadonlyArray<DeclarationTrie | undefined>): void => {
 		if (chains.some((residual) => residual?.ignored === true)) return;
 
-		internNode(handle, node);
+		stageVend(handle, capture, node);
 
 		const nodeRaw = rawTargetOf(node);
 
@@ -221,7 +223,10 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 };
 
 export function seedOccupancies(handle: Handle): void {
-	walkLiveOccupancies(handle, false, createCaptureTables());
+	const capture = createCaptureTables();
+
+	walkLiveOccupancies(handle, false, capture);
+	commitVends(handle, capture);
 }
 
 export function syncHandleTables(handle: Handle, capture: CaptureTables): void {

@@ -48,6 +48,8 @@ const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> 
 
 		copy.length = value.length;
 
+		if (Object.isFrozen(value)) Object.freeze(copy);
+
 		return copy;
 	}
 
@@ -64,6 +66,8 @@ const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> 
 
 		copy[key] = rehydrateTransportValue(descriptor.value, memo);
 	}
+
+	if (Object.isFrozen(objectValue)) Object.freeze(copy);
 
 	return copy;
 };
@@ -1580,5 +1584,76 @@ describe("diffObjects: intern identity", () => {
 		expect(replica.bag).not.toHaveProperty("drop");
 		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
 		expect(internId(origin, origin.extra!)).toBe(internId(replica, replica.extra!));
+	});
+
+	it("links an alias overwriting a frozen occupant so a replica shares", () => {
+		const frozen = Object.freeze({ x: 1 });
+		const origin = createMutableState({
+			shared: { n: 1 },
+			slot: frozen as object,
+			alias: undefined as { n: number } | undefined,
+		});
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.slot = origin.shared;
+		});
+
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["slot"] });
+
+		transact(origin, () => {
+			origin.alias = origin.shared;
+		});
+
+		const replica = createMutableState({
+			shared: { n: 1 },
+			slot: Object.freeze({ x: 1 }) as object,
+			alias: undefined as { n: number } | undefined,
+		});
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[1] ?? []), "do");
+
+		expect(replica.slot).toBe(replica.shared);
+		expect(replica.alias).toBe(replica.shared);
+	});
+
+	it("does not name a frozen object assigned across windows so a later alias numbering matches", () => {
+		const frozen = Object.freeze({ x: 1 });
+		const origin = createMutableState({
+			a: undefined as object | undefined,
+			b: undefined as object | undefined,
+			sh: undefined as { n: number } | undefined,
+			alias: undefined as { n: number } | undefined,
+		});
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.a = frozen;
+		});
+
+		transact(origin, () => {
+			origin.b = frozen;
+		});
+
+		transact(origin, () => {
+			origin.sh = { n: 1 };
+			origin.alias = origin.sh;
+		});
+
+		const replica = createMutableState({
+			a: undefined as object | undefined,
+			b: undefined as object | undefined,
+			sh: undefined as { n: number } | undefined,
+			alias: undefined as { n: number } | undefined,
+		});
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[1] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[2] ?? []), "do");
+
+		expect(replica.alias).toBe(replica.sh);
+		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		expect(internId(origin, origin.sh!)).toBe(internId(replica, replica.sh!));
 	});
 });

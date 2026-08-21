@@ -22,4 +22,12 @@ describe("cloneValue", () => {
 		expect(descriptor?.get).toBe(getCurrent);
 		expect(descriptor && "value" in descriptor).toBe(false);
 	});
+
+	it("preserves frozenness on a cloned object", () => {
+		const value = Object.freeze({ n: 1 });
+		const cloned = cloneValue(value, new WeakMap(), createOperationPath([]));
+
+		expect(Object.isFrozen(cloned)).toBe(true);
+		expect(cloned).toEqual({ n: 1 });
+	});
 });

@@ -1,6 +1,6 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
-import { getRegisteredTarget } from "../identity";
-import { commitDepartures, sweepDeparted } from "../intern";
+import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
+import { commitDepartures, commitVends, sweepDeparted } from "../intern";
 import { OccupancyRefusalError, createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
@@ -67,6 +67,8 @@ const cloneSnapshotNode = (snap: object): object => {
 	}
 
 	if (Array.isArray(snap)) (clone as Array<unknown>).length = snap.length;
+
+	registerSnapshotCopy(clone, getRegisteredTarget(snap) ?? targetOf(snap));
 
 	return clone;
 };
@@ -168,6 +170,7 @@ const captureRange = (
 		throw occupancyRefusalOf(refusals);
 	}
 
+	commitVends(handle, capture);
 	handle.lastSnapshot = to;
 	sweepDeparted(handle);
 	commitDepartures(handle);

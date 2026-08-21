@@ -1,11 +1,12 @@
 import { snapshot } from "valtio/vanilla";
+import { createCaptureTables } from "../occupancy";
 import { applyMutations } from "../ops/applyMutations";
 import { diffObjects } from "../ops/diff";
 import type { Handle } from "../handle";
 
 export const rollbackTransaction = (handle: Handle): void => {
 	const restoreTarget = handle.lastSnapshot;
-	const operations = diffObjects(snapshot(handle.proxy.root), restoreTarget, handle);
+	const operations = diffObjects(snapshot(handle.proxy.root), restoreTarget, handle, undefined, createCaptureTables());
 
 	if (operations.length > 0) {
 		applyMutations(handle.proxy.root, operations, "do", "restore", handle);

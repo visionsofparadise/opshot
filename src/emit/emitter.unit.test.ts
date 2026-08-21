@@ -3,6 +3,7 @@ import { snapshot } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import { handleOf } from "../handle";
 import { OccupancyRefusalError } from "../occupancy";
+import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
@@ -67,6 +68,46 @@ describe("emitter", () => {
 		expect(heard[0]?.[0]?.do.verb).toBe("assign");
 		expect(state.node.self).toBe(state.node);
 		expect(state.node.n).toBe(2);
+	});
+
+	it("a refused transaction's mints do not desync a later alias on a replica", () => {
+		const origin = createMutableState<{
+			tick: number;
+			node?: { n: number };
+			alias?: { n: number };
+			bag?: { fresh: { n: number }; map: Map<string, number> };
+		}>({ tick: 0 }, { strict: true });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(origin, (ops) => heard.push([...ops]));
+
+		expect(() => {
+			transact(origin, () => {
+				origin.bag = { fresh: { n: 2 }, map: new Map() };
+			});
+		}).toThrow(OccupancyRefusalError);
+
+		transact(origin, () => {
+			origin.node = { n: 1 };
+		});
+
+		transact(origin, () => {
+			origin.alias = origin.node;
+		});
+
+		expect(heard).toHaveLength(2);
+
+		const replica = createMutableState<{
+			tick: number;
+			node?: { n: number };
+			alias?: { n: number };
+			bag?: { fresh: { n: number }; map: Map<string, number> };
+		}>({ tick: 0 }, { strict: true });
+
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0])) as Array<Operation>, "do");
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[1])) as Array<Operation>, "do");
+
+		expect(replica.alias).toBe(replica.node);
 	});
 });
 
@@ -372,8 +413,8 @@ describe("reconcileUntracked", () => {
 		expect(heard.map(shapeOps)).toEqual([
 			[
 				{
-					do: { verb: "assign", path: ["shell"], value: { holder: { n: 1 }, mark: 1 } },
-					undo: { verb: "assign", path: ["shell"], value: { holder: { n: 1 }, mark: 0 } },
+					do: { verb: "assign", path: ["shell", "mark"], value: 1 },
+					undo: { verb: "assign", path: ["shell", "mark"], value: 0 },
 				},
 			],
 		]);
@@ -438,36 +479,15 @@ describe("reconcileUntracked", () => {
 			state.items[2] = { n: 2 };
 		});
 
-		const beforeItems: Array<{ n: number } | undefined> = [{ n: 1 }];
-
-		beforeItems.length = 3;
-
-		const afterItems: Array<{ n: number } | undefined> = [{ n: 1 }];
-
-		afterItems[2] = { n: 2 };
-
 		expect(state.items.length).toBe(3);
 		expect(Object.hasOwn(state.items, 1)).toBe(false);
 		expect(heard.map(shapeOps)).toEqual([
 			[
 				{
-					do: { verb: "assign", path: ["items"], value: afterItems },
-					undo: { verb: "assign", path: ["items"], value: beforeItems },
+					do: { verb: "assign", path: ["items", 2], value: { n: 2 } },
+					undo: { verb: "delete", path: ["items", 2] },
 				},
 			],
 		]);
-
-		const undo = heard[0]?.[0]?.undo;
-		const undoItems = undo !== undefined && "value" in undo ? undo.value : undefined;
-
-		expect(undo?.verb).toBe("assign");
-		expect(Array.isArray(undoItems)).toBe(true);
-
-		if (Array.isArray(undoItems)) {
-			expect(undoItems).toHaveLength(3);
-			expect(Object.hasOwn(undoItems, 0)).toBe(true);
-			expect(Object.hasOwn(undoItems, 1)).toBe(false);
-			expect(Object.hasOwn(undoItems, 2)).toBe(false);
-		}
 	});
 });
