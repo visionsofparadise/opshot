@@ -29,5 +29,13 @@ describe("cloneValue", () => {
 
 		expect(Object.isFrozen(cloned)).toBe(true);
 		expect(cloned).toEqual({ n: 1 });
+		expect(cloned).not.toBe(value);
+	});
+
+	it("returns a frozen Map by identity", () => {
+		const value = Object.freeze(new Map<string, number>([["k", 1]]));
+		const cloned = cloneValue(value, new WeakMap(), createOperationPath([]));
+
+		expect(cloned).toBe(value);
 	});
 });

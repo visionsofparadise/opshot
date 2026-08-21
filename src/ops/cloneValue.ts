@@ -23,10 +23,20 @@ export const isPlainObject = (value: unknown): value is Record<string, unknown> 
 	!Array.isArray(value) &&
 	(admissionLane(value) === "tracked" || isInstrumented(value));
 
+const isStructurallyCloneableFrozen = (value: object): boolean => {
+	if (!Object.isFrozen(value)) return false;
+
+	if (Array.isArray(value)) return true;
+
+	const prototype: unknown = Object.getPrototypeOf(value);
+
+	return prototype === Object.prototype || prototype === null;
+};
+
 const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
 	typeof value === "object" &&
 	value !== null &&
-	(Object.isFrozen(value) || admissionLane(value) === "tracked" || isInstrumented(value));
+	(admissionLane(value) === "tracked" || isInstrumented(value) || isStructurallyCloneableFrozen(value));
 
 export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path: OperationPath): unknown => {
 	if (!isCloneable(value)) return value;

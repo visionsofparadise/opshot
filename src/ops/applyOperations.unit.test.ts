@@ -226,6 +226,22 @@ describe("applyOperations", () => {
 		expect(state.item?.n).toBe(2);
 	});
 
+	it("undo of a replace restores a frozen Map by identity", () => {
+		const frozenMap = Object.freeze(new Map<string, number>([["k", 1]]));
+		const state = createMutableState({
+			lookup: frozenMap,
+		} as unknown as { lookup: Map<string, number> | { n: number } });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.lookup = { n: 2 };
+		});
+
+		applyOperations(state, heard[0] ?? [], "undo");
+
+		expect(state.lookup).toBe(frozenMap);
+	});
+
 	it("undo then redo of stamped operations restores identity", () => {
 		const state = createMutableState<{ item: { n: number } }>({ item: { n: 1 } });
 		const held = state.item;
