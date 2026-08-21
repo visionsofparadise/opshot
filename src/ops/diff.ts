@@ -2,7 +2,7 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { declarationChild, type DeclarationTrie } from "../declarations";
 import { edgeStatusOf, isIgnoredFrontier } from "../edges";
 import { getRegisteredTarget, isSameIdentity } from "../identity";
-import { holdDeparted, internedIdOf, internNode, internSubtree } from "../intern";
+import { internedIdOf, internNode, internSubtree } from "../intern";
 import {
 	bindVisitedOccupancy,
 	createCaptureTables,
@@ -452,8 +452,6 @@ const pushRemoval = (
 
 			return;
 		}
-
-		if (id !== undefined) holdDeparted(handle, id, before);
 	}
 
 	commitOperation(context, removalPair(path, before));

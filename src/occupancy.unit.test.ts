@@ -1,6 +1,8 @@
 import { createMutableState } from "./createMutableState";
+import { edgeStatusOf } from "./edges";
 import { handleOf } from "./handle";
-import { createCaptureTables, predatingRoutesOf, syncHandleTables } from "./occupancy";
+import { internedIdOf } from "./intern";
+import { createCaptureTables, syncHandleTables } from "./occupancy";
 import { unsafeTrack } from "./unsafeTrack";
 
 describe("occupancy re-sync", () => {
@@ -11,16 +13,18 @@ describe("occupancy re-sync", () => {
 
 		expect(handle).toBeDefined();
 
-		const routes = predatingRoutesOf(handle!, map);
+		const internId = internedIdOf(handle!, map);
 
-		expect(routes.length).toBeGreaterThan(0);
+		expect(internId).toBeDefined();
+		expect(edgeStatusOf(handle!, map).occupied).toBe(true);
 
 		const capture = createCaptureTables();
 
 		syncHandleTables(handle!, capture);
 
 		expect(capture.refusals).toEqual([]);
-		expect(predatingRoutesOf(handle!, map)).toEqual(routes);
+		expect(internedIdOf(handle!, map)).toBe(internId);
+		expect(edgeStatusOf(handle!, map).occupied).toBe(true);
 		expect(state.box).toBeInstanceOf(Map);
 	});
 });

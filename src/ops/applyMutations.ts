@@ -1,5 +1,5 @@
 import { getRegisteredTarget, resolveIdentity } from "../identity";
-import { holdDeparted, internedIdOf, internSubtree, nodeOfInternedId } from "../intern";
+import { internSubtree, nodeOfInternedId } from "../intern";
 import { walkDataEntries } from "../utils/dataEntries";
 import { cloneValue } from "./cloneValue";
 import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
@@ -243,15 +243,7 @@ const applyPlain = (
 	if (descriptor !== undefined && !present) throw unresolvedError(path);
 
 	if (operation.verb === "delete") {
-		const previous: unknown = Reflect.get(parent, key);
-
 		Reflect.deleteProperty(parent, key);
-
-		if (isObjectLike(previous)) {
-			const id = internedIdOf(handle, previous);
-
-			if (id !== undefined) holdDeparted(handle, id, previous);
-		}
 
 		return;
 	}

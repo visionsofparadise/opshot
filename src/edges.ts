@@ -1,6 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { declarationChild, type DeclarationTrie } from "./declarations";
 import { registerHandle, type Handle } from "./handle";
+import { queueDeparture } from "./intern";
 import { isPlainArray } from "./ops/cloneValue";
 import { isCanonicalArrayIndexString } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
@@ -137,7 +138,10 @@ export function removeInEdge(handle: Handle, node: object, parent: object, key: 
 
 	edges.splice(index, 1);
 
-	if (edges.length === 0) handle.inEdges.delete(rawNode);
+	if (edges.length === 0) {
+		handle.inEdges.delete(rawNode);
+		queueDeparture(handle, rawNode);
+	}
 }
 
 export function edgeStatusOf(handle: Handle, node: object): { occupied: boolean; unsafe: boolean } {

@@ -19,10 +19,12 @@ describe("dirtySinceSnapshot", () => {
 		const from = snapshot(handle.proxy.root);
 		const lastSnapshot = handle.lastSnapshot;
 		const lastDirty = handle.lastDirty;
-		const routes = handle.routes;
 		const declarations = handle.declarations;
 		const inEdges = handle.inEdges;
-		const routeCount = handle.routes.size;
+		const interned = handle.interned;
+		const internedById = handle.internedById;
+		const internCount = handle.internedById.size;
+		const nextInternId = handle.nextInternId;
 		const heard = new Array<unknown>();
 
 		subscribe(state, () => {
@@ -39,10 +41,12 @@ describe("dirtySinceSnapshot", () => {
 		expect(heard).toEqual([]);
 		expect(handle.lastSnapshot).toBe(lastSnapshot);
 		expect(handle.lastDirty).toBe(lastDirty);
-		expect(handle.routes).toBe(routes);
 		expect(handle.declarations).toBe(declarations);
 		expect(handle.inEdges).toBe(inEdges);
-		expect(handle.routes.size).toBe(routeCount);
+		expect(handle.interned).toBe(interned);
+		expect(handle.internedById).toBe(internedById);
+		expect(handle.internedById.size).toBe(internCount);
+		expect(handle.nextInternId).toBe(nextInternId);
 	});
 
 	it("marks a nested path on the live parent", () => {

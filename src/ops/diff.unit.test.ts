@@ -1,12 +1,13 @@
-import { snapshot } from "valtio/vanilla";
+import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { declarationChild } from "../declarations";
+import { edgeStatusOf } from "../edges";
 import { handleOf, requireHandle } from "../handle";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
 import { internedIdOf } from "../intern";
-import { OccupancyRefusalError, predatingRoutesOf } from "../occupancy";
+import { OccupancyRefusalError } from "../occupancy";
 import { walkDataEntries } from "../utils/dataEntries";
 import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
@@ -23,6 +24,10 @@ import {
 	type Operation,
 } from "./operation";
 import { shapeHalf, shapeOps } from "./operationShape";
+
+const { proxyStateMap } = unstable_getInternalStates();
+
+const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> = new WeakMap()): unknown => {
 	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
@@ -870,7 +875,7 @@ describe("diffObjects: cyclic values", () => {
 });
 
 describe("diffObjects: link batch construction", () => {
-	it("carries the value at the canonical route and links the rest when both routes are new", () => {
+	it("carries the value at the first occupancy and links the rest when both occupancies are new", () => {
 		const state = createMutableState<{ late?: { n: number }; early?: { n: number } }>({});
 		const heard = record(state);
 
@@ -1306,7 +1311,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		expect(state.wrapper?.alias).toBe(state.first);
 	});
 
-	it("route recording stops at an ignore()d edge and visits a shared descendant once", () => {
+	it("an ignore()d edge stays unoccupied and a shared descendant stays interned once", () => {
 		type Shared = { n: number; self?: Shared };
 		const shared: Shared = { n: 1 };
 
@@ -1325,25 +1330,23 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		expect(handle).toBeDefined();
 		expect(declarationChild(declarationChild(handle?.declarations, "bag"), "wrap")?.ignored).toBe(true);
-		expect(predatingRoutesOf(handle!, state.bag.wrap.secret)).toEqual([]);
-		expect(predatingRoutesOf(handle!, state.bag.left.child)).toEqual([
-			["bag", "left", "child"],
-			["bag", "left", "child", "self"],
-			["bag", "right", "child"],
-		]);
+		expect(edgeStatusOf(handle!, state.bag.wrap.secret).occupied).toBe(false);
+		expect(internedIdOf(handle!, state.bag.wrap.secret)).toBeUndefined();
+		expect(edgeStatusOf(handle!, state.bag.left.child).occupied).toBe(true);
+		expect(internedIdOf(handle!, state.bag.left.child)).toBeDefined();
+		expect(handle!.inEdges.get(rawTargetOf(state.bag.left.child))?.length).toBe(3);
 
 		transact(state, () => {
 			state.tick = 1;
 		});
 
 		expect(pathOf(heard[0])).toEqual([["tick"]]);
-		expect(predatingRoutesOf(handle!, state.bag.wrap.secret)).toEqual([]);
-		expect(predatingRoutesOf(handle!, state.bag.wrap)).toEqual([]);
-		expect(predatingRoutesOf(handle!, state.bag.left.child)).toEqual([
-			["bag", "left", "child"],
-			["bag", "left", "child", "self"],
-			["bag", "right", "child"],
-		]);
+		expect(edgeStatusOf(handle!, state.bag.wrap.secret).occupied).toBe(false);
+		expect(internedIdOf(handle!, state.bag.wrap.secret)).toBeUndefined();
+		expect(edgeStatusOf(handle!, state.bag.wrap).occupied).toBe(false);
+		expect(internedIdOf(handle!, state.bag.wrap)).toBeUndefined();
+		expect(edgeStatusOf(handle!, state.bag.left.child).occupied).toBe(true);
+		expect(internedIdOf(handle!, state.bag.left.child)).toBeDefined();
 		expect(state.bag.left.child).toBe(state.bag.right.child);
 		expect(state.bag.left.child.self).toBe(state.bag.left.child);
 	});

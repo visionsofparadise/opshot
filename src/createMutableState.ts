@@ -235,7 +235,6 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		internedById: new Map(),
 		departedHold: new Map(),
 		nextInternId: 0,
-		routes: new Map(),
 		stamp: {},
 		version: 0,
 		replaying: false,

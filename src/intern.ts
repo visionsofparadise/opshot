@@ -17,11 +17,30 @@ const occupancyNodeOf = (node: object): object => {
 
 const liveOfInterned = (raw: object): object => proxyCache.get(raw) ?? raw;
 
+const departingNodes = new WeakMap<Handle, Set<object>>();
+
+/**
+ * Interns `node` on `handle`, minting an id on first admission.
+ *
+ * `internedById` stores `WeakRef`s. A node whose in-edges empty moves to
+ * `departedHold` for one capture window so undo can still resolve the id
+ * (spec §3.6). Detached clusters whose interior in-edges keep entries nonempty
+ * stay interned until `WeakRef` GC reclaims them.
+ *
+ * @param handle - State handle.
+ * @param node - Node to intern.
+ * @returns The intern id, minted or already assigned.
+ */
 export function internNode(handle: Handle, node: object): number {
 	const raw = occupancyNodeOf(node);
 	const existing = handle.interned.get(raw);
 
-	if (existing !== undefined) return existing;
+	if (existing !== undefined) {
+		handle.internedById.set(existing, new WeakRef(raw));
+		handle.departedHold.delete(existing);
+
+		return existing;
+	}
 
 	const id = handle.nextInternId;
 
@@ -71,8 +90,34 @@ export function internSubtree(
 	walk(node);
 }
 
-export function holdDeparted(handle: Handle, id: number, node: object): void {
-	handle.departedHold.set(id, occupancyNodeOf(node));
+export function queueDeparture(handle: Handle, node: object): void {
+	const raw = occupancyNodeOf(node);
+	let queued = departingNodes.get(handle);
+
+	if (queued === undefined) {
+		queued = new Set();
+		departingNodes.set(handle, queued);
+	}
+
+	queued.add(raw);
+}
+
+export function commitDepartures(handle: Handle): void {
+	const queued = departingNodes.get(handle);
+
+	if (queued === undefined) return;
+
+	for (const node of queued) {
+		if ((handle.inEdges.get(node)?.length ?? 0) > 0) continue;
+
+		const id = handle.interned.get(node);
+
+		if (id === undefined) continue;
+
+		handle.departedHold.set(id, node);
+	}
+
+	queued.clear();
 }
 
 export function sweepDeparted(handle: Handle): void {

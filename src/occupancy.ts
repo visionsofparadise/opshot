@@ -1,22 +1,15 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { declarationChild, type DeclarationTrie } from "./declarations";
 import { isIgnoredFrontier } from "./edges";
-import { registerHandle, type DirtyIndex, type Handle } from "./handle";
 import { getRegisteredTarget } from "./identity";
 import { internNode } from "./intern";
 import { isPlainArray } from "./ops/cloneValue";
-import { routeUnderPath } from "./ops/commitWalk";
-import {
-	appendOperationPath,
-	createOperationPath,
-	formatOperationPath,
-	operationPathsEqual,
-	type OperationPath,
-} from "./ops/path";
+import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./ops/path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./ops/predicates";
 import { walkDataEntries } from "./utils/dataEntries";
 import { nonWritablePropertyError, rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision, classifyValue } from "./valtio/classify";
+import type { DirtyIndex, Handle } from "./handle";
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -29,21 +22,11 @@ export type OccupancyVisit = "omit" | "skip" | "continue";
 export interface CaptureTables {
 	refusals: Array<Error>;
 	omissions: Set<string>;
-	routes: {
-		added: Map<object, Array<OperationPath>>;
-		droppedUnder: Array<OperationPath>;
-		firstTouched: Map<object, OperationPath>;
-	};
 }
 
 export const createCaptureTables = (): CaptureTables => ({
 	refusals: [],
 	omissions: new Set(),
-	routes: {
-		added: new Map(),
-		droppedUnder: [],
-		firstTouched: new Map(),
-	},
 });
 
 export class OccupancyRefusalError extends Error {
@@ -61,109 +44,6 @@ const segmentFor = (parent: object, key: string): string | number =>
 
 const pathKeyOf = (path: OperationPath): string => formatOperationPath(path);
 
-const occupancyNodeOf = (node: object): object => rawTargetOf(liveOf(node));
-
-const publishRoutes = (handle: Handle, node: object, paths: ReadonlyArray<OperationPath>): void => {
-	const raw = occupancyNodeOf(node);
-
-	if (paths.length === 0) {
-		handle.routes.delete(raw);
-
-		return;
-	}
-
-	const copy = [...paths];
-
-	handle.routes.set(raw, copy);
-	registerHandle(raw, handle);
-};
-
-const recordFirstTouched = (capture: CaptureTables, node: object, path: OperationPath): void => {
-	const raw = occupancyNodeOf(node);
-
-	if (!capture.routes.firstTouched.has(raw)) capture.routes.firstTouched.set(raw, path);
-};
-
-const isDroppedUnder = (capture: CaptureTables, route: OperationPath): boolean =>
-	capture.routes.droppedUnder.some((dropped) => routeUnderPath(route, dropped));
-
-export function predatingRoutesOf(handle: Handle, node: object): ReadonlyArray<OperationPath> {
-	return handle.routes.get(occupancyNodeOf(node)) ?? [];
-}
-
-export function overlayRoutesOf(handle: Handle, capture: CaptureTables, node: object): ReadonlyArray<OperationPath> {
-	const raw = occupancyNodeOf(node);
-	const kept = (handle.routes.get(raw) ?? []).filter((route) => !isDroppedUnder(capture, route));
-	const added = capture.routes.added.get(raw) ?? [];
-
-	if (added.length === 0) return kept;
-
-	const merged = [...kept];
-
-	for (const path of added) {
-		if (merged.some((occupied) => operationPathsEqual(occupied, path))) continue;
-
-		merged.push(path);
-	}
-
-	return merged;
-}
-
-export function addOccupancyRoute(handle: Handle, node: object, path: OperationPath, capture?: CaptureTables): void {
-	const raw = occupancyNodeOf(node);
-
-	if (capture === undefined) {
-		const existing = handle.routes.get(raw) ?? [];
-
-		if (existing.some((occupied) => operationPathsEqual(occupied, path))) return;
-
-		publishRoutes(handle, raw, [...existing, path]);
-
-		return;
-	}
-
-	recordFirstTouched(capture, raw, path);
-
-	const existing = overlayRoutesOf(handle, capture, raw);
-
-	if (existing.some((occupied) => operationPathsEqual(occupied, path))) return;
-
-	const added = capture.routes.added.get(raw) ?? [];
-
-	capture.routes.added.set(raw, [...added, path]);
-}
-
-export function dropOccupancyRoutesUnder(path: OperationPath, capture: CaptureTables): void {
-	capture.routes.droppedUnder.push(path);
-}
-
-const dropBaseRoutesUnder = (handle: Handle, path: OperationPath): void => {
-	for (const [node, paths] of handle.routes) {
-		const next = paths.filter((occupied) => !routeUnderPath(occupied, path));
-
-		if (next.length === paths.length) continue;
-
-		publishRoutes(handle, node, next);
-	}
-};
-
-export function commitCapture(handle: Handle, capture: CaptureTables): void {
-	for (const path of capture.routes.droppedUnder) dropBaseRoutesUnder(handle, path);
-
-	for (const [node, paths] of capture.routes.added) {
-		const existing = handle.routes.get(occupancyNodeOf(node)) ?? [];
-		const next = [...existing];
-
-		for (const path of paths) {
-			if (next.some((occupied) => operationPathsEqual(occupied, path))) continue;
-
-			next.push(path);
-		}
-
-		publishRoutes(handle, node, next);
-	}
-}
-
 const pathAsStrings = (path: OperationPath): Array<string> => path.map((segment) => String(segment));
 
 const collectRefusal = (capture: CaptureTables, error: Error, pathKey: string): void => {
@@ -180,7 +60,6 @@ export function bindVisitedOccupancy(
 	capture: CaptureTables,
 	sameOccupant = false,
 	unsafe = false,
-	overlay = true,
 ): OccupancyVisit {
 	if (path.length === 0) return "continue";
 
@@ -229,13 +108,7 @@ export function bindVisitedOccupancy(
 	if (decision.lane === "untracked") return "skip";
 
 	if (decision.lane === "dangerous") {
-		if (admitted) {
-			if (overlay) recordFirstTouched(capture, childLive, path);
-
-			addOccupancyRoute(handle, childLive, path, overlay ? capture : undefined);
-
-			return "continue";
-		}
+		if (admitted) return "continue";
 
 		if (sameOccupant) return "skip";
 
@@ -259,10 +132,6 @@ export function bindVisitedOccupancy(
 			return "omit";
 		}
 	}
-
-	if (overlay) recordFirstTouched(capture, childLive, path);
-
-	addOccupancyRoute(handle, childLive, path, overlay ? capture : undefined);
 
 	return "continue";
 }
@@ -303,11 +172,8 @@ export function markDirtyPath(
 	edges.add(edge);
 }
 
-const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: CaptureTables, overlay: boolean): void => {
+const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: CaptureTables): void => {
 	const root = handle.proxy.root;
-
-	addOccupancyRoute(handle, rawTargetOf(root), createOperationPath([]), overlay ? capture : undefined);
-
 	const visits = new Set<object>();
 
 	const walk = (node: object, path: OperationPath, residual: DeclarationTrie | undefined, unsafe: boolean): void => {
@@ -337,7 +203,6 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 				capture,
 				sameOccupant,
 				childUnsafe,
-				overlay,
 			);
 
 			if (visit !== "continue") continue;
@@ -351,9 +216,9 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 };
 
 export function seedOccupancies(handle: Handle): void {
-	walkLiveOccupancies(handle, false, createCaptureTables(), false);
+	walkLiveOccupancies(handle, false, createCaptureTables());
 }
 
 export function syncHandleTables(handle: Handle, capture: CaptureTables): void {
-	walkLiveOccupancies(handle, true, capture, true);
+	walkLiveOccupancies(handle, true, capture);
 }

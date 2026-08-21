@@ -115,7 +115,7 @@ const scenarios: ReadonlyArray<Scenario> = [
 	},
 	{ name: "delete-misc-deep", run: (state) => void delete state.misc.deep },
 	{
-		name: "two-routes-then-delete-one",
+		name: "two-aliases-then-delete-one",
 		run: (state) => {
 			state.first = state.hub;
 			state.second = state.hub;

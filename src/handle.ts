@@ -3,7 +3,6 @@ import { peelReadProxy } from "./peelReadProxy";
 import type { DeclarationTrie } from "./declarations";
 import type { InEdge } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
-import type { OperationPath } from "./ops/path";
 import type { EmissionScheduler } from "./settings";
 
 const occupancies = new WeakMap<object, Set<WeakRef<Handle>>>();
@@ -36,7 +35,6 @@ export interface Handle {
 	internedById: Map<number, WeakRef<object>>;
 	departedHold: Map<number, object>;
 	nextInternId: number;
-	routes: Map<object, ReadonlyArray<OperationPath>>;
 	lastDirty?: DirtyIndex;
 	stamp: object;
 	version: number;

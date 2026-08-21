@@ -1,7 +1,7 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
-import { sweepDeparted } from "../intern";
-import { OccupancyRefusalError, commitCapture, createCaptureTables, syncHandleTables } from "../occupancy";
+import { commitDepartures, sweepDeparted } from "../intern";
+import { OccupancyRefusalError, createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
 import { rollbackTransaction } from "../transact/rollback";
@@ -168,9 +168,9 @@ const captureRange = (
 		throw occupancyRefusalOf(refusals);
 	}
 
-	commitCapture(handle, capture);
 	handle.lastSnapshot = to;
 	sweepDeparted(handle);
+	commitDepartures(handle);
 
 	if (ops.length > 0 && !handle.replaying) {
 		for (const operation of ops) stampOperation(handle, operation);
