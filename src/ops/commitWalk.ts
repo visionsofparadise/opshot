@@ -14,10 +14,3 @@ export const routeUnderPath = (route: OperationPath, formation: OperationPath): 
 
 	return true;
 };
-
-export const externalRoutesOf = (
-	routes: ReadonlyArray<OperationPath>,
-	formation: OperationPath,
-): ReadonlyArray<OperationPath> => routes.filter((route) => !routeUnderPath(route, formation));
-
-export const canonicalRouteOf = (routes: ReadonlyArray<OperationPath>): OperationPath | undefined => routes[0];

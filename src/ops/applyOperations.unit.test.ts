@@ -1,7 +1,9 @@
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
 import { createMutableState } from "../createMutableState";
+import { requireHandle } from "../handle";
 import { identify, isSameIdentity } from "../identity";
+import { internedIdOf } from "../intern";
 import { applyOperations } from "./applyOperations";
 import {
 	createAssignMutation,
@@ -18,6 +20,14 @@ const record = <T extends object>(state: T): Array<Array<Operation>> => {
 	subscribe(state, (ops) => heard.push([...ops]));
 
 	return heard;
+};
+
+const internId = (state: object, node: object): number => {
+	const id = internedIdOf(requireHandle(state, "opshot: applyOperations requires a state"), node);
+
+	if (id === undefined) throw new Error("opshot: test expected an interned node");
+
+	return id;
 };
 
 describe("applyOperations", () => {
@@ -379,10 +389,14 @@ it("round-trips do then undo for a multi-op stream", () => {
 });
 
 describe("applyOperations: link halves", () => {
-	it("resolves an empty ref to the apply write-proxy", () => {
+	it("resolves the root intern id to the apply write-proxy", () => {
 		const state = createMutableState<{ shared: { n: number }; alias?: object }>({ shared: { n: 1 } });
 
-		applyOperations(state, [{ do: createLinkMutation(["alias"], []), undo: createDeleteMutation(["alias"]) }], "do");
+		applyOperations(
+			state,
+			[{ do: createLinkMutation(["alias"], internId(state, state)), undo: createDeleteMutation(["alias"]) }],
+			"do",
+		);
 
 		expect(state.alias).toBe(state);
 	});
@@ -392,7 +406,7 @@ describe("applyOperations: link halves", () => {
 
 		applyOperations(
 			state,
-			[{ do: createLinkMutation(["alias"], ["shared"]), undo: createDeleteMutation(["alias"]) }],
+			[{ do: createLinkMutation(["alias"], internId(state, state.shared)), undo: createDeleteMutation(["alias"]) }],
 			"do",
 		);
 
@@ -402,7 +416,7 @@ describe("applyOperations: link halves", () => {
 
 	it("applies a spread or JSON-copied link half", () => {
 		const state = createMutableState<{ shared: { n: number }; alias?: { n: number } }>({ shared: { n: 1 } });
-		const branded = createLinkMutation(["alias"], ["shared"]);
+		const branded = createLinkMutation(["alias"], internId(state, state.shared));
 		const spread = { ...branded };
 		const json = JSON.parse(JSON.stringify(branded)) as LinkMutation;
 
@@ -419,7 +433,7 @@ describe("applyOperations: link halves", () => {
 	it("undoes a new-key link by deleting", () => {
 		const state = createMutableState<{ shared: { n: number }; alias?: { n: number } }>({ shared: { n: 1 } });
 		const ops: Array<Operation> = [
-			{ do: createLinkMutation(["alias"], ["shared"]), undo: createDeleteMutation(["alias"]) },
+			{ do: createLinkMutation(["alias"], internId(state, state.shared)), undo: createDeleteMutation(["alias"]) },
 		];
 
 		applyOperations(state, ops, "do");
@@ -430,7 +444,7 @@ describe("applyOperations: link halves", () => {
 		expect(state.shared.n).toBe(1);
 	});
 
-	it("applies a mixed values-then-links batch in do and preserves the target-path invariant under undo", () => {
+	it("applies a mixed values-then-links batch in do and preserves aliasing under undo", () => {
 		const state = createMutableState<{
 			target?: { id: number };
 			other?: { id: number };
@@ -439,7 +453,7 @@ describe("applyOperations: link halves", () => {
 		const ops: Array<Operation> = [
 			{ do: createAssignMutation(["target"], { id: 1 }), undo: createDeleteMutation(["target"]) },
 			{ do: createAssignMutation(["other"], { id: 2 }), undo: createDeleteMutation(["other"]) },
-			{ do: createLinkMutation(["alias"], ["target"]), undo: createDeleteMutation(["alias"]) },
+			{ do: createLinkMutation(["alias"], internId(state, state) + 1), undo: createDeleteMutation(["alias"]) },
 		];
 
 		applyOperations(state, ops, "do");
@@ -459,14 +473,14 @@ describe("applyOperations: link halves", () => {
 
 		applyOperations(
 			state,
-			[{ do: createLinkMutation(["alias"], ["a"]), undo: createAssignMutation(["alias"], null) }],
+			[{ do: createLinkMutation(["alias"], internId(state, state.a)), undo: createAssignMutation(["alias"], null) }],
 			"do",
 		);
 		expect(state.alias).toBe(state.a);
 
 		const overwrite: Operation = {
-			do: createLinkMutation(["alias"], ["b"]),
-			undo: createLinkMutation(["alias"], ["a"]),
+			do: createLinkMutation(["alias"], internId(state, state.b)),
+			undo: createLinkMutation(["alias"], internId(state, state.a)),
 		};
 
 		applyOperations(state, [overwrite], "do");
@@ -476,28 +490,16 @@ describe("applyOperations: link halves", () => {
 		expect(state.alias).toBe(state.a);
 	});
 
-	it("refuses an unresolvable ref naming both paths", () => {
+	it("refuses an unresolvable intern id", () => {
 		const state = createMutableState<{ shared: { n: number } }>({ shared: { n: 1 } });
 
 		expect(() =>
 			applyOperations(
 				state,
-				[{ do: createLinkMutation(["alias"], ["missing"]), undo: createDeleteMutation(["alias"]) }],
+				[{ do: createLinkMutation(["alias"], 99), undo: createDeleteMutation(["alias"]) }],
 				"do",
 			),
-		).toThrow("link at /alias with ref /missing does not resolve");
-	});
-
-	it("refuses a ref that resolves to a non-object naming both paths", () => {
-		const state = createMutableState<{ count: number; alias?: object }>({ count: 1 });
-
-		expect(() =>
-			applyOperations(
-				state,
-				[{ do: createLinkMutation(["alias"], ["count"]), undo: createDeleteMutation(["alias"]) }],
-				"do",
-			),
-		).toThrow("link at /alias with ref /count resolves to a non-object");
+		).toThrow("link at /alias with ref 99 does not resolve");
 	});
 
 	it("applies a spread assign half and a well-formed unbranded link half", () => {
@@ -506,7 +508,7 @@ describe("applyOperations: link halves", () => {
 			count: 0,
 		});
 		const copiedAssign = { ...createAssignMutation(["count"], 2) };
-		const copiedLink = { ...createLinkMutation(["alias"], ["shared"]) };
+		const copiedLink = { ...createLinkMutation(["alias"], internId(state, state.shared)) };
 
 		applyOperations(state, [{ do: copiedAssign as Mutation, undo: createDeleteMutation(["count"]) }], "do");
 		applyOperations(state, [{ do: copiedLink as LinkMutation, undo: createDeleteMutation(["alias"]) }], "do");

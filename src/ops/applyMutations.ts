@@ -1,9 +1,11 @@
 import { getRegisteredTarget, resolveIdentity } from "../identity";
+import { holdDeparted, internedIdOf, internSubtree, nodeOfInternedId } from "../intern";
 import { walkDataEntries } from "../utils/dataEntries";
 import { cloneValue } from "./cloneValue";
 import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
 import { formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndex, isCanonicalArrayIndexString, isObjectLike, MAX_ARRAY_LENGTH } from "./predicates";
+import type { Handle } from "../handle";
 
 export type ApplyDirection = "do" | "undo";
 
@@ -27,8 +29,8 @@ class ReplayReattachError extends Error {
 const unresolvedError = (path: OperationPath): Error =>
 	new Error(`opshot: ${formatOperationPath(path)} does not resolve to a supported operation address`);
 
-const linkError = (path: OperationPath, ref: OperationPath, reason: string): Error =>
-	new Error(`opshot: link at ${formatOperationPath(path)} with ref ${formatOperationPath(ref)} ${reason}`);
+const linkError = (path: OperationPath, ref: number, reason: string): Error =>
+	new Error(`opshot: link at ${formatOperationPath(path)} with ref ${String(ref)} ${reason}`);
 
 const isWritableDataDescriptor = (descriptor: PropertyDescriptor | undefined): boolean =>
 	descriptor !== undefined && "value" in descriptor && descriptor.writable === true;
@@ -176,31 +178,15 @@ const resolveTerminal = (root: object, path: OperationPath): ResolvedTerminal =>
 	return { parent, segment: path[path.length - 1] };
 };
 
-const resolveRefValue = (root: object, ref: OperationPath, linkPath: OperationPath): object => {
-	if (ref.length === 0) return root;
-
-	let current: unknown = root;
-
-	for (let index = 0; index < ref.length; index++) {
-		if (!isObjectLike(current)) throw linkError(linkPath, ref, "does not resolve");
-
-		try {
-			current = requirePlainProperty(current, ref[index], ref);
-		} catch {
-			throw linkError(linkPath, ref, "does not resolve");
-		}
-	}
-
-	if (!isObjectLike(current)) throw linkError(linkPath, ref, "resolves to a non-object");
-
-	return current;
-};
-
-const applyLink = (root: object, operation: LinkMutation): void => {
+const applyLink = (root: object, operation: LinkMutation, handle: Handle): void => {
 	const path = operation.path;
 	const ref = operation.ref;
 
 	if (path.length === 0) throw linkError(path, ref, "does not resolve to a supported operation address");
+
+	const resolved = nodeOfInternedId(handle, ref);
+
+	if (resolved === undefined) throw linkError(path, ref, "does not resolve");
 
 	const terminal = resolveTerminal(root, path);
 
@@ -222,7 +208,7 @@ const applyLink = (root: object, operation: LinkMutation): void => {
 		}
 	}
 
-	Reflect.set(terminal.parent, key, resolveRefValue(root, ref, path));
+	Reflect.set(terminal.parent, key, resolved);
 };
 
 const applyPlain = (
@@ -230,6 +216,7 @@ const applyPlain = (
 	segment: unknown,
 	operation: Exclude<Mutation, LinkMutation>,
 	identity: "restore" | "construct",
+	handle: Handle,
 ): void => {
 	const path = operation.path;
 
@@ -256,7 +243,15 @@ const applyPlain = (
 	if (descriptor !== undefined && !present) throw unresolvedError(path);
 
 	if (operation.verb === "delete") {
+		const previous: unknown = Reflect.get(parent, key);
+
 		Reflect.deleteProperty(parent, key);
+
+		if (isObjectLike(previous)) {
+			const id = internedIdOf(handle, previous);
+
+			if (id !== undefined) holdDeparted(handle, id, previous);
+		}
 
 		return;
 	}
@@ -275,18 +270,22 @@ const applyPlain = (
 		() => Reflect.get(parent, key),
 		identity,
 	);
+
+	const attached: unknown = Reflect.get(parent, key);
+
+	if (isObjectLike(attached)) internSubtree(handle, attached);
 };
 
-const applyMutation = (root: object, operation: Mutation, identity: "restore" | "construct"): void => {
+const applyMutation = (root: object, operation: Mutation, identity: "restore" | "construct", handle: Handle): void => {
 	if (operation.verb === "link") {
-		applyLink(root, operation);
+		applyLink(root, operation, handle);
 
 		return;
 	}
 
 	const terminal = resolveTerminal(root, operation.path);
 
-	applyPlain(terminal.parent, terminal.segment, operation, identity);
+	applyPlain(terminal.parent, terminal.segment, operation, identity, handle);
 };
 
 export function applyMutations(
@@ -294,9 +293,10 @@ export function applyMutations(
 	operations: ReadonlyArray<Operation>,
 	direction: ApplyDirection,
 	identity: "restore" | "construct",
+	handle: Handle,
 ): void {
 	if (direction === "do") {
-		for (const operation of operations) applyMutation(root, operation.do, identity);
+		for (const operation of operations) applyMutation(root, operation.do, identity, handle);
 
 		return;
 	}
@@ -306,6 +306,6 @@ export function applyMutations(
 
 		if (operation === undefined) continue;
 
-		applyMutation(root, operation.undo, identity);
+		applyMutation(root, operation.undo, identity, handle);
 	}
 }

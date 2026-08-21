@@ -8,7 +8,7 @@ export const rollbackTransaction = (handle: Handle): void => {
 	const operations = diffObjects(snapshot(handle.proxy.root), restoreTarget, handle);
 
 	if (operations.length > 0) {
-		applyMutations(handle.proxy.root, operations, "do", "restore");
+		applyMutations(handle.proxy.root, operations, "do", "restore", handle);
 	}
 
 	handle.lastSnapshot = restoreTarget;

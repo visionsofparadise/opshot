@@ -2,10 +2,12 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { declarationChild } from "../declarations";
-import { handleOf } from "../handle";
+import { handleOf, requireHandle } from "../handle";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
+import { internedIdOf } from "../intern";
 import { OccupancyRefusalError, predatingRoutesOf } from "../occupancy";
+import { walkDataEntries } from "../utils/dataEntries";
 import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
@@ -64,7 +66,7 @@ const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> 
 const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
 	ops.map((pair) => {
 		const projectHalf = (half: Mutation): Mutation => {
-			if (half.verb === "link") return createLinkMutation([...half.path], [...half.ref]);
+			if (half.verb === "link") return createLinkMutation([...half.path], half.ref);
 
 			if (half.verb === "delete") return createDeleteMutation([...half.path]);
 
@@ -86,6 +88,37 @@ const record = <T extends object>(state: T): Array<Array<Operation>> => {
 
 const replayUndo = <T extends object>(state: T, ops: Array<Operation>): void => applyOperations(state, ops, "undo");
 const replayDo = <T extends object>(state: T, ops: Array<Operation>): void => applyOperations(state, ops, "do");
+
+const internId = (state: object, node: object): number => {
+	const id = internedIdOf(requireHandle(state, "opshot: test requires a state"), node);
+
+	if (id === undefined) throw new Error("opshot: test expected an interned node");
+
+	return id;
+};
+
+const internSequenceOf = (root: object): Array<number> => {
+	const handle = requireHandle(root, "opshot: test requires a state");
+	const seen = new Set<number>();
+	const ids = new Array<number>();
+
+	const walk = (node: object): void => {
+		const id = internedIdOf(handle, node);
+
+		if (id === undefined || seen.has(id)) return;
+
+		seen.add(id);
+		ids.push(id);
+
+		for (const entry of walkDataEntries(node)) {
+			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value);
+		}
+	};
+
+	walk(root);
+
+	return ids;
+};
 
 describe("diffObjects: atomic flat paths", () => {
 	it("emits addition, change, and removal pairs", () => {
@@ -240,10 +273,10 @@ describe("diffObjects: atomic flat paths", () => {
 
 interface Formation {
 	readonly name: string;
-	readonly expectedDo: {
+	readonly expectedDo: (state: object) => {
 		readonly verb: string;
 		readonly path: ReadonlyArray<string | number>;
-		readonly ref?: ReadonlyArray<string | number>;
+		readonly ref?: number;
 	};
 	readonly start: () => { readonly state: object; readonly form: () => void; readonly assertFormed: () => void };
 }
@@ -263,7 +296,11 @@ describe("diffObjects: cyclic values", () => {
 	const formations: ReadonlyArray<Formation> = [
 		{
 			name: "a child self-cycle",
-			expectedDo: { verb: "link", path: ["box", "self"], ref: ["box"] },
+			expectedDo: (state) => ({
+				verb: "link",
+				path: ["box", "self"],
+				ref: internId(state, (state as { box: object }).box),
+			}),
 			start: () => {
 				const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
@@ -280,7 +317,7 @@ describe("diffObjects: cyclic values", () => {
 		},
 		{
 			name: "a wholesale cyclic object",
-			expectedDo: { verb: "assign", path: ["node"] },
+			expectedDo: () => ({ verb: "assign", path: ["node"] }),
 			start: () => {
 				const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
@@ -300,7 +337,11 @@ describe("diffObjects: cyclic values", () => {
 		},
 		{
 			name: "a two-node cycle",
-			expectedDo: { verb: "link", path: ["a", "peer"], ref: ["b"] },
+			expectedDo: (state) => ({
+				verb: "link",
+				path: ["a", "peer"],
+				ref: internId(state, (state as { b: object }).b),
+			}),
 			start: () => {
 				const state = createMutableState<{ a: { n: number; peer?: object }; b: { n: number; peer?: object } }>({
 					a: { n: 1 },
@@ -322,7 +363,7 @@ describe("diffObjects: cyclic values", () => {
 		},
 	];
 
-	it("mints a self-cycle as a link with an empty ref", () => {
+	it("mints a self-cycle as a link with the root intern id", () => {
 		const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
 		const heard = record(state);
 
@@ -331,7 +372,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["self"], ref: [] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["self"], ref: internId(state, state) });
 		expect(state.self).toBe(state);
 
 		const delivered = heard[0] ?? [];
@@ -347,7 +388,7 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.self).toBe(state);
 	});
 
-	it("mints a back-edge to the factory return as a link with an empty ref", () => {
+	it("mints a back-edge to the factory return as a link with the root intern id", () => {
 		const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
 		const heard = record(state);
 
@@ -356,7 +397,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 
 		expect(heard).toHaveLength(1);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["child", "back"], ref: [] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["child", "back"], ref: internId(state, state) });
 		expect(state.child.back).toBe(state);
 
 		const delivered = heard[0] ?? [];
@@ -381,7 +422,7 @@ describe("diffObjects: cyclic values", () => {
 			transact(state, form);
 
 			expect(heard).toHaveLength(1);
-			expect(heard[0]?.[0]?.do).toMatchObject(formation.expectedDo);
+			expect(heard[0]?.[0]?.do).toMatchObject(formation.expectedDo(state));
 			assertFormed();
 
 			const delivered = heard[0] ?? [];
@@ -413,7 +454,11 @@ describe("diffObjects: cyclic values", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toHaveLength(1);
 		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["box", "self"] });
-		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "link", path: ["box", "self"], ref: ["box"] });
+		expect(heard[0]?.[0]?.undo).toMatchObject({
+			verb: "link",
+			path: ["box", "self"],
+			ref: internId(state, state.box),
+		});
 		expect(state.box.self).toBeUndefined();
 
 		const delivered = heard[0] ?? [];
@@ -508,7 +553,7 @@ describe("diffObjects: cyclic values", () => {
 			state.b2 = state.a.b;
 		});
 
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["b2"], ref: ["a", "b"] });
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["b2"], ref: internId(state, state.a.b) });
 		expect(state.b2).toBe(state.a.b);
 
 		const replicaShared = { n: 1 };
@@ -535,7 +580,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 
 		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "delete", path: ["b"] });
-		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "link", path: ["b"], ref: ["a", "b"] });
+		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "link", path: ["b"], ref: internId(state, state.a.b) });
 		expect(state.b).toBeUndefined();
 		expect(state.a.b.n).toBe(1);
 
@@ -583,7 +628,11 @@ describe("diffObjects: cyclic values", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toHaveLength(2);
 		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["a", "self"], value: {} });
-		expect(heard[0]?.[1]?.do).toMatchObject({ verb: "link", path: ["a", "self", "self"], ref: ["a", "self"] });
+		expect(heard[0]?.[1]?.do).toMatchObject({
+			verb: "link",
+			path: ["a", "self", "self"],
+			ref: internId(state, state.a.self as object),
+		});
 		expect(state.a.self).toBeDefined();
 		expect((state.a.self as { self?: object }).self).toBe(state.a.self);
 	});
@@ -755,8 +804,8 @@ describe("diffObjects: cyclic values", () => {
 
 		const overwrite = heard[0] ?? [];
 
-		expect(overwrite[0]?.do).toMatchObject({ verb: "link", path: ["alias"], ref: ["b"] });
-		expect(overwrite[0]?.undo).toMatchObject({ verb: "link", path: ["alias"], ref: ["a"] });
+		expect(overwrite[0]?.do).toMatchObject({ verb: "link", path: ["alias"], ref: internId(state, state.b) });
+		expect(overwrite[0]?.undo).toMatchObject({ verb: "link", path: ["alias"], ref: internId(state, state.a) });
 
 		replayUndo(state, overwrite);
 		expect(state.alias).toBe(state.a);
@@ -807,11 +856,12 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.to?.inner).toBe(state.shared);
 		expect(state.from).toBeUndefined();
 
+		const replicaShared = { n: 1 };
 		const replica = createMutableState<{
 			shared: { n: number };
 			from?: { inner: { n: number }; tag: number };
 			to?: { inner: { n: number }; tag: number };
-		}>({ shared: { n: 1 }, from: { inner: { n: 1 }, tag: 1 } });
+		}>({ shared: replicaShared, from: { inner: replicaShared, tag: 1 } });
 
 		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
 		expect(replica.to?.inner).toBe(replica.shared);
@@ -833,7 +883,7 @@ describe("diffObjects: link batch construction", () => {
 
 		expect(delivered).toHaveLength(2);
 		expect(shapeOps(delivered)[0]?.do).toMatchObject({ verb: "assign", path: ["late"] });
-		expect(shapeOps(delivered)[1]?.do).toEqual({ verb: "link", path: ["early"], ref: ["late"] });
+		expect(shapeOps(delivered)[1]?.do).toEqual({ verb: "link", path: ["early"], ref: internId(state, state.late!) });
 
 		const replica = createMutableState<{ late?: { n: number }; early?: { n: number } }>({});
 
@@ -1123,7 +1173,7 @@ describe("diffObjects: occupancy omission", () => {
 });
 
 describe("diffObjects: decomposition and ref selection", () => {
-	it("a last-route delete of a cyclic node decomposes with the re-entrant guard minting a plain removal pair", () => {
+	it("a last-route delete of a cyclic node carries the value and restores the cycle on undo", () => {
 		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
 		transact(state, () => {
@@ -1141,23 +1191,17 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 
 		const delivered = heard[0] ?? [];
-		const selfPair = delivered.find(
-			(pair) => pair.do.path.length === 2 && pair.do.path[0] === "node" && pair.do.path[1] === "self",
-		);
 
-		expect(shapeOps(delivered.filter((pair) => pair !== selfPair))).toEqual([
-			{ do: { verb: "delete", path: ["node", "m"] }, undo: { verb: "assign", path: ["node", "m"], value: 1 } },
-			{ do: { verb: "delete", path: ["node"] }, undo: { verb: "assign", path: ["node"], value: {} } },
-		]);
-		expect(selfPair?.do).toMatchObject({ verb: "delete", path: ["node", "self"] });
-		expect(selfPair?.undo.verb).toBe("assign");
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.do).toMatchObject({ verb: "delete", path: ["node"] });
+		expect(delivered[0]?.undo.verb).toBe("assign");
 
 		replayUndo(state, delivered);
 		expect(state.node).toBe(held);
 		expect(state.node?.self).toBe(state.node);
 	});
 
-	it("a last-route delete of an aliased array decomposes so undo restores its sharing", () => {
+	it("a last-route delete of an aliased array carries the value so undo restores its sharing", () => {
 		const state = createMutableState<{ n: number; node?: Array<{ n: number }> }>({ n: 1 });
 
 		transact(state, () => {
@@ -1174,15 +1218,15 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		const delivered = heard[0] ?? [];
 
-		expect(delivered.some((pair) => pair.do.verb === "delete" && pair.do.path[0] === "node")).toBe(true);
-		expect(delivered.length).toBeGreaterThan(1);
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.do).toMatchObject({ verb: "delete", path: ["node"] });
 
 		replayUndo(state, delivered);
 		expect(state.node?.[0]).toBe(state.node?.[1]);
 		expect(state.node?.[0]?.n).toBe(1);
 	});
 
-	it("replacing a self-referential container decomposes both halves", () => {
+	it("replacing a self-referential container assigns the new cycle and restores the old on undo", () => {
 		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
 		transact(state, () => {
@@ -1202,15 +1246,8 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 
 		const delivered = heard[0] ?? [];
-		const verbs = delivered.map((pair) => pair.do.verb);
-		const paths = pathOf(delivered);
 
-		expect(delivered.length).toBeGreaterThan(2);
-		expect(verbs).toContain("delete");
-		expect(verbs).toContain("assign");
-		expect(verbs).toContain("link");
-		expect(paths.some((path) => path.length === 1 && path[0] === "node")).toBe(true);
-		expect(paths.some((path) => path[0] === "node" && path[1] === "self")).toBe(true);
+		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["node"] });
 		expect(state.node?.self).toBe(state.node);
 		expect(state.node?.m).toBe(2);
 
@@ -1219,7 +1256,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		expect(state.node?.self).toBe(state.node);
 	});
 
-	it("carries by value when the only candidate ref resolves under the container being assigned", () => {
+	it("decomposes an assigned container whose interior reaches an interned occupied node", () => {
 		const state = createMutableState<{ box: { inner: { n: number }; extra?: number } }>({
 			box: { inner: { n: 1 } },
 		});
@@ -1232,8 +1269,13 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		const delivered = heard[0] ?? [];
 
-		expect(delivered.some((pair) => pair.do.verb === "link")).toBe(false);
-		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["box"], value: {} });
+		expect(delivered.some((pair) => pair.do.verb === "link" && pair.do.path[0] === "box")).toBe(true);
+		expect(delivered.find((pair) => pair.do.verb === "link" && pair.do.path[1] === "inner")?.do).toMatchObject({
+			verb: "link",
+			path: ["box", "inner"],
+			ref: internId(state, inner),
+		});
 		expect(state.box.inner).toBe(inner);
 		expect(state.box.extra).toBe(2);
 	});
@@ -1258,7 +1300,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 			{ do: { verb: "assign", path: ["first"], value: { n: 1 } }, undo: { verb: "delete", path: ["first"] } },
 			{ do: { verb: "assign", path: ["wrapper"], value: {} }, undo: { verb: "delete", path: ["wrapper"] } },
 			{
-				do: { verb: "link", path: ["wrapper", "alias"], ref: ["first"] },
+				do: { verb: "link", path: ["wrapper", "alias"], ref: internId(state, state.first!) },
 				undo: { verb: "delete", path: ["wrapper", "alias"] },
 			},
 		]);
@@ -1331,7 +1373,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 				undo: { verb: "assign", path: ["list", "length"], value: 0 },
 			},
 			{
-				do: { verb: "link", path: ["list", 0], ref: ["keep"] },
+				do: { verb: "link", path: ["list", 0], ref: internId(state, state.keep) },
 				undo: { verb: "delete", path: ["list", 0] },
 			},
 			{
@@ -1363,5 +1405,95 @@ describe("diffObjects: decomposition and ref selection", () => {
 		expect(() => diffObjects({}, [])).toThrow(expect.objectContaining(incompatible));
 		expect(() => diffObjects(new Map(), new Map())).toThrow(expect.objectContaining(incompatible));
 		expect(() => diffObjects(new Date(), {})).toThrow(expect.objectContaining(incompatible));
+	});
+});
+
+describe("diffObjects: intern identity", () => {
+	it("replays a mixed batch onto a replica with identical intern numbering", () => {
+		const origin = createMutableState<{
+			keep: { n: number };
+			hub: { n: number; self?: object };
+			list: Array<{ n: number }>;
+			fresh?: { inner: { a: number }; extra: number };
+			freshAlias?: { inner: { a: number }; extra: number };
+			alias?: { n: number; self?: object };
+			moved?: { n: number };
+		}>({
+			keep: { n: 0 },
+			hub: { n: 1 },
+			list: [{ n: 1 }, { n: 2 }, { n: 3 }],
+		});
+		const heard = record(origin);
+
+		transact(origin, () => {
+			const fresh = { inner: { a: 1 }, extra: 2 };
+
+			origin.fresh = fresh;
+			origin.freshAlias = fresh;
+			origin.alias = origin.hub;
+			origin.moved = origin.keep;
+			delete (origin as { keep?: { n: number } }).keep;
+			origin.hub.self = origin.hub;
+			origin.list.length = 1;
+		});
+
+		const replica = createMutableState<{
+			keep: { n: number };
+			hub: { n: number; self?: object };
+			list: Array<{ n: number }>;
+			fresh?: { inner: { a: number }; extra: number };
+			freshAlias?: { inner: { a: number }; extra: number };
+			alias?: { n: number; self?: object };
+			moved?: { n: number };
+		}>({
+			keep: { n: 0 },
+			hub: { n: 1 },
+			list: [{ n: 1 }, { n: 2 }, { n: 3 }],
+		});
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+
+		expect(replica.fresh).toBe(replica.freshAlias);
+		expect(replica.alias).toBe(replica.hub);
+		expect(replica.hub.self).toBe(replica.hub);
+		expect(replica.moved).toEqual({ n: 0 });
+		expect(Object.hasOwn(replica, "keep")).toBe(false);
+		expect(replica.list).toHaveLength(1);
+		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		expect(internId(replica, replica.fresh!)).toBe(internId(replica, replica.freshAlias!));
+		expect(internId(replica, replica.alias!)).toBe(internId(replica, replica.hub));
+		expect(internId(origin, origin.fresh!)).toBe(internId(replica, replica.fresh!));
+		expect(internId(origin, origin.hub)).toBe(internId(replica, replica.hub));
+		expect(internId(origin, origin.moved!)).toBe(internId(replica, replica.moved!));
+	});
+
+	it("undoes a delete with a survivor to a link and a replica undo restores aliasing", () => {
+		const shared = { n: 1 };
+		const origin = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: shared, b: shared });
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete origin.b;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.do).toMatchObject({ verb: "delete", path: ["b"] });
+		expect(delivered[0]?.undo).toMatchObject({ verb: "link", path: ["b"], ref: internId(origin, origin.a) });
+
+		const replicaShared = { n: 1 };
+		const replica = createMutableState<{ a: { n: number }; b?: { n: number } }>({
+			a: replicaShared,
+			b: replicaShared,
+		});
+
+		applyOperations(replica, projectTransport(delivered), "do");
+		expect(replica.b).toBeUndefined();
+		expect(replica.a.n).toBe(1);
+
+		applyOperations(replica, projectTransport(delivered), "undo");
+		expect(replica.b).toBe(replica.a);
+		expect(isSameIdentity(replica.b!, replica.a)).toBe(true);
 	});
 });

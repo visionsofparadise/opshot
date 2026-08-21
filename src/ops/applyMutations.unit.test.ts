@@ -1,6 +1,8 @@
 import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
+import { requireHandle } from "../handle";
+import { internedIdOf } from "../intern";
 import { applyMutations } from "./applyMutations";
 import {
 	createAssignMutation,
@@ -14,7 +16,15 @@ import { MAX_ARRAY_LENGTH } from "./predicates";
 const asPair = (half: Mutation): Operation => ({ do: half, undo: half });
 
 const applyConstruct = (root: object, ops: ReadonlyArray<Operation>): void =>
-	applyMutations(root, ops, "do", "construct");
+	applyMutations(root, ops, "do", "construct", requireHandle(root, "opshot: applyMutations requires a state"));
+
+const internId = (state: object, node: object): number => {
+	const id = internedIdOf(requireHandle(state, "opshot: applyMutations requires a state"), node);
+
+	if (id === undefined) throw new Error("opshot: test expected an interned node");
+
+	return id;
+};
 
 describe("applyMutations: address resolution", () => {
 	it("refuses malformed addresses before mutating anything", () => {
@@ -148,7 +158,9 @@ describe("applyMutations: address resolution", () => {
 				"resolves to an inherited accessor",
 			);
 			expect(() =>
-				applyConstruct(state, [asPair(createLinkMutation(["opshotInheritedSetter"], ["shared"]))]),
+				applyConstruct(state, [
+					asPair(createLinkMutation(["opshotInheritedSetter"], internId(state, state.shared))),
+				]),
 			).toThrow("resolves to an inherited accessor");
 			expect(calls).toBe(0);
 			expect(Object.hasOwn(state, "opshotInheritedSetter")).toBe(false);
@@ -156,9 +168,9 @@ describe("applyMutations: address resolution", () => {
 			expect(() =>
 				applyConstruct(state, [asPair(createAssignMutation(["__proto__"], { polluted: "PWNED" }))]),
 			).toThrow("resolves to an inherited accessor");
-			expect(() => applyConstruct(state, [asPair(createLinkMutation(["__proto__"], ["shared"]))])).toThrow(
-				"resolves to an inherited accessor",
-			);
+			expect(() =>
+				applyConstruct(state, [asPair(createLinkMutation(["__proto__"], internId(state, state.shared)))]),
+			).toThrow("resolves to an inherited accessor");
 			expect(Object.prototype).not.toHaveProperty("polluted");
 			expect(Reflect.getPrototypeOf(state)).toBe(Object.prototype);
 		} finally {
@@ -166,21 +178,22 @@ describe("applyMutations: address resolution", () => {
 		}
 	});
 
-	it("refuses a link at the empty path, at array length, and through a ref segment that is not an object naming both path and ref", () => {
+	it("refuses a link at the empty path, at array length, and at an unresolved intern id", () => {
 		const state = createMutableState<{ list: Array<number>; shared: { n: number }; count: number; alias?: object }>({
 			list: [1],
 			shared: { n: 1 },
 			count: 1,
 		});
+		const sharedId = internId(state, state.shared);
 
-		expect(() => applyConstruct(state, [asPair(createLinkMutation([], ["shared"]))])).toThrow(
-			"link at / with ref /shared does not resolve to a supported operation address",
+		expect(() => applyConstruct(state, [asPair(createLinkMutation([], sharedId))])).toThrow(
+			`link at / with ref ${String(sharedId)} does not resolve to a supported operation address`,
 		);
-		expect(() => applyConstruct(state, [asPair(createLinkMutation(["list", "length"], ["shared"]))])).toThrow(
-			"link at /list/length with ref /shared cannot address array length",
+		expect(() => applyConstruct(state, [asPair(createLinkMutation(["list", "length"], sharedId))])).toThrow(
+			`link at /list/length with ref ${String(sharedId)} cannot address array length`,
 		);
-		expect(() => applyConstruct(state, [asPair(createLinkMutation(["alias"], ["count"]))])).toThrow(
-			"link at /alias with ref /count resolves to a non-object",
+		expect(() => applyConstruct(state, [asPair(createLinkMutation(["alias"], 99))])).toThrow(
+			"link at /alias with ref 99 does not resolve",
 		);
 		expect(state.list).toEqual([1]);
 		expect(Object.hasOwn(state, "alias")).toBe(false);
@@ -231,6 +244,7 @@ describe("applyMutations: address resolution", () => {
 			],
 			"undo",
 			"restore",
+			requireHandle(state, "opshot: applyMutations requires a state"),
 		);
 
 		expect(Object.hasOwn(state.held, "extra")).toBe(false);

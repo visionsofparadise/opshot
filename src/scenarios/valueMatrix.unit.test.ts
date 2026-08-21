@@ -1,6 +1,8 @@
 import { createMutableState } from "../createMutableState";
+import { requireHandle } from "../handle";
 import { ignore, type Ignored } from "../ignore";
 import { isSameIdentity } from "../identity";
+import { internedIdOf } from "../intern";
 import { isState } from "../isState";
 import { OccupancyRefusalError } from "../occupancy";
 import { applyOperations } from "../ops/applyOperations";
@@ -257,7 +259,11 @@ describe("tracked object", () => {
 		});
 
 		expect(state.self).toBe(state);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["self"], ref: [] });
+		expect(heard[0]?.[0]?.do).toMatchObject({
+			verb: "link",
+			path: ["self"],
+			ref: internedIdOf(requireHandle(state, "opshot: test requires a state"), state),
+		});
 	});
 
 	it("move", () => {

@@ -44,10 +44,10 @@ export interface DeleteMutation {
 }
 
 /**
- * Links the node at `ref` into `path`.
+ * Links the interned node `ref` into `path`.
  *
  * @example
- * { verb: "link", path: ["alias"], ref: ["shared"] }
+ * { verb: "link", path: ["alias"], ref: 0 }
  */
 export interface LinkMutation {
 	/**
@@ -61,9 +61,9 @@ export interface LinkMutation {
 	readonly path: OperationPath;
 
 	/**
-	 * Path of the node to link.
+	 * Intern id of the node to link.
 	 */
-	readonly ref: OperationPath;
+	readonly ref: number;
 }
 
 /**
@@ -123,11 +123,11 @@ class DeleteHalf extends OperationHalf {
 
 class LinkHalf extends OperationHalf {
 	readonly verb = "link";
-	readonly ref: OperationPath;
+	readonly ref: number;
 
-	constructor(path: OperationPath, ref: OperationPath) {
+	constructor(path: OperationPath, ref: number) {
 		super(path);
-		this.ref = createOperationPath(ref);
+		this.ref = ref;
 	}
 }
 
@@ -159,4 +159,4 @@ export const createAssignMutation = (path: OperationPath, value: unknown, origin
 
 export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);
 
-export const createLinkMutation = (path: OperationPath, ref: OperationPath): LinkMutation => new LinkHalf(path, ref);
+export const createLinkMutation = (path: OperationPath, ref: number): LinkMutation => new LinkHalf(path, ref);

@@ -14,6 +14,9 @@ const tapeError = (): Error => new Error("opshot: applyOperations applies only t
 const isFrozenCopyablePath = (value: unknown): value is OperationPath =>
 	Array.isArray(value) && value.every((segment) => typeof segment === "string" || typeof segment === "number");
 
+const isNonNegativeInteger = (value: unknown): value is number =>
+	typeof value === "number" && Number.isInteger(value) && value >= 0;
+
 const isWellFormedLinkHalf = (value: unknown): boolean =>
 	typeof value === "object" &&
 	value !== null &&
@@ -22,7 +25,7 @@ const isWellFormedLinkHalf = (value: unknown): boolean =>
 	"path" in value &&
 	"ref" in value &&
 	isFrozenCopyablePath(value.path) &&
-	isFrozenCopyablePath(value.ref);
+	isNonNegativeInteger(value.ref);
 
 const isWellFormedDeleteHalf = (value: unknown): boolean =>
 	typeof value === "object" &&
@@ -131,7 +134,7 @@ export function runOperations(
 		runTransaction(
 			state,
 			() => {
-				applyMutations(resolveWriteProxy(state), operations, direction, owned ? "restore" : "construct");
+				applyMutations(resolveWriteProxy(state), operations, direction, owned ? "restore" : "construct", handle);
 
 				if (owned) {
 					handle.version =

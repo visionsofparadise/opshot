@@ -6,7 +6,7 @@ export const shapeHalf = (
 	verb: Mutation["verb"];
 	path: ReadonlyArray<string | number>;
 	value?: unknown;
-	ref?: ReadonlyArray<string | number>;
+	ref?: number;
 } =>
 	half.verb === "link"
 		? { verb: half.verb, path: half.path, ref: half.ref }

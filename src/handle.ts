@@ -32,6 +32,10 @@ export interface Handle {
 	onError?: (error: unknown) => void;
 	declarations: DeclarationTrie | undefined;
 	inEdges: WeakMap<object, Array<InEdge>>;
+	interned: WeakMap<object, number>;
+	internedById: Map<number, WeakRef<object>>;
+	departedHold: Map<number, object>;
+	nextInternId: number;
 	routes: Map<object, ReadonlyArray<OperationPath>>;
 	lastDirty?: DirtyIndex;
 	stamp: object;

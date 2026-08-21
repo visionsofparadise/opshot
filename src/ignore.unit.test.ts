@@ -113,12 +113,9 @@ describe("ignore", () => {
 			state.b.nested = { n: 9 };
 		});
 
-		expect(shapeOps(heard[0] ?? [])).toEqual([
-			{
-				do: { verb: "assign", path: ["b", "nested"], value: { n: 9 } },
-				undo: { verb: "assign", path: ["b", "nested"], value: { n: 1 } },
-			},
-		]);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["b", "nested"], value: { n: 9 } });
+		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "link", path: ["b", "nested"] });
+		expect(heard[0]?.[0]?.undo.verb === "link" ? heard[0][0].undo.ref : undefined).toEqual(expect.any(Number));
 
 		heard.length = 0;
 

@@ -3,6 +3,7 @@ import { declarationChild, type DeclarationTrie } from "./declarations";
 import { isIgnoredFrontier } from "./edges";
 import { registerHandle, type DirtyIndex, type Handle } from "./handle";
 import { getRegisteredTarget } from "./identity";
+import { internNode } from "./intern";
 import { isPlainArray } from "./ops/cloneValue";
 import { routeUnderPath } from "./ops/commitWalk";
 import {
@@ -310,13 +311,15 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 	const visits = new Set<object>();
 
 	const walk = (node: object, path: OperationPath, residual: DeclarationTrie | undefined, unsafe: boolean): void => {
+		if (residual?.ignored === true) return;
+
+		internNode(handle, node);
+
 		const nodeRaw = rawTargetOf(node);
 
 		if (visits.has(nodeRaw)) return;
 
 		visits.add(nodeRaw);
-
-		if (residual?.ignored === true) return;
 
 		const nodeUnsafe = unsafe || residual?.unsafe === true;
 
