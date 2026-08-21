@@ -223,6 +223,32 @@ const walkUnoccupiedCluster = (
 	});
 };
 
+const walkSlots = (
+	node: object,
+	visit: (current: object, raw: object, parent?: object, key?: string) => boolean,
+): void => {
+	const visits = new Set<object>();
+
+	const walk = (current: object, parent?: object, key?: string): void => {
+		const raw = occupancyNodeOf(current);
+		const looping = visits.has(raw);
+
+		if (!looping) visits.add(raw);
+
+		if (admissionLane(current) === "untracked") return;
+
+		if (!visit(current, raw, parent, key) || looping) return;
+
+		for (const entry of walkDataEntries(current)) {
+			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			walk(entry.value, current, entry.key);
+		}
+	};
+
+	walk(node);
+};
+
 export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, ReadonlyArray<number>> {
 	const departed = new Map<object, ReadonlyArray<number>>();
 	const queued = departingNodes.get(handle);
@@ -238,22 +264,19 @@ export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, Reado
 
 		const clusterIds = new Array<number>();
 
-		walkTracked(node, new Set(), (_current, raw) => {
+		walkSlots(node, (_current, raw) => {
 			const id = committedIdOf(handle, raw);
 
-			if (isOccupiedMember(handle, raw)) {
-				if (id !== undefined) clusterIds.push(id);
+			if (id !== undefined) clusterIds.push(id);
 
-				return false;
-			}
+			return !isOccupiedMember(handle, raw);
+		});
 
+		walkUnoccupiedCluster(handle, node, (raw, id) => {
 			if (id !== undefined) {
 				handle.nodes.delete(raw);
 				handle.byId.delete(id);
-				clusterIds.push(id);
 			} else handle.nodes.delete(raw);
-
-			return true;
 		});
 
 		if (clusterIds.length > 0) departed.set(node, clusterIds);
@@ -273,7 +296,7 @@ export function bindVendedIds(
 ): void {
 	let index = 0;
 
-	walkTracked(node, new Set(), (_current, raw, walkParent, walkKey) => {
+	walkSlots(node, (_current, raw, walkParent, walkKey) => {
 		const id = ids[index];
 
 		if (id === undefined) return true;

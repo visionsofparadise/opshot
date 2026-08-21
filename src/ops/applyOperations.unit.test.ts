@@ -647,6 +647,47 @@ describe("applyOperations: link halves", () => {
 		expect(nodeOfInternedId(replicaHandle, extraId)).toBe(replica.box.extra);
 	});
 
+	it("bind retargets every JSON-duplicated alias slot in a departed cluster", () => {
+		const shared = { n: 1 };
+		const extra = { n: 2 };
+		const origin = createMutableState({
+			keep: shared,
+			box: { a: shared, b: shared, extra },
+		});
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const keepId = internId(origin, origin.keep);
+		const extraId = internId(origin, origin.box.extra);
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete (origin as { box?: { a: { n: number }; b: { n: number }; extra: { n: number } } }).box;
+		});
+
+		applyOperations(origin, heard[0] ?? [], "undo");
+
+		expect(origin.box.a).toBe(origin.keep);
+		expect(origin.box.b).toBe(origin.keep);
+		expect(internId(origin, origin.box.extra)).toBe(extraId);
+		expect(nodeOfInternedId(originHandle, extraId)).toBe(origin.box.extra);
+
+		const replicaShared = { n: 1 };
+		const replica = createMutableState({
+			keep: replicaShared,
+			box: { a: replicaShared, b: replicaShared, extra: { n: 2 } },
+		});
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+		const transported = JSON.parse(JSON.stringify(heard[0])) as Array<Operation>;
+
+		applyOperations(replica, transported, "do");
+		applyOperations(replica, transported, "undo");
+
+		expect(replica.box.a).toBe(replica.keep);
+		expect(replica.box.b).toBe(replica.keep);
+		expect(internId(replica, replica.keep)).toBe(keepId);
+		expect(internId(replica, replica.box.extra)).toBe(extraId);
+		expect(nodeOfInternedId(replicaHandle, extraId)).toBe(replica.box.extra);
+	});
+
 	it("undo and redo of a link window then a departure restores sharing and numbering", () => {
 		const origin = createMutableState({
 			keep: { n: 1 },
