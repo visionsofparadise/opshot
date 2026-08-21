@@ -105,19 +105,25 @@ export function queueDeparture(handle: Handle, node: object): void {
 export function commitDepartures(handle: Handle): void {
 	const queued = departingNodes.get(handle);
 
-	if (queued === undefined) return;
+	if (queued !== undefined) {
+		for (const node of queued) {
+			if ((handle.inEdges.get(node)?.length ?? 0) > 0) continue;
 
-	for (const node of queued) {
-		if ((handle.inEdges.get(node)?.length ?? 0) > 0) continue;
+			const id = handle.interned.get(node);
 
-		const id = handle.interned.get(node);
+			if (id === undefined) continue;
 
-		if (id === undefined) continue;
+			handle.departedHold.set(id, node);
+		}
 
-		handle.departedHold.set(id, node);
+		queued.clear();
 	}
 
-	queued.clear();
+	for (const [id, reference] of handle.internedById) {
+		if (reference.deref() !== undefined || handle.departedHold.has(id)) continue;
+
+		handle.internedById.delete(id);
+	}
 }
 
 export function sweepDeparted(handle: Handle): void {

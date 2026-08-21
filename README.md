@@ -179,7 +179,7 @@ interface Operation {
 	readonly do:
 		| { readonly verb: "assign"; readonly path: OperationPath; readonly value: unknown }
 		| { readonly verb: "delete"; readonly path: OperationPath }
-		| { readonly verb: "link"; readonly path: OperationPath; readonly ref: OperationPath };
+		| { readonly verb: "link"; readonly path: OperationPath; readonly ref: number };
 	readonly undo: Operation["do"];
 }
 ```
