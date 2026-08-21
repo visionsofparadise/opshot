@@ -44,7 +44,11 @@ export function nodeOfInternedId(handle: Handle, id: number): object | undefined
 	return liveOfInterned(raw);
 }
 
-export function internSubtree(handle: Handle, node: object): void {
+export function internSubtree(
+	handle: Handle,
+	node: object,
+	skip?: (parent: object, key: string, child: object) => boolean,
+): void {
 	const visits = new Set<object>();
 
 	const walk = (current: object): void => {
@@ -56,7 +60,11 @@ export function internSubtree(handle: Handle, node: object): void {
 		internNode(handle, current);
 
 		for (const entry of walkDataEntries(current)) {
-			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value);
+			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			if (skip?.(current, entry.key, entry.value) === true) continue;
+
+			walk(entry.value);
 		}
 	};
 

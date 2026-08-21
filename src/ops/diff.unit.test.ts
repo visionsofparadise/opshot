@@ -1039,7 +1039,7 @@ describe("diffObjects: link batch construction", () => {
 		expect(replica.bag.slot).toBe(replica.keep);
 	});
 
-	it("carries by value a node reachable only through an ignore()d container", () => {
+	it("links an interned node re-admitted from an ignore()d container so a replica shares", () => {
 		const state = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
 			wrapped: ignore({ held: { n: 0 } }),
@@ -1062,7 +1062,7 @@ describe("diffObjects: link batch construction", () => {
 		const delivered = heard[0] ?? [];
 
 		expect(delivered).toHaveLength(1);
-		expect(delivered[0]?.do.verb).toBe("assign");
+		expect(delivered[0]?.do).toMatchObject({ verb: "link", path: ["slot"], ref: internId(state, node) });
 
 		const replica = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
@@ -1076,8 +1076,7 @@ describe("diffObjects: link batch construction", () => {
 		delete replica.hold;
 
 		applyOperations(replica, projectTransport(delivered), "do");
-		expect(replica.slot).toEqual({ n: 1 });
-		expect(replica.slot).not.toBe(replicaNode);
+		expect(replica.slot).toBe(replicaNode);
 	});
 });
 
@@ -1495,5 +1494,88 @@ describe("diffObjects: intern identity", () => {
 		applyOperations(replica, projectTransport(delivered), "undo");
 		expect(replica.b).toBe(replica.a);
 		expect(isSameIdentity(replica.b!, replica.a)).toBe(true);
+	});
+
+	it("links an interned overwrite of a scalar, null, or array index so a replica shares", () => {
+		const replay = <T extends object>(
+			start: () => T,
+			write: (state: T) => void,
+			shares: (state: T) => boolean,
+		): void => {
+			const origin = start();
+			const heard = record(origin);
+
+			transact(origin, () => {
+				write(origin);
+			});
+
+			expect(shares(origin)).toBe(true);
+
+			const replica = start();
+
+			applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+			expect(shares(replica)).toBe(true);
+			expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		};
+
+		replay(
+			() => createMutableState({ shared: { n: 1 }, slot: 0 as number | { n: number } }),
+			(state) => {
+				state.slot = state.shared;
+			},
+			(state) => state.slot === state.shared,
+		);
+		replay(
+			() => createMutableState({ shared: { n: 1 }, slot: null as { n: number } | null }),
+			(state) => {
+				state.slot = state.shared;
+			},
+			(state) => state.slot === state.shared,
+		);
+		replay(
+			() => createMutableState({ list: [0, { n: 1 }] as Array<number | { n: number }> }),
+			(state) => {
+				state.list[0] = state.list[1]!;
+			},
+			(state) => state.list[0] === state.list[1],
+		);
+	});
+
+	it("replays a window that omits a refused child and aliases a new node with matching intern numbering", async () => {
+		const errors = new Array<unknown>();
+		const origin = createMutableState(
+			{
+				bag: { keep: 1 } as { keep: number; drop?: Map<string, number> },
+				extra: undefined as { n: number } | undefined,
+				alias: undefined as { n: number } | undefined,
+			},
+			{
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = record(origin);
+
+		origin.bag = { keep: 1, drop: new Map<string, number>() };
+		origin.extra = { n: 1 };
+		origin.alias = origin.extra;
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+
+		const replica = createMutableState({
+			bag: { keep: 1 } as { keep: number; drop?: Map<string, number> },
+			extra: undefined as { n: number } | undefined,
+			alias: undefined as { n: number } | undefined,
+		});
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+		expect(replica.alias).toBe(replica.extra);
+		expect(replica.bag).toEqual({ keep: 1 });
+		expect(replica.bag).not.toHaveProperty("drop");
+		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		expect(internId(origin, origin.extra!)).toBe(internId(replica, replica.extra!));
 	});
 });

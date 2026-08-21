@@ -315,6 +315,42 @@ const mintDecomposedChange = (
 	mintDecomposedContents(context, path, after, residual);
 };
 
+const internLiveSkippingOmissions = (context: DiffContext, handle: Handle, node: object, path: OperationPath): void => {
+	if (context.capture.omissions.size === 0) {
+		internSubtree(handle, node);
+
+		return;
+	}
+
+	const omitted = new Set<object>();
+	const visits = new Set<object>();
+
+	const collect = (current: object, currentPath: OperationPath): void => {
+		const raw = occupancyNodeOf(current);
+
+		if (visits.has(raw)) return;
+
+		visits.add(raw);
+
+		for (const entry of walkDataEntries(current)) {
+			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			const childPath = appendOperationPath(currentPath, segmentFor(current, entry.key));
+
+			if (isOmittedPath(context, childPath)) {
+				omitted.add(occupancyNodeOf(entry.value));
+
+				continue;
+			}
+
+			collect(entry.value, childPath);
+		}
+	};
+
+	collect(node, path);
+	internSubtree(handle, node, (_parent, _key, child) => omitted.has(occupancyNodeOf(child)));
+};
+
 const mintAssignment = (
 	context: DiffContext,
 	path: OperationPath,
@@ -333,13 +369,11 @@ const mintAssignment = (
 		if (internedId !== undefined && internedOccupied(handle, after)) {
 			const beforeId = isObjectLike(before) ? internedIdOf(handle, before) : undefined;
 
-			if (!beforePresent || (beforeId !== undefined && beforeId !== internedId)) {
+			if (beforeId !== internedId && (beforeId !== undefined || !isObjectLike(before))) {
 				commitLink(context, path, internedId, before, beforePresent);
 
 				return;
 			}
-
-			internSubtree(handle, after);
 		} else if (isPlainObject(after) || isPlainArray(after)) {
 			internNode(handle, after);
 
@@ -354,12 +388,11 @@ const mintAssignment = (
 
 				return;
 			}
+		}
 
-			internSubtree(handle, after);
-		} else internSubtree(handle, after);
-	}
-
-	if (isObjectLike(after)) admitDescendants(context, path, new Set(), false, residual);
+		admitDescendants(context, path, new Set(), false, residual);
+		internLiveSkippingOmissions(context, handle, after, path);
+	} else if (isObjectLike(after)) admitDescendants(context, path, new Set(), false, residual);
 
 	const assigned = withoutOmittedChildren(context, after, path);
 
