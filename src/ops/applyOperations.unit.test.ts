@@ -3,7 +3,7 @@ import { transact } from "../transact/transact";
 import { createMutableState } from "../createMutableState";
 import { requireHandle } from "../handle";
 import { identify, isSameIdentity } from "../identity";
-import { internedIdOf } from "../intern";
+import { internedIdOf, nodeOfInternedId } from "../intern";
 import { applyOperations } from "./applyOperations";
 import {
 	createAssignMutation,
@@ -602,39 +602,110 @@ describe("applyOperations: link halves", () => {
 		expect(internId(origin, origin.sh!)).toBe(internId(replica, replica.sh!));
 	});
 
+	it("undo of a mixed cluster skips members still interned via another chain", () => {
+		const shared = { n: 1 };
+		const extra = { n: 2 };
+		const origin = createMutableState({
+			keep: shared,
+			box: { nested: shared, extra },
+		});
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const keepId = internId(origin, origin.keep);
+		const boxId = internId(origin, origin.box);
+		const extraId = internId(origin, origin.box.extra);
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete (origin as { box?: { nested: { n: number }; extra: { n: number } } }).box;
+		});
+
+		applyOperations(origin, heard[0] ?? [], "undo");
+
+		expect(internId(origin, origin.keep)).toBe(keepId);
+		expect(internId(origin, origin.box)).toBe(boxId);
+		expect(internId(origin, origin.box.extra)).toBe(extraId);
+		expect(origin.box.nested).toBe(origin.keep);
+		expect(nodeOfInternedId(originHandle, keepId)).toBe(origin.keep);
+		expect(nodeOfInternedId(originHandle, extraId)).toBe(origin.box.extra);
+
+		const replicaShared = { n: 1 };
+		const replica = createMutableState({
+			keep: replicaShared,
+			box: { nested: replicaShared, extra: { n: 2 } },
+		});
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+		const transported = JSON.parse(JSON.stringify(heard[0])) as Array<Operation>;
+
+		applyOperations(replica, transported, "do");
+		applyOperations(replica, transported, "undo");
+
+		expect(replica.box.nested).toBe(replica.keep);
+		expect(internId(replica, replica.keep)).toBe(keepId);
+		expect(internId(replica, replica.box)).toBe(boxId);
+		expect(internId(replica, replica.box.extra)).toBe(extraId);
+		expect(nodeOfInternedId(replicaHandle, keepId)).toBe(replica.keep);
+		expect(nodeOfInternedId(replicaHandle, extraId)).toBe(replica.box.extra);
+	});
+
 	it("undo and redo of a link window then a departure restores sharing and numbering", () => {
 		const origin = createMutableState({
 			keep: { n: 1 },
-		} as { keep: { n: number }; alias?: { n: number } });
+		} as { keep?: { n: number }; alias?: { n: number } });
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const keepId = internId(origin, origin.keep!);
+		const before = originHandle.nextInternId;
 		const heard = record(origin);
 
 		transact(origin, () => {
 			origin.alias = origin.keep;
 		});
 
+		expect(origin.alias).toBe(origin.keep);
+		expect(internId(origin, origin.alias!)).toBe(keepId);
+		expect(originHandle.nextInternId).toBe(before);
+
 		transact(origin, () => {
-			delete (origin as { alias?: { n: number } }).alias;
+			delete origin.keep;
+			delete origin.alias;
 		});
+
+		expect(origin.keep).toBeUndefined();
+		expect(origin.alias).toBeUndefined();
 
 		const replica = createMutableState({
 			keep: { n: 1 },
-		} as { keep: { n: number }; alias?: { n: number } });
+		} as { keep?: { n: number }; alias?: { n: number } });
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
 
 		const w1 = JSON.parse(JSON.stringify(heard[0])) as Array<Operation>;
 		const w2 = JSON.parse(JSON.stringify(heard[1])) as Array<Operation>;
 
 		applyOperations(replica, w1, "do");
 		expect(replica.alias).toBe(replica.keep);
+		expect(internId(replica, replica.keep!)).toBe(keepId);
+		expect(replicaHandle.nextInternId).toBe(before);
 
 		applyOperations(replica, w2, "do");
+		expect(replica.keep).toBeUndefined();
 		expect(replica.alias).toBeUndefined();
 
 		applyOperations(replica, w2, "undo");
-		applyOperations(replica, w1, "undo");
-		applyOperations(replica, w1, "do");
-		applyOperations(replica, w2, "do");
+		expect(replica.alias).toBe(replica.keep);
+		expect(internId(replica, replica.keep!)).toBe(keepId);
+		expect(replicaHandle.nextInternId).toBe(before);
 
-		expect(internId(origin, origin.keep)).toBe(internId(replica, replica.keep));
+		applyOperations(replica, w1, "undo");
+		expect(replica.alias).toBeUndefined();
+		expect(internId(replica, replica.keep!)).toBe(keepId);
+		expect(replicaHandle.nextInternId).toBe(before);
+
+		applyOperations(replica, w1, "do");
+		expect(replica.alias).toBe(replica.keep);
+		expect(internId(replica, replica.alias!)).toBe(keepId);
+
+		applyOperations(replica, w2, "do");
+		expect(replica.keep).toBeUndefined();
+		expect(replica.alias).toBeUndefined();
 	});
 
 	it("undo of an admitting window rewinds nextInternId on origin and replica", () => {

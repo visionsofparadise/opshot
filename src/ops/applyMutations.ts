@@ -267,7 +267,7 @@ const applyPlain = (
 
 	if (!isObjectLike(attached)) return;
 
-	if (operation.ids !== undefined) bindVendedIds(handle, attached, operation.ids);
+	if (operation.ids !== undefined) bindVendedIds(handle, attached, operation.ids, parent, key);
 	else internSubtree(handle, attached);
 };
 

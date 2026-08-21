@@ -28,7 +28,11 @@ const writeId = (handle: Handle, raw: object, id: number): void => {
 	const record = handle.nodes.get(raw);
 
 	if (record === undefined) handle.nodes.set(raw, { edges: [], id });
-	else record.id = id;
+	else {
+		if (record.id !== undefined && record.id !== id) handle.byId.delete(record.id);
+
+		record.id = id;
+	}
 
 	handle.byId.set(id, raw);
 };
@@ -117,10 +121,10 @@ export function nodeOfInternedId(handle: Handle, id: number): object | undefined
 const walkTracked = (
 	node: object,
 	visits: Set<object>,
-	visit: (current: object, raw: object) => boolean,
+	visit: (current: object, raw: object, parent?: object, key?: string) => boolean,
 	skip?: (parent: object, key: string, child: object) => boolean,
 ): void => {
-	const walk = (current: object): void => {
+	const walk = (current: object, parent?: object, key?: string): void => {
 		const raw = occupancyNodeOf(current);
 
 		if (visits.has(raw)) return;
@@ -129,14 +133,14 @@ const walkTracked = (
 
 		if (admissionLane(current) === "untracked") return;
 
-		if (!visit(current, raw)) return;
+		if (!visit(current, raw, parent, key)) return;
 
 		for (const entry of walkDataEntries(current)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
 
 			if (skip?.(current, entry.key, entry.value) === true) continue;
 
-			walk(entry.value);
+			walk(entry.value, current, entry.key);
 		}
 	};
 
@@ -232,17 +236,27 @@ export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, Reado
 
 		if ((handle.nodes.get(node)?.edges.length ?? 0) > 0) continue;
 
-		const evicted = new Array<number>();
+		const clusterIds = new Array<number>();
 
-		walkUnoccupiedCluster(handle, node, (raw, id) => {
+		walkTracked(node, new Set(), (_current, raw) => {
+			const id = committedIdOf(handle, raw);
+
+			if (isOccupiedMember(handle, raw)) {
+				if (id !== undefined) clusterIds.push(id);
+
+				return false;
+			}
+
 			if (id !== undefined) {
 				handle.nodes.delete(raw);
 				handle.byId.delete(id);
-				evicted.push(id);
+				clusterIds.push(id);
 			} else handle.nodes.delete(raw);
+
+			return true;
 		});
 
-		if (evicted.length > 0) departed.set(node, evicted);
+		if (clusterIds.length > 0) departed.set(node, clusterIds);
 	}
 
 	queued.clear();
@@ -250,19 +264,37 @@ export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, Reado
 	return departed;
 }
 
-export function bindVendedIds(handle: Handle, node: object, ids: ReadonlyArray<number>): void {
+export function bindVendedIds(
+	handle: Handle,
+	node: object,
+	ids: ReadonlyArray<number>,
+	parent?: object,
+	key?: PropertyKey,
+): void {
 	let index = 0;
 
-	walkTracked(node, new Set(), (_current, raw) => {
+	walkTracked(node, new Set(), (_current, raw, walkParent, walkKey) => {
 		const id = ids[index];
 
 		if (id === undefined) return true;
 
+		index += 1;
+
+		const held = handle.byId.get(id);
+		const slotParent = walkParent ?? parent;
+		const slotKey: PropertyKey | undefined = walkKey ?? key;
+
+		if (held !== undefined) {
+			if (occupancyNodeOf(held) !== raw && slotParent !== undefined && slotKey !== undefined) {
+				Reflect.set(slotParent, slotKey, liveOfInterned(held));
+			}
+
+			return false;
+		}
+
 		writeId(handle, raw, id);
 
 		if (id >= handle.nextInternId) handle.nextInternId = id + 1;
-
-		index += 1;
 
 		return true;
 	});
