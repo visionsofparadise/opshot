@@ -23,10 +23,17 @@ const occupancyRootOf = (handle: Handle): object => rawTargetOf(handle.proxy.roo
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
-export interface InEdge {
+interface InEdge {
 	readonly parent: object;
 	readonly key: string | number;
 }
+
+export interface NodeRecord {
+	edges: Array<InEdge>;
+	id: number | undefined;
+}
+
+const edgesOf = (handle: Handle, node: object): Array<InEdge> | undefined => handle.nodes.get(node)?.edges;
 
 const pathHasIgnored = (trie: DeclarationTrie, path: ReadonlyArray<string | number>): boolean => {
 	if (trie.ignored) return true;
@@ -74,7 +81,7 @@ const walkGroundedChains = (
 
 		pathVisited.add(current);
 
-		const edges = handle.inEdges.get(current);
+		const edges = edgesOf(handle, current);
 
 		if (edges !== undefined) {
 			for (const edge of edges) {
@@ -97,36 +104,33 @@ const walkGroundedChains = (
 export function addInEdge(handle: Handle, node: object, parent: object, key: string | number): void {
 	const rawNode = rawOf(node);
 	const rawParent = rawOf(parent);
-	let edges = handle.inEdges.get(rawNode);
+	let record = handle.nodes.get(rawNode);
 
-	if (edges === undefined) {
-		edges = [];
-		handle.inEdges.set(rawNode, edges);
+	if (record === undefined) {
+		record = { edges: [], id: undefined };
+		handle.nodes.set(rawNode, record);
 	}
 
-	if (edges.some((edge) => rawOf(edge.parent) === rawParent && edge.key === key)) return;
+	if (record.edges.some((edge) => rawOf(edge.parent) === rawParent && edge.key === key)) return;
 
-	edges.push({ parent: rawParent, key });
+	record.edges.push({ parent: rawParent, key });
 	registerHandle(rawNode, handle);
 }
 
 export function removeInEdge(handle: Handle, node: object, parent: object, key: string | number): void {
 	const rawNode = rawOf(node);
 	const rawParent = rawOf(parent);
-	const edges = handle.inEdges.get(rawNode);
+	const record = handle.nodes.get(rawNode);
 
-	if (edges === undefined) return;
+	if (record === undefined) return;
 
-	const index = edges.findIndex((edge) => rawOf(edge.parent) === rawParent && edge.key === key);
+	const index = record.edges.findIndex((edge) => rawOf(edge.parent) === rawParent && edge.key === key);
 
 	if (index === -1) return;
 
-	edges.splice(index, 1);
+	record.edges.splice(index, 1);
 
-	if (edges.length === 0) {
-		handle.inEdges.delete(rawNode);
-		queueDeparture(handle, rawNode);
-	}
+	if (record.edges.length === 0 && rawNode !== occupancyRootOf(handle)) queueDeparture(handle, rawNode);
 }
 
 export function edgeStatusOf(handle: Handle, node: object): { occupied: boolean; unsafe: boolean } {
@@ -308,7 +312,7 @@ const chainsAtNode = (
 
 	const aggregated = new Array<NodeChain>();
 	let occupied = false;
-	const edges = handle.inEdges.get(raw);
+	const edges = edgesOf(handle, raw);
 
 	if (edges !== undefined) {
 		for (const edge of edges) {

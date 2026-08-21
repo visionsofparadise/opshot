@@ -21,13 +21,20 @@ const liveOfInterned = (raw: object): object => proxyCache.get(raw) ?? raw;
 
 const departingNodes = new WeakMap<Handle, Set<object>>();
 
+const committedIdOf = (handle: Handle, raw: object): number | undefined => handle.nodes.get(raw)?.id;
+
+const writeId = (handle: Handle, raw: object, id: number): void => {
+	const record = handle.nodes.get(raw);
+
+	if (record === undefined) handle.nodes.set(raw, { edges: [], id });
+	else record.id = id;
+
+	handle.byId.set(id, raw);
+	handle.departedHold.delete(id);
+};
+
 /**
  * Interns `node` on `handle`, minting an id on first admission.
- *
- * `internedById` stores `WeakRef`s. A node whose in-edges empty moves to
- * `departedHold` for one capture window so undo can still resolve the id
- * (spec §3.6). Detached clusters whose interior in-edges keep entries nonempty
- * stay interned until `WeakRef` GC reclaims them.
  *
  * @param handle - State handle.
  * @param node - Node to intern.
@@ -35,27 +42,29 @@ const departingNodes = new WeakMap<Handle, Set<object>>();
  */
 function internNode(handle: Handle, node: object): number {
 	const raw = occupancyNodeOf(node);
-	const existing = handle.interned.get(raw);
+	const existing = committedIdOf(handle, raw);
 
-	if (existing !== undefined) {
-		handle.internedById.set(existing, new WeakRef(raw));
-		handle.departedHold.delete(existing);
+	if (existing !== undefined) return existing;
 
-		return existing;
+	for (const [id, held] of handle.departedHold) {
+		if (held === raw) {
+			writeId(handle, raw, id);
+
+			return id;
+		}
 	}
 
 	const id = handle.nextInternId;
 
 	handle.nextInternId += 1;
-	handle.interned.set(raw, id);
-	handle.internedById.set(id, new WeakRef(raw));
+	writeId(handle, raw, id);
 
 	return id;
 }
 
 export function internedIdOf(handle: Handle, node: object, capture?: CaptureTables): number | undefined {
 	const raw = occupancyNodeOf(node);
-	const committed = handle.interned.get(raw);
+	const committed = committedIdOf(handle, raw);
 
 	if (committed !== undefined) return committed;
 
@@ -70,14 +79,9 @@ export function internedIdOf(handle: Handle, node: object, capture?: CaptureTabl
 
 export function stageVend(handle: Handle, capture: CaptureTables, node: object): number {
 	const raw = occupancyNodeOf(node);
-	const committed = handle.interned.get(raw);
+	const committed = committedIdOf(handle, raw);
 
-	if (committed !== undefined) {
-		handle.internedById.set(committed, new WeakRef(raw));
-		handle.departedHold.delete(committed);
-
-		return committed;
-	}
+	if (committed !== undefined) return committed;
 
 	for (const mint of capture.mints) {
 		if (mint.node === raw) return mint.id;
@@ -93,11 +97,7 @@ export function stageVend(handle: Handle, capture: CaptureTables, node: object):
 export function commitVends(handle: Handle, capture: CaptureTables): void {
 	if (capture.mints.length === 0) return;
 
-	for (const { node, id } of capture.mints) {
-		handle.interned.set(node, id);
-		handle.internedById.set(id, new WeakRef(node));
-		handle.departedHold.delete(id);
-	}
+	for (const { node, id } of capture.mints) writeId(handle, node, id);
 
 	const last = capture.mints[capture.mints.length - 1];
 
@@ -107,21 +107,19 @@ export function commitVends(handle: Handle, capture: CaptureTables): void {
 }
 
 export function nodeOfInternedId(handle: Handle, id: number): object | undefined {
-	const raw = handle.internedById.get(id)?.deref() ?? handle.departedHold.get(id);
+	const raw = handle.byId.get(id) ?? handle.departedHold.get(id);
 
 	if (raw === undefined) return undefined;
 
 	return liveOfInterned(raw);
 }
 
-export function internSubtree(
-	handle: Handle,
+const walkTracked = (
 	node: object,
+	visits: Set<object>,
+	visit: (current: object, raw: object) => boolean,
 	skip?: (parent: object, key: string, child: object) => boolean,
-	capture?: CaptureTables,
-): void {
-	const visits = new Set<object>();
-
+): void => {
 	const walk = (current: object): void => {
 		const raw = occupancyNodeOf(current);
 
@@ -131,8 +129,7 @@ export function internSubtree(
 
 		if (admissionLane(current) === "untracked") return;
 
-		if (capture === undefined) internNode(handle, current);
-		else stageVend(handle, capture, current);
+		if (!visit(current, raw)) return;
 
 		for (const entry of walkDataEntries(current)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
@@ -144,6 +141,31 @@ export function internSubtree(
 	};
 
 	walk(node);
+};
+
+export function internSubtree(
+	handle: Handle,
+	node: object,
+	skip?: (parent: object, key: string, child: object) => boolean,
+	capture?: CaptureTables,
+): void {
+	walkTracked(
+		node,
+		new Set(),
+		(current) => {
+			if (capture === undefined) internNode(handle, current);
+			else stageVend(handle, capture, current);
+
+			return true;
+		},
+		skip,
+	);
+}
+
+export function hasQueuedDepartures(handle: Handle): boolean {
+	const queued = departingNodes.get(handle);
+
+	return queued !== undefined && queued.size > 0;
 }
 
 export function queueDeparture(handle: Handle, node: object): void {
@@ -158,28 +180,73 @@ export function queueDeparture(handle: Handle, node: object): void {
 	queued.add(raw);
 }
 
-export function commitDepartures(handle: Handle): void {
-	const queued = departingNodes.get(handle);
+const parentOfEdge = (parent: object): object => occupancyNodeOf(parent);
 
-	if (queued !== undefined) {
-		for (const node of queued) {
-			if ((handle.inEdges.get(node)?.length ?? 0) > 0) continue;
+const isOccupiedMember = (handle: Handle, node: object): boolean => {
+	const root = rawTargetOf(handle.proxy.root);
+	const raw = occupancyNodeOf(node);
 
-			const id = handle.interned.get(node);
+	if (raw === root) return true;
 
-			if (id === undefined) continue;
+	const seen = new Set<object>();
 
-			handle.departedHold.set(id, node);
+	const walk = (current: object): boolean => {
+		if (current === root) return true;
+
+		if (seen.has(current)) return false;
+
+		seen.add(current);
+
+		const edges = handle.nodes.get(current)?.edges;
+
+		if (edges === undefined) return false;
+
+		for (const edge of edges) {
+			if (walk(parentOfEdge(edge.parent))) return true;
 		}
 
-		queued.clear();
+		return false;
+	};
+
+	return walk(raw);
+};
+
+export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, ReadonlyArray<number>> {
+	const departed = new Map<object, ReadonlyArray<number>>();
+	const queued = departingNodes.get(handle);
+
+	if (queued === undefined) return departed;
+
+	const root = rawTargetOf(handle.proxy.root);
+
+	for (const node of queued) {
+		if (node === root) continue;
+
+		if ((handle.nodes.get(node)?.edges.length ?? 0) > 0) continue;
+
+		const evicted = new Array<number>();
+
+		walkTracked(node, new Set(), (_current, raw) => {
+			if (isOccupiedMember(handle, raw)) return false;
+
+			const id = committedIdOf(handle, raw);
+
+			if (id !== undefined) {
+				handle.nodes.delete(raw);
+				handle.byId.delete(id);
+				handle.departedHold.set(id, raw);
+				evicted.push(id);
+			}
+
+			return true;
+		});
+
+		if (evicted.length > 0) departed.set(node, evicted);
 	}
 
-	for (const [id, reference] of handle.internedById) {
-		if (reference.deref() !== undefined || handle.departedHold.has(id)) continue;
+	queued.clear();
 
-		handle.internedById.delete(id);
-	}
+	return departed;
 }
 
 export function sweepDeparted(handle: Handle): void {

@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { peelReadProxy } from "./peelReadProxy";
 import type { DeclarationTrie } from "./declarations";
-import type { InEdge } from "./edges";
+import type { NodeRecord } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
 import type { EmissionScheduler } from "./settings";
 
@@ -30,9 +30,8 @@ export interface Handle {
 	strict: boolean;
 	onError?: (error: unknown) => void;
 	declarations: DeclarationTrie | undefined;
-	inEdges: WeakMap<object, Array<InEdge>>;
-	interned: WeakMap<object, number>;
-	internedById: Map<number, WeakRef<object>>;
+	nodes: WeakMap<object, NodeRecord>;
+	byId: Map<number, object>;
 	departedHold: Map<number, object>;
 	nextInternId: number;
 	lastDirty?: DirtyIndex;

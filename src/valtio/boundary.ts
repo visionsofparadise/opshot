@@ -362,7 +362,8 @@ const commitSetInEdges = (
 		if (nextObject === undefined) continue;
 
 		const rawNext = rawTargetOf(nextObject);
-		const wasOccupied = rawNext === rawTargetOf(handle.proxy.root) || (handle.inEdges.get(rawNext)?.length ?? 0) > 0;
+		const wasOccupied =
+			rawNext === rawTargetOf(handle.proxy.root) || (handle.nodes.get(rawNext)?.edges.length ?? 0) > 0;
 
 		addInEdge(handle, nextObject, target, key);
 

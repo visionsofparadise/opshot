@@ -2,6 +2,7 @@ import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { handleOf } from "../handle";
+import { internedIdOf } from "../intern";
 import { subscribe } from "../subscribe";
 import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
 
@@ -20,10 +21,9 @@ describe("dirtySinceSnapshot", () => {
 		const lastSnapshot = handle.lastSnapshot;
 		const lastDirty = handle.lastDirty;
 		const declarations = handle.declarations;
-		const inEdges = handle.inEdges;
-		const interned = handle.interned;
-		const internedById = handle.internedById;
-		const internCount = handle.internedById.size;
+		const byId = handle.byId;
+		const internCount = handle.byId.size;
+		const rootId = internedIdOf(handle, state);
 		const nextInternId = handle.nextInternId;
 		const heard = new Array<unknown>();
 
@@ -42,10 +42,9 @@ describe("dirtySinceSnapshot", () => {
 		expect(handle.lastSnapshot).toBe(lastSnapshot);
 		expect(handle.lastDirty).toBe(lastDirty);
 		expect(handle.declarations).toBe(declarations);
-		expect(handle.inEdges).toBe(inEdges);
-		expect(handle.interned).toBe(interned);
-		expect(handle.internedById).toBe(internedById);
-		expect(handle.internedById.size).toBe(internCount);
+		expect(handle.byId).toBe(byId);
+		expect(handle.byId.size).toBe(internCount);
+		expect(internedIdOf(handle, state)).toBe(rootId);
 		expect(handle.nextInternId).toBe(nextInternId);
 	});
 

@@ -243,6 +243,6 @@ describe("ignore", () => {
 		const handle = handleOf(state);
 
 		expect(handle).toBeDefined();
-		expect(handle!.inEdges.get(replacement)).toBeUndefined();
+		expect(handle!.nodes.get(replacement)?.edges.length ?? 0).toBe(0);
 	});
 });

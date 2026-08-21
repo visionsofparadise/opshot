@@ -1,6 +1,6 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
-import { commitDepartures, commitVends, sweepDeparted } from "../intern";
+import { commitVends, evictDepartedClusters, hasQueuedDepartures, sweepDeparted } from "../intern";
 import { OccupancyRefusalError, createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
@@ -172,8 +172,11 @@ const captureRange = (
 
 	commitVends(handle, capture);
 	handle.lastSnapshot = to;
-	sweepDeparted(handle);
-	commitDepartures(handle);
+
+	if (from !== to || capture.mints.length > 0 || hasQueuedDepartures(handle)) {
+		sweepDeparted(handle);
+		evictDepartedClusters(handle);
+	}
 
 	if (ops.length > 0 && !handle.replaying) {
 		for (const operation of ops) stampOperation(handle, operation);

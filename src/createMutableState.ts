@@ -230,17 +230,18 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		strict,
 		onError: options?.onError,
 		declarations,
-		inEdges: new WeakMap(),
-		interned: new WeakMap(),
-		internedById: new Map(),
+		nodes: new WeakMap(),
+		byId: new Map(),
 		departedHold: new Map(),
-		nextInternId: 0,
+		nextInternId: 1,
 		stamp: {},
 		version: 0,
 		replaying: false,
 	};
 
 	registerHandle(base, handle);
+	handle.nodes.set(base, { edges: [], id: 0 });
+	handle.byId.set(0, base);
 
 	const instrumented = proxy({ root: base });
 

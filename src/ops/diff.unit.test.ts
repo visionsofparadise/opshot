@@ -1048,30 +1048,25 @@ describe("diffObjects: link batch construction", () => {
 		expect(replica.bag.slot).toBe(replica.keep);
 	});
 
-	it("links an interned node re-admitted from an ignore()d container so a replica shares", () => {
-		const state = createMutableState({
+	it("re-admits a departed node as an assign so a replica converges on current content", () => {
+		const origin = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
 			wrapped: ignore({ held: { n: 0 } }),
 			slot: undefined as { n: number } | undefined,
 		});
+		const node = origin.hold!;
+		const heard = record(origin);
 
-		const node = state.hold!;
+		origin.wrapped = { held: node };
+		delete origin.hold;
 
-		state.wrapped = { held: node };
-		delete state.hold;
+		transact(origin, () => undefined);
 
-		transact(state, () => undefined);
-
-		const heard = record(state);
-
-		transact(state, () => {
-			state.slot = node;
+		transact(origin, () => {
+			origin.slot = node;
 		});
 
-		const delivered = heard[0] ?? [];
-
-		expect(delivered).toHaveLength(1);
-		expect(delivered[0]?.do).toMatchObject({ verb: "link", path: ["slot"], ref: internId(state, node) });
+		expect(heard[1]?.[0]?.do).toMatchObject({ verb: "assign", path: ["slot"], value: { n: 1 } });
 
 		const replica = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
@@ -1079,13 +1074,82 @@ describe("diffObjects: link batch construction", () => {
 			slot: undefined as { n: number } | undefined,
 		});
 
-		const replicaNode = replica.hold!;
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[1] ?? []), "do");
 
-		replica.wrapped = { held: replicaNode };
-		delete replica.hold;
+		expect(replica.slot).toEqual({ n: 1 });
+		expect(Object.hasOwn(replica, "hold")).toBe(false);
+	});
 
-		applyOperations(replica, projectTransport(delivered), "do");
-		expect(replica.slot).toBe(replicaNode);
+	it("evicts interiors of a departed cluster", () => {
+		const state = createMutableState({ box: { inner: { n: 1 } } });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const inner = state.box.inner;
+
+		expect(internedIdOf(handle, inner)).toBeDefined();
+
+		transact(state, () => {
+			delete (state as { box?: { inner: { n: number } } }).box;
+		});
+
+		expect(internedIdOf(handle, inner)).toBeUndefined();
+		expect(internedIdOf(handle, state)).toBe(0);
+	});
+
+	it("keeps the intern id of a departed cluster member still occupied via another chain", () => {
+		const shared = { n: 1 };
+		const state = createMutableState({ keep: shared, box: { nested: shared } });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const box = state.box;
+		const id = internedIdOf(handle, shared);
+
+		expect(id).toBeDefined();
+
+		transact(state, () => {
+			delete (state as { box?: { nested: { n: number } } }).box;
+		});
+
+		expect(internedIdOf(handle, box)).toBeUndefined();
+		expect(internedIdOf(handle, shared)).toBe(id);
+	});
+
+	it("evicts nothing when a node departs and returns in the same window", () => {
+		const state = createMutableState({ box: { n: 1 } });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const box = state.box;
+		const id = internedIdOf(handle, box);
+
+		transact(state, () => {
+			delete (state as { box?: { n: number } }).box;
+			state.box = box;
+		});
+
+		expect(internedIdOf(handle, box)).toBe(id);
+	});
+
+	it("replays a user-held node mutated while detached with current content on a replica", () => {
+		const origin = createMutableState({ box: { n: 1 } as { n: number } | undefined });
+		const node = origin.box!;
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete origin.box;
+		});
+
+		node.n = 99;
+
+		transact(origin, () => {
+			origin.box = node;
+		});
+
+		expect(heard[1]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"], value: { n: 99 } });
+
+		const replica = createMutableState({ box: { n: 1 } as { n: number } | undefined });
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[1] ?? []), "do");
+
+		expect(replica.box).toEqual({ n: 99 });
 	});
 });
 
@@ -1338,7 +1402,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		expect(internedIdOf(handle!, state.bag.wrap.secret)).toBeUndefined();
 		expect(edgeStatusOf(handle!, state.bag.left.child).occupied).toBe(true);
 		expect(internedIdOf(handle!, state.bag.left.child)).toBeDefined();
-		expect(handle!.inEdges.get(rawTargetOf(state.bag.left.child))?.length).toBe(3);
+		expect(handle!.nodes.get(rawTargetOf(state.bag.left.child))?.edges.length).toBe(3);
 
 		transact(state, () => {
 			state.tick = 1;
