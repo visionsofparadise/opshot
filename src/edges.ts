@@ -28,21 +28,6 @@ export interface InEdge {
 	readonly key: string | number;
 }
 
-const residualAlong = (
-	trie: DeclarationTrie | undefined,
-	path: ReadonlyArray<string | number>,
-): DeclarationTrie | undefined => {
-	let current = trie;
-
-	for (const key of path) {
-		current = declarationChild(current, key);
-
-		if (current === undefined) return undefined;
-	}
-
-	return current;
-};
-
 const pathHasIgnored = (trie: DeclarationTrie, path: ReadonlyArray<string | number>): boolean => {
 	if (trie.ignored) return true;
 
@@ -213,53 +198,216 @@ export function isIgnoredFrontier(handle: Handle, parent: object, key: string | 
 	return hit;
 }
 
-export function slotStatusOf(
+export interface ChainStatus {
+	readonly occupied: boolean;
+	readonly unsafe: boolean;
+	readonly ignored: boolean;
+	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
+}
+
+interface NodeChain {
+	readonly residual: DeclarationTrie | undefined;
+	readonly tainted: boolean;
+	readonly ignored: boolean;
+}
+
+interface NodeChainSet {
+	readonly occupied: boolean;
+	readonly entries: ReadonlyArray<NodeChain>;
+}
+
+const uniqueNodeChains = (entries: ReadonlyArray<NodeChain>): Array<NodeChain> => {
+	const unique = new Array<NodeChain>();
+	const undefinedFlags = new Set<string>();
+	const definedFlags = new WeakMap<object, Set<string>>();
+
+	for (const entry of entries) {
+		const flags = `${entry.tainted ? "1" : "0"}${entry.ignored ? "1" : "0"}`;
+
+		if (entry.residual === undefined) {
+			if (undefinedFlags.has(flags)) continue;
+
+			undefinedFlags.add(flags);
+			unique.push(entry);
+
+			continue;
+		}
+
+		let seen = definedFlags.get(entry.residual);
+
+		if (seen === undefined) {
+			seen = new Set();
+			definedFlags.set(entry.residual, seen);
+		}
+
+		if (seen.has(flags)) continue;
+
+		seen.add(flags);
+		unique.push(entry);
+	}
+
+	return unique;
+};
+
+const uniqueResiduals = (residuals: ReadonlyArray<DeclarationTrie | undefined>): Array<DeclarationTrie | undefined> => {
+	const unique = new Array<DeclarationTrie | undefined>();
+	let sawUndefined = false;
+	const seen = new Set<DeclarationTrie>();
+
+	for (const residual of residuals) {
+		if (residual === undefined) {
+			if (sawUndefined) continue;
+
+			sawUndefined = true;
+			unique.push(undefined);
+
+			continue;
+		}
+
+		if (seen.has(residual)) continue;
+
+		seen.add(residual);
+		unique.push(residual);
+	}
+
+	return unique;
+};
+
+const chainsAtNode = (
 	handle: Handle,
-	parent: object,
+	node: object,
+	memo: Map<object, NodeChainSet>,
+	computing: Set<object>,
+): NodeChainSet => {
+	const raw = rawOf(node);
+	const cached = memo.get(raw);
+
+	if (cached !== undefined) return cached;
+
+	if (computing.has(raw)) return { occupied: false, entries: [] };
+
+	if (raw === occupancyRootOf(handle)) {
+		const trie = handle.declarations;
+		const result: NodeChainSet = {
+			occupied: true,
+			entries: [
+				{
+					residual: trie,
+					tainted: trie?.unsafe === true,
+					ignored: trie?.ignored === true,
+				},
+			],
+		};
+
+		memo.set(raw, result);
+
+		return result;
+	}
+
+	computing.add(raw);
+
+	const aggregated = new Array<NodeChain>();
+	let occupied = false;
+	const edges = handle.inEdges.get(raw);
+
+	if (edges !== undefined) {
+		for (const edge of edges) {
+			const parent = chainsAtNode(handle, edge.parent, memo, computing);
+
+			if (!parent.occupied) continue;
+
+			occupied = true;
+
+			for (const entry of parent.entries) {
+				const child = entry.residual === undefined ? undefined : declarationChild(entry.residual, edge.key);
+
+				aggregated.push({
+					residual: child,
+					tainted: entry.tainted || child?.unsafe === true,
+					ignored: entry.ignored || child?.ignored === true,
+				});
+			}
+		}
+	}
+
+	computing.delete(raw);
+
+	const result: NodeChainSet = { occupied, entries: uniqueNodeChains(aggregated) };
+
+	memo.set(raw, result);
+
+	return result;
+};
+
+export function descendChains(
+	chains: ReadonlyArray<DeclarationTrie | undefined>,
 	key: string | number,
 ): {
 	readonly ignored: boolean;
-	readonly occupied: boolean;
 	readonly unsafe: boolean;
-	readonly residual: DeclarationTrie | undefined;
+	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
 } {
-	const trie = handle.declarations;
-	const status = {
-		ignored: false,
-		occupied: false,
-		hasClean: false,
-		cleanResidual: undefined as DeclarationTrie | undefined,
-		firstResidual: undefined as DeclarationTrie | undefined,
-	};
+	const next = new Array<DeclarationTrie | undefined>();
+	let ignored = false;
 
-	walkGroundedChains(handle, parent, (pathFromRoot) => {
-		status.occupied = true;
+	for (const residual of chains) {
+		if (residual === undefined) {
+			next.push(undefined);
 
-		const slotPath = [...pathFromRoot, key];
-		const residual = residualAlong(trie, slotPath);
-
-		status.firstResidual ??= residual;
-
-		if (trie !== undefined && pathHasIgnored(trie, slotPath)) status.ignored = true;
-
-		if (trie === undefined || !pathIsTainted(trie, slotPath)) {
-			status.hasClean = true;
-			status.cleanResidual = residual;
+			continue;
 		}
 
-		return status.ignored && status.hasClean;
-	});
+		const child = declarationChild(residual, key);
+
+		if (child?.ignored === true) ignored = true;
+
+		if (child?.unsafe === true) continue;
+
+		next.push(child);
+	}
 
 	return {
-		ignored: status.ignored,
-		occupied: status.occupied,
-		unsafe: status.occupied && !status.hasClean,
-		residual: status.cleanResidual ?? status.firstResidual,
+		ignored,
+		unsafe: chains.length > 0 && next.length === 0,
+		chains: uniqueResiduals(next),
 	};
 }
 
-const seedFrom = (handle: Handle, node: object, residual: DeclarationTrie | undefined, visits: Set<object>): void => {
-	if (residual?.ignored === true) return;
+export function slotStatusOf(handle: Handle, parent: object, key: string | number): ChainStatus {
+	const parentChains = chainsAtNode(handle, parent, new Map(), new Set());
+
+	if (!parentChains.occupied) {
+		return { occupied: false, unsafe: false, ignored: false, chains: [] };
+	}
+
+	const chains = new Array<DeclarationTrie | undefined>();
+	let ignored = false;
+
+	for (const entry of parentChains.entries) {
+		const child = entry.residual === undefined ? undefined : declarationChild(entry.residual, key);
+		const slotIgnored = entry.ignored || child?.ignored === true;
+		const tainted = entry.tainted || child?.unsafe === true;
+
+		if (slotIgnored) ignored = true;
+
+		if (!tainted) chains.push(child);
+	}
+
+	return {
+		ignored,
+		occupied: true,
+		unsafe: chains.length === 0,
+		chains: uniqueResiduals(chains),
+	};
+}
+
+const seedFrom = (
+	handle: Handle,
+	node: object,
+	chains: ReadonlyArray<DeclarationTrie | undefined>,
+	visits: Set<object>,
+): void => {
+	if (chains.some((residual) => residual?.ignored === true)) return;
 
 	const raw = rawOf(node);
 
@@ -275,19 +423,24 @@ const seedFrom = (handle: Handle, node: object, residual: DeclarationTrie | unde
 		if (admissionLane(entry.value) === "untracked") continue;
 
 		const key = segmentFor(raw, entry.key);
-		const childResidual = declarationChild(residual, key);
+		const slot = slotStatusOf(handle, raw, key);
+		const descended = descendChains(chains, key);
 
-		if (childResidual?.ignored === true) continue;
+		if (slot.ignored || descended.ignored) continue;
 
 		addInEdge(handle, entry.value, raw, key);
-		seedFrom(handle, entry.value, childResidual, visits);
+		seedFrom(handle, entry.value, slot.occupied ? slot.chains : descended.chains, visits);
 	}
 };
 
 export function seedInEdges(handle: Handle): void {
-	seedFrom(handle, handle.proxy.root, handle.declarations, new Set());
+	seedFrom(handle, handle.proxy.root, handle.declarations?.unsafe === true ? [] : [handle.declarations], new Set());
 }
 
-export function seedInEdgesUnder(handle: Handle, node: object, residual: DeclarationTrie | undefined): void {
-	seedFrom(handle, node, residual, new Set());
+export function seedInEdgesUnder(
+	handle: Handle,
+	node: object,
+	chains: ReadonlyArray<DeclarationTrie | undefined>,
+): void {
+	seedFrom(handle, node, chains, new Set());
 }

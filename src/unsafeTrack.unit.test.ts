@@ -132,4 +132,24 @@ describe("unsafeTrack occupancy", () => {
 		expect(state.a.nested).toEqual({ n: 1 });
 		expect(state.b.nested).toEqual({ n: 1 });
 	});
+
+	it("refuses a Map assigned below a declared unsafeTrack when a runtime alias holds a clean chain", () => {
+		const state = createMutableState(
+			{ a: { x: { y: unsafeTrack({ n: 1 }) } }, b: 0 } as unknown as {
+				a: { x: { y: object } };
+				b: { x: { y: object } } | number;
+			},
+			{ strict: true },
+		);
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		expect(() => {
+			transact(state, () => {
+				state.a.x = { y: new Map() };
+			});
+		}).toThrow(OccupancyRefusalError);
+	});
 });

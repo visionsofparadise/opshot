@@ -1,7 +1,7 @@
 import { getUntracked } from "proxy-compare";
 import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { declarationChild, type DeclarationTrie } from "../declarations";
-import { addInEdge, isIgnoredFrontier, removeInEdge, seedInEdgesUnder, slotStatusOf } from "../edges";
+import { addInEdge, descendChains, isIgnoredFrontier, removeInEdge, seedInEdgesUnder, slotStatusOf } from "../edges";
 import { handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget } from "../identity";
 import { isPlainArray } from "../ops/cloneValue";
@@ -43,7 +43,7 @@ interface AssignmentStatus {
 	readonly handle: Handle;
 	readonly ignored: boolean;
 	readonly unsafe: boolean;
-	readonly residual: DeclarationTrie | undefined;
+	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
 	readonly originIndex: number;
 }
 
@@ -66,7 +66,7 @@ const computeOutermostAssignment = (
 		handle,
 		ignored: slot.ignored,
 		unsafe: slot.unsafe,
-		residual: slot.residual,
+		chains: slot.chains,
 		originIndex,
 	};
 };
@@ -76,7 +76,7 @@ const statusOfCurrentAssignment = (): AssignmentStatus | undefined => {
 
 	if (setFrameStack.length <= assignmentStatus.originIndex + 1) return assignmentStatus;
 
-	let residual = assignmentStatus.residual;
+	let chains = assignmentStatus.chains;
 	let unsafe = assignmentStatus.unsafe;
 	let ignored = assignmentStatus.ignored;
 
@@ -85,16 +85,16 @@ const statusOfCurrentAssignment = (): AssignmentStatus | undefined => {
 
 		if (frame === undefined || typeof frame.prop !== "string") return assignmentStatus;
 
-		residual = declarationChild(residual, segmentForProp(frame.target, frame.prop));
+		const descended = descendChains(chains, segmentForProp(frame.target, frame.prop));
 
-		if (residual?.ignored === true) ignored = true;
-
-		if (residual?.unsafe === true) unsafe = true;
+		ignored = ignored || descended.ignored;
+		unsafe = unsafe || descended.unsafe;
+		chains = descended.chains;
 	}
 
 	return {
 		handle: assignmentStatus.handle,
-		residual,
+		chains,
 		unsafe,
 		ignored,
 		originIndex: assignmentStatus.originIndex,
@@ -370,7 +370,7 @@ const commitSetInEdges = (
 
 		const slot = slotStatusOf(handle, target, key);
 
-		seedInEdgesUnder(handle, nextObject, slot.residual);
+		seedInEdgesUnder(handle, nextObject, slot.chains);
 	}
 };
 

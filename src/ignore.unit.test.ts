@@ -1,5 +1,7 @@
 import { createMutableState } from "./createMutableState";
+import { handleOf } from "./handle";
 import { ignore, ignoreMarker } from "./ignore";
+import { unsafeTrack } from "./unsafeTrack";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
@@ -215,5 +217,32 @@ describe("ignore", () => {
 		expect(shapeOps(heard[0] ?? [])).toEqual([
 			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
 		]);
+	});
+
+	it("leaves a replacement raw at a declared ignore frontier after a clean-chain alias of the parent", () => {
+		const state = createMutableState({
+			a: { x: { hide: ignore({ s: 1 }) } },
+			b: { x: { other: unsafeTrack({ t: 1 }) } },
+		} as unknown as {
+			a: { x: { hide?: { s: number }; other?: { t: number } } };
+			b: { x: { hide?: { s: number }; other?: { t: number } } };
+		});
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		const replacement = { s: 2 };
+
+		transact(state, () => {
+			state.a.x = { hide: replacement };
+		});
+
+		expect(state.a.x.hide).toBe(replacement);
+
+		const handle = handleOf(state);
+
+		expect(handle).toBeDefined();
+		expect(handle!.inEdges.get(replacement)).toBeUndefined();
 	});
 });

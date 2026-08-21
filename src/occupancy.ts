@@ -1,6 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { declarationChild, type DeclarationTrie } from "./declarations";
-import { isIgnoredFrontier } from "./edges";
+import { descendChains, isIgnoredFrontier, slotStatusOf } from "./edges";
 import { getRegisteredTarget } from "./identity";
 import { internNode } from "./intern";
 import { isPlainArray } from "./ops/cloneValue";
@@ -9,6 +8,7 @@ import { isCanonicalArrayIndexString, isObjectLike } from "./ops/predicates";
 import { walkDataEntries } from "./utils/dataEntries";
 import { nonWritablePropertyError, rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision, classifyValue } from "./valtio/classify";
+import type { DeclarationTrie } from "./declarations";
 import type { DirtyIndex, Handle } from "./handle";
 
 const { proxyStateMap } = unstable_getInternalStates();
@@ -175,9 +175,11 @@ export function markDirtyPath(
 const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: CaptureTables): void => {
 	const root = handle.proxy.root;
 	const visits = new Set<object>();
+	const rootChains: ReadonlyArray<DeclarationTrie | undefined> =
+		handle.declarations?.unsafe === true ? [] : [handle.declarations];
 
-	const walk = (node: object, path: OperationPath, residual: DeclarationTrie | undefined, unsafe: boolean): void => {
-		if (residual?.ignored === true) return;
+	const walk = (node: object, path: OperationPath, chains: ReadonlyArray<DeclarationTrie | undefined>): void => {
+		if (chains.some((residual) => residual?.ignored === true)) return;
 
 		internNode(handle, node);
 
@@ -187,13 +189,17 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 
 		visits.add(nodeRaw);
 
-		const nodeUnsafe = unsafe || residual?.unsafe === true;
-
 		for (const entry of walkDataEntries(node)) {
 			const key = segmentFor(node, entry.key);
 			const childPath = appendOperationPath(path, key);
-			const childResidual = declarationChild(residual, key);
-			const childUnsafe = nodeUnsafe || childResidual?.unsafe === true;
+			const slot = slotStatusOf(handle, node, key);
+			const descended = descendChains(chains, key);
+			const ignored = slot.ignored || descended.ignored;
+			const unsafe = slot.occupied ? slot.unsafe : descended.unsafe;
+			const childChains = slot.occupied ? slot.chains : descended.chains;
+
+			if (ignored) continue;
+
 			const visit = bindVisitedOccupancy(
 				handle,
 				childPath,
@@ -202,17 +208,16 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 				entry.value,
 				capture,
 				sameOccupant,
-				childUnsafe,
+				unsafe,
 			);
 
 			if (visit !== "continue") continue;
 
-			if (typeof entry.value === "object" && entry.value !== null)
-				walk(entry.value, childPath, childResidual, childUnsafe);
+			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value, childPath, childChains);
 		}
 	};
 
-	walk(root, createOperationPath([]), handle.declarations, false);
+	walk(root, createOperationPath([]), rootChains);
 };
 
 export function seedOccupancies(handle: Handle): void {

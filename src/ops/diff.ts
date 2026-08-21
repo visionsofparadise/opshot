@@ -1,6 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { declarationChild, type DeclarationTrie } from "../declarations";
-import { edgeStatusOf, isIgnoredFrontier } from "../edges";
+import { descendChains, edgeStatusOf, isIgnoredFrontier, slotStatusOf } from "../edges";
 import { getRegisteredTarget, isSameIdentity } from "../identity";
 import { internedIdOf, internNode, internSubtree } from "../intern";
 import {
@@ -15,6 +14,7 @@ import { isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
+import type { DeclarationTrie } from "../declarations";
 import type { DirtyIndex, Handle } from "../handle";
 
 const { proxyStateMap } = unstable_getInternalStates();
@@ -67,6 +67,17 @@ const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
 
 const occupancyNodeOf = (node: object): object => rawTargetOf(liveOf(node));
 
+type ChainSet = ReadonlyArray<DeclarationTrie | undefined>;
+
+const childChainsOf = (chains: ChainSet, key: string | number): ChainSet => descendChains(chains, key).chains;
+
+const isChainsIgnored = (chains: ChainSet): boolean => chains.some((chain) => chain?.ignored === true);
+
+const isChainsUnsafe = (chains: ChainSet): boolean => chains.length === 0;
+
+const chainsAtRoot = (declarations: DeclarationTrie | undefined): ChainSet =>
+	declarations?.unsafe === true ? [] : [declarations];
+
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
@@ -118,11 +129,11 @@ const admitEmitPath = (
 	before: unknown,
 	after: unknown,
 	beforePresent: boolean,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): OccupancyVisit => {
 	if (!writesTables(context) || path.length === 0) return "continue";
 
-	if (residual?.ignored === true) return "skip";
+	if (isChainsIgnored(residual)) return "skip";
 
 	const liveParent = liveAtPath(context.handle.proxy.root, path.slice(0, -1));
 	const liveChild = liveAtPath(context.handle.proxy.root, path);
@@ -138,7 +149,8 @@ const admitEmitPath = (
 	if (!isObjectLike(liveParent) || lastSegment === undefined) throw new MissingDiffParentError();
 
 	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
-	let unsafe = residual?.unsafe === true;
+	const slot = slotStatusOf(context.handle, liveParent, lastSegment);
+	let unsafe = slot.occupied ? slot.unsafe : isChainsUnsafe(residual);
 
 	if (isObjectLike(liveChild)) {
 		const status = edgeStatusOf(context.handle, liveChild);
@@ -163,7 +175,7 @@ const admitDescendants = (
 	path: OperationPath,
 	visits: Set<object> = new Set(),
 	sameOccupant = false,
-	residual?: DeclarationTrie,
+	residual: ChainSet,
 	unsafe = false,
 ): void => {
 	if (context.handle === undefined) return;
@@ -178,20 +190,22 @@ const admitDescendants = (
 
 	visits.add(nodeKey);
 
-	if (residual?.ignored === true) return;
+	if (isChainsIgnored(residual)) return;
 
-	const nodeUnsafe = unsafe || residual?.unsafe === true;
+	const nodeUnsafe = unsafe || isChainsUnsafe(residual);
 
 	for (const entry of walkDataEntries(liveNode)) {
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
 		const key = segmentFor(liveNode, entry.key);
 		const childPath = appendOperationPath(path, key);
-		const childResidual = declarationChild(residual, key);
+		const slot = slotStatusOf(context.handle, liveNode, key);
+		const descended = descendChains(residual, key);
+		const ignored = slot.ignored || descended.ignored;
+		const childChains = slot.occupied ? slot.chains : descended.chains;
+		const childUnsafe = slot.occupied ? slot.unsafe : nodeUnsafe || descended.unsafe;
 
-		if (childResidual?.ignored === true) continue;
-
-		const childUnsafe = nodeUnsafe || childResidual?.unsafe === true;
+		if (ignored) continue;
 
 		const visit = bindVisitedOccupancy(
 			context.handle,
@@ -206,7 +220,7 @@ const admitDescendants = (
 
 		if (visit !== "continue") continue;
 
-		admitDescendants(context, childPath, visits, sameOccupant, childResidual, childUnsafe);
+		admitDescendants(context, childPath, visits, sameOccupant, childChains, childUnsafe);
 	}
 };
 
@@ -259,12 +273,7 @@ const commitLink = (
 
 const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : {});
 
-const mintDecomposedContents = (
-	context: DiffContext,
-	path: OperationPath,
-	after: object,
-	residual: DeclarationTrie | undefined,
-): void => {
+const mintDecomposedContents = (context: DiffContext, path: OperationPath, after: object, residual: ChainSet): void => {
 	if (isPlainArray(after)) {
 		if (after.length > 0)
 			commitOperation(context, changePair(appendOperationPath(path, "length"), 0, after.length, context.handle));
@@ -272,28 +281,18 @@ const mintDecomposedContents = (
 		for (let index = 0; index < after.length; index++) {
 			if (!Object.hasOwn(after, index)) continue;
 
-			pushAddition(context, appendOperationPath(path, index), after[index], declarationChild(residual, index));
+			pushAddition(context, appendOperationPath(path, index), after[index], childChainsOf(residual, index));
 		}
 
 		diffObjectProperties(context, [], after, path, true, residual);
 	} else {
 		for (const entry of walkDataEntries(after)) {
-			pushAddition(
-				context,
-				appendOperationPath(path, entry.key),
-				entry.value,
-				declarationChild(residual, entry.key),
-			);
+			pushAddition(context, appendOperationPath(path, entry.key), entry.value, childChainsOf(residual, entry.key));
 		}
 	}
 };
 
-const mintDecomposedAddition = (
-	context: DiffContext,
-	path: OperationPath,
-	after: object,
-	residual: DeclarationTrie | undefined,
-): void => {
+const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object, residual: ChainSet): void => {
 	commitOperation(context, {
 		do: createAssignMutation(path, emptyContainerOf(after), after),
 		undo: createDeleteMutation(path),
@@ -306,7 +305,7 @@ const mintDecomposedChange = (
 	path: OperationPath,
 	before: unknown,
 	after: object,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): void => {
 	commitOperation(context, {
 		do: createAssignMutation(path, emptyContainerOf(after), after),
@@ -357,7 +356,7 @@ const mintAssignment = (
 	before: unknown,
 	after: unknown,
 	beforePresent: boolean,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): void => {
 	if (isSkippedPath(context, path, residual)) return;
 
@@ -410,12 +409,7 @@ const markChangedPath = (context: DiffContext, path: OperationPath): void => {
 	markDirtyPath(context.dirty, context.handle, path, liveParent);
 };
 
-const pushAddition = (
-	context: DiffContext,
-	path: OperationPath,
-	after: unknown,
-	residual: DeclarationTrie | undefined,
-): void => {
+const pushAddition = (context: DiffContext, path: OperationPath, after: unknown, residual: ChainSet): void => {
 	const visit = admitEmitPath(context, path, undefined, after, false, residual);
 
 	if (visit === "omit") return;
@@ -429,12 +423,7 @@ const pushAddition = (
 	mintAssignment(context, path, undefined, after, false, residual);
 };
 
-const pushRemoval = (
-	context: DiffContext,
-	path: OperationPath,
-	before: unknown,
-	residual: DeclarationTrie | undefined,
-): void => {
+const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown, residual: ChainSet): void => {
 	if (isSkippedPath(context, path, residual)) return;
 
 	if (writesTables(context)) markChangedPath(context, path);
@@ -462,7 +451,7 @@ const pushChange = (
 	path: OperationPath,
 	before: unknown,
 	after: unknown,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): void => {
 	markChangedPath(context, path);
 
@@ -508,8 +497,8 @@ const isOmittedPath = (context: DiffContext, path: OperationPath): boolean => {
 	return false;
 };
 
-const isIgnoredPath = (context: DiffContext, path: OperationPath, residual: DeclarationTrie | undefined): boolean => {
-	if (residual?.ignored === true) return true;
+const isIgnoredPath = (context: DiffContext, path: OperationPath, residual: ChainSet): boolean => {
+	if (isChainsIgnored(residual)) return true;
 
 	if (context.handle === undefined || path.length === 0) return false;
 
@@ -519,7 +508,7 @@ const isIgnoredPath = (context: DiffContext, path: OperationPath, residual: Decl
 	return isObjectLike(parent) && key !== undefined && isIgnoredFrontier(context.handle, parent, key);
 };
 
-const isSkippedPath = (context: DiffContext, path: OperationPath, residual: DeclarationTrie | undefined): boolean => {
+const isSkippedPath = (context: DiffContext, path: OperationPath, residual: ChainSet): boolean => {
 	if (isOmittedPath(context, path)) return true;
 
 	if (context.handle === undefined || path.length === 0) return false;
@@ -580,7 +569,7 @@ const diffObjectProperties = (
 	after: Record<string, unknown> | Array<unknown>,
 	path: OperationPath,
 	ignoreArrayIndexes: boolean,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): void => {
 	const beforeEntries = dataEntryValuesOf(before, ignoreArrayIndexes);
 	const afterEntries = dataEntryValuesOf(after, ignoreArrayIndexes);
@@ -588,7 +577,7 @@ const diffObjectProperties = (
 
 	for (const key of keys) {
 		const nextPath = appendOperationPath(path, key);
-		const childResidual = declarationChild(residual, key);
+		const childResidual = childChainsOf(residual, key);
 		const beforePresent = beforeEntries.has(key);
 		const afterPresent = afterEntries.has(key);
 
@@ -607,7 +596,7 @@ const diffArray = (
 	before: Array<unknown>,
 	after: Array<unknown>,
 	path: OperationPath,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): void => {
 	const overlap = Math.min(before.length, after.length);
 
@@ -618,7 +607,7 @@ const diffArray = (
 		if (!beforePresent && !afterPresent) continue;
 
 		const nextPath = appendOperationPath(path, index);
-		const childResidual = declarationChild(residual, index);
+		const childResidual = childChainsOf(residual, index);
 
 		if (!beforePresent) pushAddition(context, nextPath, after[index], childResidual);
 		else if (!afterPresent) pushRemoval(context, nextPath, before[index], childResidual);
@@ -631,17 +620,17 @@ const diffArray = (
 			appendOperationPath(path, "length"),
 			before.length,
 			after.length,
-			declarationChild(residual, "length"),
+			childChainsOf(residual, "length"),
 		);
 
 		for (let index = before.length; index < after.length; index++) {
 			if (Object.hasOwn(after, index))
-				pushAddition(context, appendOperationPath(path, index), after[index], declarationChild(residual, index));
+				pushAddition(context, appendOperationPath(path, index), after[index], childChainsOf(residual, index));
 		}
 	} else if (after.length < before.length) {
 		for (let index = after.length; index < before.length; index++) {
 			if (Object.hasOwn(before, index))
-				pushRemoval(context, appendOperationPath(path, index), before[index], declarationChild(residual, index));
+				pushRemoval(context, appendOperationPath(path, index), before[index], childChainsOf(residual, index));
 		}
 
 		pushChange(
@@ -649,7 +638,7 @@ const diffArray = (
 			appendOperationPath(path, "length"),
 			before.length,
 			after.length,
-			declarationChild(residual, "length"),
+			childChainsOf(residual, "length"),
 		);
 	}
 
@@ -673,7 +662,7 @@ const diffValue = (
 	before: unknown,
 	after: unknown,
 	path: OperationPath,
-	residual: DeclarationTrie | undefined,
+	residual: ChainSet,
 ): void => {
 	const replacing =
 		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
@@ -760,7 +749,13 @@ export function diffObjects(
 		capture: capture ?? createCaptureTables(),
 	};
 
-	diffValue(context, before, after, createOperationPath([]), handle?.declarations);
+	diffValue(
+		context,
+		before,
+		after,
+		createOperationPath([]),
+		handle === undefined ? [undefined] : chainsAtRoot(handle.declarations),
+	);
 
 	return ops;
 }
