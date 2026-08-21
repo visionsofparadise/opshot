@@ -32,7 +32,6 @@ export interface Handle {
 	declarations: DeclarationTrie | undefined;
 	nodes: WeakMap<object, NodeRecord>;
 	byId: Map<number, object>;
-	departedHold: Map<number, object>;
 	nextInternId: number;
 	lastDirty?: DirtyIndex;
 	stamp: object;

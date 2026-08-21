@@ -124,7 +124,7 @@ describe("TrackedSet", () => {
 		expect(shaped[1]).toEqual([
 			{
 				do: { verb: "assign", path: ["set", "slots", 1], value: null },
-				undo: { verb: "assign", path: ["set", "slots", 1], value: ["b"] },
+				undo: { verb: "assign", path: ["set", "slots", 1], value: ["b"], ids: [4] },
 			},
 			{
 				do: { verb: "delete", path: ["set", "index", removed] },

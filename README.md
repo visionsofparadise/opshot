@@ -177,14 +177,19 @@ type OperationPath = ReadonlyArray<string | number>;
 
 interface Operation {
 	readonly do:
-		| { readonly verb: "assign"; readonly path: OperationPath; readonly value: unknown }
+		| {
+				readonly verb: "assign";
+				readonly path: OperationPath;
+				readonly value: unknown;
+				readonly ids?: ReadonlyArray<number>;
+		  }
 		| { readonly verb: "delete"; readonly path: OperationPath }
 		| { readonly verb: "link"; readonly path: OperationPath; readonly ref: number };
 	readonly undo: Operation["do"];
 }
 ```
 
-`applyOperations` puts them back on a state, so a history is a list of ops and an undo is `applyOperations` with `"undo"`.
+Ids vend in admission-walk order over the emitted artifact; a departure's undo assign may carry `ids` to rebind that walk, the one naming fact construction cannot re-derive. `applyOperations` puts them back on a state, so a history is a list of ops and an undo is `applyOperations` with `"undo"`.
 
 ```tsx
 import { useEffect, useRef } from "react";

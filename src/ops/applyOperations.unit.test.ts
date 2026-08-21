@@ -543,4 +543,122 @@ describe("applyOperations: link halves", () => {
 		expect(state.count).toBe(2);
 		expect(Object.hasOwn(state, "gone")).toBe(false);
 	});
+
+	it("transported undo of a multi-alias delete restores sharing on a replica", () => {
+		const shared = { n: 1 };
+		const origin = createMutableState({ a: shared, b: shared });
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete (origin as { a?: { n: number } }).a;
+			delete (origin as { b?: { n: number } }).b;
+		});
+
+		const replicaShared = { n: 1 };
+		const replica = createMutableState({ a: replicaShared, b: replicaShared });
+
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0])) as Array<Operation>, "undo");
+
+		expect(replica.a).toBe(replica.b);
+	});
+
+	it("an undo/redo excursion then an alias keeps sharing and numbering on a replica", () => {
+		const origin = createMutableState(
+			{} as {
+				sh?: { n: number };
+				alias?: { n: number };
+			},
+		);
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.sh = { n: 1 };
+		});
+
+		const windowOne = heard[0] ?? [];
+
+		applyOperations(origin, windowOne, "undo");
+		applyOperations(origin, windowOne, "do");
+
+		heard.length = 0;
+
+		transact(origin, () => {
+			origin.alias = origin.sh;
+		});
+
+		const replica = createMutableState(
+			{} as {
+				sh?: { n: number };
+				alias?: { n: number };
+			},
+		);
+
+		applyOperations(replica, JSON.parse(JSON.stringify(windowOne)) as Array<Operation>, "do");
+		applyOperations(replica, JSON.parse(JSON.stringify(windowOne)) as Array<Operation>, "undo");
+		applyOperations(replica, JSON.parse(JSON.stringify(windowOne)) as Array<Operation>, "do");
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0])) as Array<Operation>, "do");
+
+		expect(replica.alias).toBe(replica.sh);
+		expect(internId(origin, origin.sh!)).toBe(internId(replica, replica.sh!));
+	});
+
+	it("undo and redo of a link window then a departure restores sharing and numbering", () => {
+		const origin = createMutableState({
+			keep: { n: 1 },
+		} as { keep: { n: number }; alias?: { n: number } });
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.alias = origin.keep;
+		});
+
+		transact(origin, () => {
+			delete (origin as { alias?: { n: number } }).alias;
+		});
+
+		const replica = createMutableState({
+			keep: { n: 1 },
+		} as { keep: { n: number }; alias?: { n: number } });
+
+		const w1 = JSON.parse(JSON.stringify(heard[0])) as Array<Operation>;
+		const w2 = JSON.parse(JSON.stringify(heard[1])) as Array<Operation>;
+
+		applyOperations(replica, w1, "do");
+		expect(replica.alias).toBe(replica.keep);
+
+		applyOperations(replica, w2, "do");
+		expect(replica.alias).toBeUndefined();
+
+		applyOperations(replica, w2, "undo");
+		applyOperations(replica, w1, "undo");
+		applyOperations(replica, w1, "do");
+		applyOperations(replica, w2, "do");
+
+		expect(internId(origin, origin.keep)).toBe(internId(replica, replica.keep));
+	});
+
+	it("undo of an admitting window rewinds nextInternId on origin and replica", () => {
+		const origin = createMutableState({} as { extra?: { n: number } });
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const before = originHandle.nextInternId;
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.extra = { n: 1 };
+		});
+
+		expect(originHandle.nextInternId).toBeGreaterThan(before);
+
+		applyOperations(origin, heard[0] ?? [], "undo");
+
+		expect(originHandle.nextInternId).toBe(before);
+
+		const replica = createMutableState({} as { extra?: { n: number } });
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0])) as Array<Operation>, "do");
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0])) as Array<Operation>, "undo");
+
+		expect(replicaHandle.nextInternId).toBe(before);
+	});
 });

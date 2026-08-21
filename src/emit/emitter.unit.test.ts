@@ -444,7 +444,7 @@ describe("reconcileUntracked", () => {
 			[
 				{
 					do: { verb: "assign", path: ["box"], value: replacement },
-					undo: { verb: "assign", path: ["box"], value: { n: 1 } },
+					undo: { verb: "assign", path: ["box"], value: { n: 1 }, ids: [1] },
 				},
 				...tickAssign(0, 1),
 			],

@@ -35,6 +35,10 @@ const isWellFormedDeleteHalf = (value: unknown): boolean =>
 	"path" in value &&
 	isFrozenCopyablePath(value.path);
 
+const isWellFormedIds = (value: unknown): boolean =>
+	value === undefined ||
+	(Array.isArray(value) && value.every((id) => typeof id === "number" && Number.isInteger(id) && id >= 0));
+
 const isWellFormedAssignHalf = (value: unknown): boolean =>
 	typeof value === "object" &&
 	value !== null &&
@@ -42,7 +46,8 @@ const isWellFormedAssignHalf = (value: unknown): boolean =>
 	value.verb === "assign" &&
 	"value" in value &&
 	"path" in value &&
-	isFrozenCopyablePath(value.path);
+	isFrozenCopyablePath(value.path) &&
+	(!("ids" in value) || value.ids === undefined || isWellFormedIds(value.ids));
 
 const isApplicableHalf = (value: unknown): boolean =>
 	isMutation(value) || isWellFormedLinkHalf(value) || isWellFormedDeleteHalf(value) || isWellFormedAssignHalf(value);

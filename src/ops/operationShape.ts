@@ -7,11 +7,14 @@ export const shapeHalf = (
 	path: ReadonlyArray<string | number>;
 	value?: unknown;
 	ref?: number;
+	ids?: ReadonlyArray<number>;
 } =>
 	half.verb === "link"
 		? { verb: half.verb, path: half.path, ref: half.ref }
 		: "value" in half
-			? { verb: half.verb, path: half.path, value: half.value }
+			? half.ids !== undefined
+				? { verb: half.verb, path: half.path, value: half.value, ids: half.ids }
+				: { verb: half.verb, path: half.path, value: half.value }
 			: { verb: half.verb, path: half.path };
 
 export const shapeOps = (

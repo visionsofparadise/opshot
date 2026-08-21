@@ -23,6 +23,11 @@ export interface AssignMutation {
 	 * Value to assign.
 	 */
 	readonly value: unknown;
+
+	/**
+	 * Walk-ordered intern ids that override deterministic vending when this half re-admits departed material.
+	 */
+	readonly ids?: ReadonlyArray<number>;
 }
 
 /**
@@ -109,11 +114,14 @@ Object.defineProperty(OperationHalf.prototype, operationBrand, { value: true });
 class AssignHalf extends OperationHalf {
 	readonly verb = "assign";
 	readonly value: unknown;
+	readonly ids?: ReadonlyArray<number>;
 
-	constructor(path: OperationPath, value: unknown, original: unknown = value) {
+	constructor(path: OperationPath, value: unknown, original: unknown = value, ids?: ReadonlyArray<number>) {
 		super(path);
 		valueOriginals.set(this, original);
 		this.value = cloneValue(value, new WeakMap(), this.path);
+
+		if (ids !== undefined) this.ids = ids;
 	}
 }
 
@@ -154,8 +162,21 @@ export const isMutation = (value: unknown): value is Mutation =>
 
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
-export const createAssignMutation = (path: OperationPath, value: unknown, original: unknown = value): AssignMutation =>
-	new AssignHalf(path, value, original);
+/**
+ * Creates an assign half. `ids` is the one carried naming fact: walk-ordered intern ids that override deterministic vending when this half re-admits departed material.
+ *
+ * @param path - Path to assign.
+ * @param value - Value to assign.
+ * @param original - Identity original, defaulting to `value`.
+ * @param ids - Walk-ordered intern ids that override deterministic vending.
+ * @returns The assign half.
+ */
+export const createAssignMutation = (
+	path: OperationPath,
+	value: unknown,
+	original: unknown = value,
+	ids?: ReadonlyArray<number>,
+): AssignMutation => new AssignHalf(path, value, original, ids);
 
 export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);
 

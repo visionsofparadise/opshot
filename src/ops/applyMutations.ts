@@ -1,5 +1,5 @@
 import { getRegisteredTarget, resolveIdentity } from "../identity";
-import { internSubtree, nodeOfInternedId } from "../intern";
+import { bindVendedIds, internSubtree, nodeOfInternedId, rewindAdmission } from "../intern";
 import { walkDataEntries } from "../utils/dataEntries";
 import { cloneValue } from "./cloneValue";
 import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
@@ -265,7 +265,10 @@ const applyPlain = (
 
 	const attached: unknown = Reflect.get(parent, key);
 
-	if (isObjectLike(attached)) internSubtree(handle, attached);
+	if (!isObjectLike(attached)) return;
+
+	if (operation.ids !== undefined) bindVendedIds(handle, attached, operation.ids);
+	else internSubtree(handle, attached);
 };
 
 const applyMutation = (root: object, operation: Mutation, identity: "restore" | "construct", handle: Handle): void => {
@@ -293,6 +296,28 @@ export function applyMutations(
 		return;
 	}
 
+	const occupantAt = (path: Operation["undo"]["path"]): unknown => {
+		let current: unknown = root;
+
+		for (const segment of path) {
+			if (!isObjectLike(current)) return undefined;
+
+			current = Reflect.get(current, segment);
+		}
+
+		return current;
+	};
+
+	const admittedRoots = new Array<object>();
+
+	for (const operation of operations) {
+		if (operation.do.verb !== "assign" || !isObjectLike(operation.do.value)) continue;
+
+		const occupant = occupantAt(operation.undo.path);
+
+		if (isObjectLike(occupant)) admittedRoots.push(occupant);
+	}
+
 	for (let index = operations.length - 1; index >= 0; index--) {
 		const operation = operations[index];
 
@@ -300,4 +325,12 @@ export function applyMutations(
 
 		applyMutation(root, operation.undo, identity, handle);
 	}
+
+	const idSet = new Set<number>();
+
+	for (const node of admittedRoots) {
+		for (const id of rewindAdmission(handle, node)) idSet.add(id);
+	}
+
+	while (idSet.has(handle.nextInternId - 1)) handle.nextInternId -= 1;
 }

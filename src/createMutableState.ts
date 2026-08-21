@@ -232,7 +232,6 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		declarations,
 		nodes: new WeakMap(),
 		byId: new Map(),
-		departedHold: new Map(),
 		nextInternId: 1,
 		stamp: {},
 		version: 0,

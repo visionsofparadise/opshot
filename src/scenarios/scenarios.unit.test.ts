@@ -387,7 +387,7 @@ describe("scenarios", () => {
 		expect(shapeOps(aHeard[0]?.ops ?? [])).toEqual([
 			{
 				do: { verb: "delete", path: ["items", 0] },
-				undo: { verb: "assign", path: ["items", 0], value: { id: "x", gain: 1 } },
+				undo: { verb: "assign", path: ["items", 0], value: { id: "x", gain: 1 }, ids: [2] },
 			},
 			{
 				do: { verb: "assign", path: ["items", "length"], value: 0 },

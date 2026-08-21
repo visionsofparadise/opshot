@@ -79,7 +79,12 @@ const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
 
 			if (half.verb === "delete") return createDeleteMutation([...half.path]);
 
-			return createAssignMutation([...half.path], "value" in half ? rehydrateTransportValue(half.value) : undefined);
+			return createAssignMutation(
+				[...half.path],
+				"value" in half ? rehydrateTransportValue(half.value) : undefined,
+				undefined,
+				half.verb === "assign" ? half.ids : undefined,
+			);
 		};
 
 		return { do: projectHalf(pair.do), undo: projectHalf(pair.undo) };
