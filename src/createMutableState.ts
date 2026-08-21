@@ -1,5 +1,13 @@
 import { proxy, snapshot } from "valtio/vanilla";
 import { getGroupChain, type Group } from "./createGroup";
+import {
+	createDeclarationTrie,
+	declarationAtPath,
+	graftDeclarationChildren,
+	hasDeclarations,
+	type MutableDeclarationTrie,
+} from "./declarations";
+import { seedInEdges } from "./edges";
 import { armWatch } from "./emit/emitter";
 import { requireObjectSnapshot } from "./emit/requireObjectSnapshot";
 import { registerHandle, type Handle } from "./handle";
@@ -7,7 +15,7 @@ import { ignoreMarker, type Ignored } from "./ignore";
 import { isState } from "./isState";
 import { seedOccupancies } from "./occupancy";
 import { isPlainArray } from "./ops/cloneValue";
-import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./ops/path";
+import { appendOperationPath, createOperationPath, type OperationPath } from "./ops/path";
 import { isCanonicalArrayIndexString } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
 import { unsafeMarker, type UnsafeTracked } from "./unsafeTrack";
@@ -59,39 +67,9 @@ const isUnsafeWrapper = (value: unknown): value is UnsafeTracked<unknown> =>
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
-const isStrictlyUnderPathKey = (candidate: string, prefix: string): boolean =>
-	prefix === "/" ? candidate !== "/" && candidate.startsWith("/") : candidate.startsWith(`${prefix}/`);
-
-const copyMarkerPathSuffixes = (
-	firstPath: OperationPath,
-	laterPath: OperationPath,
-	ignoredAt: Set<string>,
-	unsafeAt: Set<string>,
-): void => {
-	const firstKey = formatOperationPath(firstPath);
-	const laterKey = formatOperationPath(laterPath);
-
-	const copyInto = (flags: Set<string>): void => {
-		const additions = new Array<string>();
-
-		for (const key of flags) {
-			if (!isStrictlyUnderPathKey(key, firstKey)) continue;
-
-			const suffix = firstKey === "/" ? key : key.slice(firstKey.length);
-
-			additions.push(laterKey === "/" ? suffix : `${laterKey}${suffix}`);
-		}
-
-		for (const addition of additions) flags.add(addition);
-	};
-
-	copyInto(ignoredAt);
-	copyInto(unsafeAt);
-};
-
 interface MarkerWalk {
-	readonly ignoredAt: Set<string>;
-	readonly unsafeAt: Set<string>;
+	readonly trie: MutableDeclarationTrie;
+	marked: boolean;
 	readonly firstOccupancyByNode: Map<object, OperationPath>;
 	readonly laterOccupanciesByNode: Map<object, Array<OperationPath>>;
 }
@@ -124,18 +102,32 @@ const unwrapValue = (value: unknown, path: OperationPath, walk: MarkerWalk): unk
 	let current = value;
 
 	while (isIgnoredWrapper(current) || isUnsafeWrapper(current)) {
-		const pathKey = formatOperationPath(path);
+		const node = declarationAtPath(walk.trie, path);
+
+		walk.marked = true;
 
 		if (isIgnoredWrapper(current)) {
-			walk.ignoredAt.add(pathKey);
+			node.ignored = true;
 			current = current[ignoreMarker];
 		} else {
-			walk.unsafeAt.add(pathKey);
+			node.unsafe = true;
 			current = current[unsafeMarker];
 		}
 	}
 
 	if (typeof current === "object" && current !== null) consumeMarkerTree(current, path, walk);
+
+	return current;
+};
+
+const trieAtPath = (trie: MutableDeclarationTrie, path: OperationPath): MutableDeclarationTrie | undefined => {
+	let current: MutableDeclarationTrie | undefined = trie;
+
+	for (const segment of path) {
+		current = current.children.get(String(segment));
+
+		if (current === undefined) return undefined;
+	}
 
 	return current;
 };
@@ -146,8 +138,12 @@ const applyCopiedMarkerPaths = (walk: MarkerWalk): void => {
 
 		if (laterOccupancies === undefined) continue;
 
+		const source = trieAtPath(walk.trie, firstPath);
+
+		if (source === undefined || source.children.size === 0) continue;
+
 		for (const laterPath of laterOccupancies) {
-			copyMarkerPathSuffixes(firstPath, laterPath, walk.ignoredAt, walk.unsafeAt);
+			graftDeclarationChildren(source, declarationAtPath(walk.trie, laterPath));
 		}
 	}
 };
@@ -166,21 +162,23 @@ const applyCopiedMarkerPaths = (walk: MarkerWalk): void => {
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): Unmarked<T> {
 	installBoundary();
 
-	const ignoredAt = new Set<string>();
-	const unsafeAt = new Set<string>();
+	const trie = createDeclarationTrie();
+	let marked = false;
 	let root: unknown = properties;
 
 	while (isIgnoredWrapper(root) || isUnsafeWrapper(root)) {
 		if (isIgnoredWrapper(root)) {
-			ignoredAt.add("/");
+			trie.ignored = true;
+			marked = true;
 			root = root[ignoreMarker];
 		} else {
-			unsafeAt.add("/");
+			trie.unsafe = true;
+			marked = true;
 			root = root[unsafeMarker];
 		}
 	}
 
-	if (ignoredAt.has("/")) return root as Unmarked<T>;
+	if (trie.ignored) return root as Unmarked<T>;
 
 	if (typeof root !== "object" || root === null) return root as Unmarked<T>;
 
@@ -202,8 +200,8 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	Object.defineProperties(base, Object.getOwnPropertyDescriptors(root));
 
 	const walk: MarkerWalk = {
-		ignoredAt,
-		unsafeAt,
+		trie,
+		marked,
 		firstOccupancyByNode: new Map(),
 		laterOccupanciesByNode: new Map(),
 	};
@@ -211,11 +209,13 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	consumeMarkerTree(base, createOperationPath([]), walk);
 	applyCopiedMarkerPaths(walk);
 
-	if (decision.lane === "dangerous" && strict && !unsafeAt.has("/")) {
+	const declarations = walk.marked || hasDeclarations(trie) ? trie : undefined;
+
+	if (decision.lane === "dangerous" && strict && declarations?.unsafe !== true) {
 		throw rejectionError(base, decision.kind);
 	}
 
-	assertSafeDataPaths(base, [], new Set(), strict ? "admission" : "rootsOnly", ignoredAt, unsafeAt);
+	assertSafeDataPaths(base, [], new Set(), strict ? "admission" : "rootsOnly", declarations);
 
 	const handle: Handle = {
 		proxy: { root: base },
@@ -229,8 +229,8 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		emitOn: options?.emitOn,
 		strict,
 		onError: options?.onError,
-		unsafeAt,
-		ignoredAt,
+		declarations,
+		inEdges: new WeakMap(),
 		routes: new Map(),
 		stamp: {},
 		version: 0,
@@ -243,6 +243,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	handle.proxy = instrumented;
 	handle.lastSnapshot = requireObjectSnapshot(snapshot(instrumented.root));
+	seedInEdges(handle);
 	seedOccupancies(handle);
 	armWatch(handle);
 

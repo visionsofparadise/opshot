@@ -1,5 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { peelReadProxy } from "./peelReadProxy";
+import type { DeclarationTrie } from "./declarations";
+import type { InEdge } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
 import type { OperationPath } from "./ops/path";
 import type { EmissionScheduler } from "./settings";
@@ -28,8 +30,8 @@ export interface Handle {
 	emitOn?: EmissionScheduler;
 	strict: boolean;
 	onError?: (error: unknown) => void;
-	unsafeAt: ReadonlySet<string>;
-	ignoredAt: ReadonlySet<string>;
+	declarations: DeclarationTrie | undefined;
+	inEdges: WeakMap<object, Array<InEdge>>;
 	routes: Map<object, ReadonlyArray<OperationPath>>;
 	lastDirty?: DirtyIndex;
 	stamp: object;

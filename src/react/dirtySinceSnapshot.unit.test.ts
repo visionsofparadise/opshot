@@ -20,8 +20,8 @@ describe("dirtySinceSnapshot", () => {
 		const lastSnapshot = handle.lastSnapshot;
 		const lastDirty = handle.lastDirty;
 		const routes = handle.routes;
-		const ignoredAt = handle.ignoredAt;
-		const unsafeAt = handle.unsafeAt;
+		const declarations = handle.declarations;
+		const inEdges = handle.inEdges;
 		const routeCount = handle.routes.size;
 		const heard = new Array<unknown>();
 
@@ -40,8 +40,8 @@ describe("dirtySinceSnapshot", () => {
 		expect(handle.lastSnapshot).toBe(lastSnapshot);
 		expect(handle.lastDirty).toBe(lastDirty);
 		expect(handle.routes).toBe(routes);
-		expect(handle.ignoredAt).toBe(ignoredAt);
-		expect(handle.unsafeAt).toBe(unsafeAt);
+		expect(handle.declarations).toBe(declarations);
+		expect(handle.inEdges).toBe(inEdges);
 		expect(handle.routes.size).toBe(routeCount);
 	});
 

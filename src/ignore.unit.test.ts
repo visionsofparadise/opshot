@@ -163,4 +163,60 @@ describe("ignore", () => {
 		expect(state.foo).not.toBe(obj);
 		expect(typeof state.foo === "object" && state.foo !== null && Object.hasOwn(state.foo, ignoreMarker)).toBe(true);
 	});
+
+	it("keeps a nested ignore after the intermediate node is replaced", () => {
+		const state = createMutableState({ box: { nested: ignore({ n: 1 }) }, tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.box = { nested: { n: 2 } };
+			state.tick = 1;
+		});
+
+		const replacement = { n: 9 };
+
+		heard.length = 0;
+
+		transact(state, () => {
+			state.box.nested = replacement;
+			state.tick = 2;
+		});
+
+		expect(state.box.nested).toBe(replacement);
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 2 }, undo: { verb: "assign", path: ["tick"], value: 1 } },
+		]);
+	});
+
+	it("does not proxy a replacement occupant when any grounded path of the slot is a declared ignore frontier", () => {
+		const state = createMutableState({
+			a: { slot: ignore({ n: 1 }) },
+			b: { slot: { n: 2 } },
+			tick: 0,
+		});
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		transact(state, () => {
+			state.a = state.b;
+		});
+
+		const next = { n: 9 };
+
+		heard.length = 0;
+
+		transact(state, () => {
+			state.b.slot = next;
+			state.tick = 1;
+		});
+
+		expect(state.b.slot).toBe(next);
+		expect(state.a.slot).toBe(next);
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
+	});
 });

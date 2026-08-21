@@ -1,9 +1,10 @@
 import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
+import { declarationChild } from "../declarations";
+import { handleOf } from "../handle";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
-import { handleOf } from "../handle";
 import { OccupancyRefusalError, predatingRoutesOf } from "../occupancy";
 import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
@@ -1282,7 +1283,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const heard = record(state);
 
 		expect(handle).toBeDefined();
-		expect(handle?.ignoredAt.has("/bag/wrap")).toBe(true);
+		expect(declarationChild(declarationChild(handle?.declarations, "bag"), "wrap")?.ignored).toBe(true);
 		expect(predatingRoutesOf(handle!, state.bag.wrap.secret)).toEqual([]);
 		expect(predatingRoutesOf(handle!, state.bag.left.child)).toEqual([
 			["bag", "left", "child"],

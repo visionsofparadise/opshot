@@ -1,4 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { declarationChild, type DeclarationTrie } from "./declarations";
+import { isIgnoredFrontier } from "./edges";
 import { registerHandle, type DirtyIndex, type Handle } from "./handle";
 import { getRegisteredTarget } from "./identity";
 import { isPlainArray } from "./ops/cloneValue";
@@ -168,28 +170,6 @@ const collectRefusal = (capture: CaptureTables, error: Error, pathKey: string): 
 	capture.omissions.add(pathKey);
 };
 
-const occupancySetHasPrefix = (flags: ReadonlySet<string>, path: OperationPath): boolean => {
-	if (flags.has("/")) return true;
-
-	let prefix = createOperationPath([]);
-
-	for (const segment of path) {
-		prefix = appendOperationPath(prefix, segment);
-
-		if (flags.has(pathKeyOf(prefix))) return true;
-	}
-
-	return false;
-};
-
-export function isUnderIgnoredOccupancy(handle: Handle, path: OperationPath): boolean {
-	return occupancySetHasPrefix(handle.ignoredAt, path);
-}
-
-export function isUnderUnsafeOccupancy(handle: Handle, path: OperationPath): boolean {
-	return occupancySetHasPrefix(handle.unsafeAt, path);
-}
-
 export function bindVisitedOccupancy(
 	handle: Handle,
 	path: OperationPath,
@@ -203,7 +183,7 @@ export function bindVisitedOccupancy(
 ): OccupancyVisit {
 	if (path.length === 0) return "continue";
 
-	if (isUnderIgnoredOccupancy(handle, path)) return "skip";
+	if (isIgnoredFrontier(handle, parent, key)) return "skip";
 
 	const pathKey = pathKeyOf(path);
 
@@ -329,20 +309,22 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 
 	const visits = new Set<object>();
 
-	const walk = (node: object, path: OperationPath, unsafe: boolean): void => {
+	const walk = (node: object, path: OperationPath, residual: DeclarationTrie | undefined, unsafe: boolean): void => {
 		const nodeRaw = rawTargetOf(node);
 
 		if (visits.has(nodeRaw)) return;
 
 		visits.add(nodeRaw);
 
-		const nodeUnsafe = unsafe || isUnderUnsafeOccupancy(handle, path);
+		if (residual?.ignored === true) return;
 
-		if (handle.ignoredAt.has(pathKeyOf(path))) return;
+		const nodeUnsafe = unsafe || residual?.unsafe === true;
 
 		for (const entry of walkDataEntries(node)) {
-			const childPath = appendOperationPath(path, segmentFor(node, entry.key));
-			const childUnsafe = nodeUnsafe || handle.unsafeAt.has(pathKeyOf(childPath));
+			const key = segmentFor(node, entry.key);
+			const childPath = appendOperationPath(path, key);
+			const childResidual = declarationChild(residual, key);
+			const childUnsafe = nodeUnsafe || childResidual?.unsafe === true;
 			const visit = bindVisitedOccupancy(
 				handle,
 				childPath,
@@ -357,11 +339,12 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 
 			if (visit !== "continue") continue;
 
-			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value, childPath, childUnsafe);
+			if (typeof entry.value === "object" && entry.value !== null)
+				walk(entry.value, childPath, childResidual, childUnsafe);
 		}
 	};
 
-	walk(root, createOperationPath([]), false);
+	walk(root, createOperationPath([]), handle.declarations, false);
 };
 
 export function seedOccupancies(handle: Handle): void {

@@ -2,6 +2,8 @@ import { createProxy } from "proxy-compare";
 import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
+import { edgeStatusOf } from "../edges";
+import { handleOf } from "../handle";
 import { ignore } from "../ignore";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -514,5 +516,50 @@ describe("boundary: meta-mutation", () => {
 
 		expect(Object.getPrototypeOf(state)).toBeNull();
 		expect(emissions).toHaveLength(0);
+	});
+});
+
+describe("boundary: in-edges", () => {
+	it("climbs a cyclic graph without hanging and classifies occupied nodes", () => {
+		const state = createMutableState({ box: { n: 1 } as { n: number; self?: { n: number } } });
+
+		transact(state, () => {
+			state.box.self = state.box;
+		});
+
+		const handle = handleOf(state);
+
+		if (handle === undefined) throw new Error("expected a handle");
+
+		const status = edgeStatusOf(handle, state.box);
+
+		expect(status.occupied).toBe(true);
+		expect(status.unsafe).toBe(false);
+
+		transact(state, () => {
+			state.box.n = 2;
+		});
+
+		expect(state.box.n).toBe(2);
+		expect(state.box.self).toBe(state.box);
+	});
+
+	it("removes in-edges of truncated array elements", () => {
+		const state = createMutableState({ list: [{ n: 1 }] });
+		const handle = handleOf(state);
+
+		if (handle === undefined) throw new Error("expected a handle");
+
+		const occupant = state.list[0];
+
+		if (occupant === undefined) throw new Error("expected an occupant");
+
+		expect(edgeStatusOf(handle, occupant).occupied).toBe(true);
+
+		transact(state, () => {
+			state.list.length = 0;
+		});
+
+		expect(edgeStatusOf(handle, occupant).occupied).toBe(false);
 	});
 });

@@ -1,6 +1,7 @@
 import { transact } from "./transact/transact";
 import { createMutableState } from "./createMutableState";
 import { isSameIdentity } from "./identity";
+import { OccupancyRefusalError } from "./occupancy";
 import { unsafeMarker, unsafeTrack } from "./unsafeTrack";
 
 describe("unsafeTrack occupancy", () => {
@@ -45,7 +46,7 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.b.nested = new Map<string, number>();
 			});
-		}).toThrow("Map at /b/nested cannot be tracked");
+		}).toThrow(OccupancyRefusalError);
 	});
 
 	it("admits a nested unsafeTrack under every occupancy of a shared node", () => {
@@ -89,7 +90,7 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.b.nested = new Map<string, number>();
 			});
-		}).toThrow("Map at /b/nested cannot be tracked");
+		}).toThrow(OccupancyRefusalError);
 
 		expect(state.b.nested).toEqual({ n: 1 });
 		expect(state.a.nested).toEqual({ n: 1 });
@@ -105,5 +106,30 @@ describe("unsafeTrack occupancy", () => {
 
 		expect(state.foo).not.toBe(map);
 		expect(typeof state.foo === "object" && state.foo !== null && Object.hasOwn(state.foo, unsafeMarker)).toBe(true);
+	});
+
+	it("admits dangerous material through a node whose every grounded chain is unsafe", () => {
+		const holder: { nested: object } = { nested: { n: 1 } };
+		const state = createMutableState({ a: unsafeTrack(holder) });
+
+		transact(state, () => {
+			state.a.nested = new Map<string, number>([["k", 1]]);
+		});
+
+		expect(state.a.nested).toBeInstanceOf(Map);
+	});
+
+	it("refuses dangerous material through a node that has a clean grounded chain", () => {
+		const holder: { nested: object } = { nested: { n: 1 } };
+		const state = createMutableState({ a: unsafeTrack(holder), b: holder });
+
+		expect(() => {
+			transact(state, () => {
+				state.a.nested = new Map<string, number>();
+			});
+		}).toThrow(OccupancyRefusalError);
+
+		expect(state.a.nested).toEqual({ n: 1 });
+		expect(state.b.nested).toEqual({ n: 1 });
 	});
 });

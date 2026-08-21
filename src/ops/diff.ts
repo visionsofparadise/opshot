@@ -1,12 +1,12 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { declarationChild, type DeclarationTrie } from "../declarations";
+import { edgeStatusOf, isIgnoredFrontier } from "../edges";
 import { getRegisteredTarget, isSameIdentity } from "../identity";
 import {
 	addOccupancyRoute,
 	bindVisitedOccupancy,
 	createCaptureTables,
 	dropOccupancyRoutesUnder,
-	isUnderIgnoredOccupancy,
-	isUnderUnsafeOccupancy,
 	markDirtyPath,
 	overlayRoutesOf,
 	predatingRoutesOf,
@@ -142,17 +142,33 @@ const admitEmitPath = (
 	before: unknown,
 	after: unknown,
 	beforePresent: boolean,
+	residual: DeclarationTrie | undefined,
 ): OccupancyVisit => {
 	if (!writesTables(context) || path.length === 0) return "continue";
+
+	if (residual?.ignored === true) return "skip";
 
 	const liveParent = liveAtPath(context.handle.proxy.root, path.slice(0, -1));
 	const liveChild = liveAtPath(context.handle.proxy.root, path);
 	const lastSegment = path[path.length - 1];
 
+	if (
+		isObjectLike(liveParent) &&
+		lastSegment !== undefined &&
+		isIgnoredFrontier(context.handle, liveParent, lastSegment)
+	)
+		return "skip";
+
 	if (!isObjectLike(liveParent) || lastSegment === undefined) throw new MissingDiffParentError();
 
 	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
-	const unsafe = isUnderUnsafeOccupancy(context.handle, path);
+	let unsafe = residual?.unsafe === true;
+
+	if (isObjectLike(liveChild)) {
+		const status = edgeStatusOf(context.handle, liveChild);
+
+		if (status.occupied) unsafe = status.unsafe;
+	}
 
 	return bindVisitedOccupancy(
 		context.handle,
@@ -171,6 +187,7 @@ const recordDescendantRoutes = (
 	path: OperationPath,
 	visits: Set<object> = new Set(),
 	sameOccupant = false,
+	residual?: DeclarationTrie,
 	unsafe = false,
 ): void => {
 	if (context.handle === undefined) throw new MissingDiffHandleError();
@@ -185,15 +202,20 @@ const recordDescendantRoutes = (
 
 	visits.add(nodeKey);
 
-	const nodeUnsafe = unsafe || isUnderUnsafeOccupancy(context.handle, path);
+	if (residual?.ignored === true) return;
 
-	if (isUnderIgnoredOccupancy(context.handle, path)) return;
+	const nodeUnsafe = unsafe || residual?.unsafe === true;
 
 	for (const entry of walkDataEntries(liveNode)) {
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
-		const childPath = appendOperationPath(path, segmentFor(liveNode, entry.key));
-		const childUnsafe = nodeUnsafe || context.handle.unsafeAt.has(formatOperationPath(childPath));
+		const key = segmentFor(liveNode, entry.key);
+		const childPath = appendOperationPath(path, key);
+		const childResidual = declarationChild(residual, key);
+
+		if (childResidual?.ignored === true) continue;
+
+		const childUnsafe = nodeUnsafe || childResidual?.unsafe === true;
 
 		const visit = bindVisitedOccupancy(
 			context.handle,
@@ -208,7 +230,7 @@ const recordDescendantRoutes = (
 
 		if (visit !== "continue") continue;
 
-		recordDescendantRoutes(context, childPath, visits, sameOccupant, childUnsafe);
+		recordDescendantRoutes(context, childPath, visits, sameOccupant, childResidual, childUnsafe);
 	}
 };
 
@@ -358,33 +380,53 @@ const commitLink = (
 
 const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : {});
 
-const mintDecomposedContents = (context: DiffContext, path: OperationPath, after: object): void => {
+const mintDecomposedContents = (
+	context: DiffContext,
+	path: OperationPath,
+	after: object,
+	residual: DeclarationTrie | undefined,
+): void => {
 	if (isPlainArray(after)) {
 		if (after.length > 0) commitOperation(context, changePair(appendOperationPath(path, "length"), 0, after.length));
 
 		for (let index = 0; index < after.length; index++) {
 			if (!Object.hasOwn(after, index)) continue;
 
-			pushAddition(context, appendOperationPath(path, index), after[index]);
+			pushAddition(context, appendOperationPath(path, index), after[index], declarationChild(residual, index));
 		}
 
-		diffObjectProperties(context, [], after, path, true);
+		diffObjectProperties(context, [], after, path, true, residual);
 	} else {
 		for (const entry of walkDataEntries(after)) {
-			pushAddition(context, appendOperationPath(path, entry.key), entry.value);
+			pushAddition(
+				context,
+				appendOperationPath(path, entry.key),
+				entry.value,
+				declarationChild(residual, entry.key),
+			);
 		}
 	}
 };
 
-const mintDecomposedAddition = (context: DiffContext, path: OperationPath, after: object): void => {
+const mintDecomposedAddition = (
+	context: DiffContext,
+	path: OperationPath,
+	after: object,
+	residual: DeclarationTrie | undefined,
+): void => {
 	commitOperation(context, {
 		do: createAssignMutation(path, emptyContainerOf(after), after),
 		undo: createDeleteMutation(path),
 	});
-	mintDecomposedContents(context, path, after);
+	mintDecomposedContents(context, path, after, residual);
 };
 
-const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before: object): void => {
+const mintDecomposedRemoval = (
+	context: DiffContext,
+	path: OperationPath,
+	before: object,
+	residual: DeclarationTrie | undefined,
+): void => {
 	const live = liveOf(before);
 	const key = routeKeyOf(live);
 
@@ -400,13 +442,13 @@ const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before
 		for (let index = 0; index < before.length; index++) {
 			if (!Object.hasOwn(before, index)) continue;
 
-			pushRemoval(context, appendOperationPath(path, index), before[index]);
+			pushRemoval(context, appendOperationPath(path, index), before[index], declarationChild(residual, index));
 		}
 
-		diffObjectProperties(context, before, [], path, true);
+		diffObjectProperties(context, before, [], path, true, residual);
 	} else {
 		for (const entry of walkDataEntries(before)) {
-			pushRemoval(context, appendOperationPath(path, entry.key), entry.value);
+			pushRemoval(context, appendOperationPath(path, entry.key), entry.value, declarationChild(residual, entry.key));
 		}
 	}
 
@@ -416,14 +458,20 @@ const mintDecomposedRemoval = (context: DiffContext, path: OperationPath, before
 	});
 };
 
-const mintDecomposedChange = (context: DiffContext, path: OperationPath, before: unknown, after: object): void => {
+const mintDecomposedChange = (
+	context: DiffContext,
+	path: OperationPath,
+	before: unknown,
+	after: object,
+	residual: DeclarationTrie | undefined,
+): void => {
 	if (
 		isObjectLike(before) &&
 		assignmentNeedsDecomposition(context, before, path) &&
 		usableExternalRoutesOf(context, liveOf(before), path).length === 0
 	) {
-		mintDecomposedRemoval(context, path, before);
-		mintDecomposedAddition(context, path, after);
+		mintDecomposedRemoval(context, path, before, residual);
+		mintDecomposedAddition(context, path, after, residual);
 
 		return;
 	}
@@ -432,10 +480,14 @@ const mintDecomposedChange = (context: DiffContext, path: OperationPath, before:
 		do: createAssignMutation(path, emptyContainerOf(after), after),
 		undo: createAssignMutation(path, before),
 	});
-	mintDecomposedContents(context, path, after);
+	mintDecomposedContents(context, path, after, residual);
 };
 
-const collectDescendantOmissions = (context: DiffContext, path: OperationPath): void => {
+const collectDescendantOmissions = (
+	context: DiffContext,
+	path: OperationPath,
+	residual: DeclarationTrie | undefined,
+): void => {
 	if (!writesTables(context)) return;
 
 	recordDescendantRoutes(
@@ -448,6 +500,9 @@ const collectDescendantOmissions = (context: DiffContext, path: OperationPath): 
 			},
 		},
 		path,
+		new Set(),
+		false,
+		residual,
 	);
 };
 
@@ -457,8 +512,9 @@ const mintAssignment = (
 	before: unknown,
 	after: unknown,
 	beforePresent: boolean,
+	residual: DeclarationTrie | undefined,
 ): void => {
-	if (isSkippedPath(context, path)) return;
+	if (isSkippedPath(context, path, residual)) return;
 
 	if (isObjectLike(after) && context.linksEnabled) {
 		const live = liveOf(after);
@@ -492,12 +548,12 @@ const mintAssignment = (
 
 		if ((isPlainObject(after) || isPlainArray(after)) && assignmentNeedsDecomposition(context, after, path)) {
 			if (!beforePresent) {
-				mintDecomposedAddition(context, path, after);
+				mintDecomposedAddition(context, path, after, residual);
 
 				return;
 			}
 
-			mintDecomposedChange(context, path, before, after);
+			mintDecomposedChange(context, path, before, after, residual);
 
 			return;
 		}
@@ -507,15 +563,15 @@ const mintAssignment = (
 		}
 	}
 
-	if (isObjectLike(after)) collectDescendantOmissions(context, path);
+	if (isObjectLike(after)) collectDescendantOmissions(context, path, residual);
 
 	const assigned = withoutOmittedChildren(context, after, path);
 
 	if (beforePresent) commitOperation(context, changePair(path, before, assigned));
 	else commitOperation(context, additionPair(path, assigned));
 
-	if (isObjectLike(assigned) && writesTables(context) && !isSkippedPath(context, path)) {
-		recordDescendantRoutes(context, path);
+	if (isObjectLike(assigned) && writesTables(context) && !isSkippedPath(context, path, residual)) {
+		recordDescendantRoutes(context, path, new Set(), false, residual);
 	}
 };
 
@@ -529,22 +585,32 @@ const markChangedPath = (context: DiffContext, path: OperationPath): void => {
 	markDirtyPath(context.dirty, context.handle, path, liveParent);
 };
 
-const pushAddition = (context: DiffContext, path: OperationPath, after: unknown): void => {
-	const visit = admitEmitPath(context, path, undefined, after, false);
+const pushAddition = (
+	context: DiffContext,
+	path: OperationPath,
+	after: unknown,
+	residual: DeclarationTrie | undefined,
+): void => {
+	const visit = admitEmitPath(context, path, undefined, after, false, residual);
 
 	if (visit === "omit") return;
 
 	if (visit === "skip" && isOmittedPath(context, path)) return;
 
-	if (context.handle !== undefined && isUnderIgnoredOccupancy(context.handle, path)) return;
+	if (isIgnoredPath(context, path, residual)) return;
 
 	markChangedPath(context, path);
 
-	mintAssignment(context, path, undefined, after, false);
+	mintAssignment(context, path, undefined, after, false, residual);
 };
 
-const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown): void => {
-	if (isSkippedPath(context, path)) return;
+const pushRemoval = (
+	context: DiffContext,
+	path: OperationPath,
+	before: unknown,
+	residual: DeclarationTrie | undefined,
+): void => {
+	if (isSkippedPath(context, path, residual)) return;
 
 	if (writesTables(context)) {
 		dropOccupancyRoutesUnder(path, context.capture);
@@ -583,7 +649,7 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 			assignmentNeedsDecomposition(context, before, path) &&
 			usableExternalRoutesOf(context, live, path).length === 0
 		) {
-			mintDecomposedRemoval(context, path, before);
+			mintDecomposedRemoval(context, path, before, residual);
 
 			return;
 		}
@@ -592,10 +658,16 @@ const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown)
 	commitOperation(context, removalPair(path, before));
 };
 
-const pushChange = (context: DiffContext, path: OperationPath, before: unknown, after: unknown): void => {
+const pushChange = (
+	context: DiffContext,
+	path: OperationPath,
+	before: unknown,
+	after: unknown,
+	residual: DeclarationTrie | undefined,
+): void => {
 	markChangedPath(context, path);
 
-	mintAssignment(context, path, before, after, true);
+	mintAssignment(context, path, before, after, true, residual);
 };
 
 const hasAncestorPair = (ancestors: Ancestors, before: object, after: object): boolean =>
@@ -637,12 +709,23 @@ const isOmittedPath = (context: DiffContext, path: OperationPath): boolean => {
 	return false;
 };
 
-const isSkippedPath = (context: DiffContext, path: OperationPath): boolean => {
+const isIgnoredPath = (context: DiffContext, path: OperationPath, residual: DeclarationTrie | undefined): boolean => {
+	if (residual?.ignored === true) return true;
+
+	if (context.handle === undefined || path.length === 0) return false;
+
+	const parent = liveAtPath(context.handle.proxy.root, path.slice(0, -1));
+	const key = path[path.length - 1];
+
+	return isObjectLike(parent) && key !== undefined && isIgnoredFrontier(context.handle, parent, key);
+};
+
+const isSkippedPath = (context: DiffContext, path: OperationPath, residual: DeclarationTrie | undefined): boolean => {
 	if (isOmittedPath(context, path)) return true;
 
 	if (context.handle === undefined || path.length === 0) return false;
 
-	return isUnderIgnoredOccupancy(context.handle, path);
+	return isIgnoredPath(context, path, residual);
 };
 
 const withoutOmittedChildren = (context: DiffContext, value: unknown, path: OperationPath): unknown => {
@@ -698,6 +781,7 @@ const diffObjectProperties = (
 	after: Record<string, unknown> | Array<unknown>,
 	path: OperationPath,
 	ignoreArrayIndexes: boolean,
+	residual: DeclarationTrie | undefined,
 ): void => {
 	const beforeEntries = dataEntryValuesOf(before, ignoreArrayIndexes);
 	const afterEntries = dataEntryValuesOf(after, ignoreArrayIndexes);
@@ -705,20 +789,27 @@ const diffObjectProperties = (
 
 	for (const key of keys) {
 		const nextPath = appendOperationPath(path, key);
+		const childResidual = declarationChild(residual, key);
 		const beforePresent = beforeEntries.has(key);
 		const afterPresent = afterEntries.has(key);
 
 		if (beforePresent && afterPresent) {
-			diffValue(context, beforeEntries.get(key), afterEntries.get(key), nextPath);
+			diffValue(context, beforeEntries.get(key), afterEntries.get(key), nextPath, childResidual);
 		} else if (beforePresent && !Object.hasOwn(after, key)) {
-			pushRemoval(context, nextPath, beforeEntries.get(key));
+			pushRemoval(context, nextPath, beforeEntries.get(key), childResidual);
 		} else if (afterPresent && !Object.hasOwn(before, key)) {
-			pushAddition(context, nextPath, afterEntries.get(key));
+			pushAddition(context, nextPath, afterEntries.get(key), childResidual);
 		}
 	}
 };
 
-const diffArray = (context: DiffContext, before: Array<unknown>, after: Array<unknown>, path: OperationPath): void => {
+const diffArray = (
+	context: DiffContext,
+	before: Array<unknown>,
+	after: Array<unknown>,
+	path: OperationPath,
+	residual: DeclarationTrie | undefined,
+): void => {
 	const overlap = Math.min(before.length, after.length);
 
 	for (let index = 0; index < overlap; index++) {
@@ -728,27 +819,42 @@ const diffArray = (context: DiffContext, before: Array<unknown>, after: Array<un
 		if (!beforePresent && !afterPresent) continue;
 
 		const nextPath = appendOperationPath(path, index);
+		const childResidual = declarationChild(residual, index);
 
-		if (!beforePresent) pushAddition(context, nextPath, after[index]);
-		else if (!afterPresent) pushRemoval(context, nextPath, before[index]);
-		else diffValue(context, before[index], after[index], nextPath);
+		if (!beforePresent) pushAddition(context, nextPath, after[index], childResidual);
+		else if (!afterPresent) pushRemoval(context, nextPath, before[index], childResidual);
+		else diffValue(context, before[index], after[index], nextPath, childResidual);
 	}
 
 	if (after.length > before.length) {
-		pushChange(context, appendOperationPath(path, "length"), before.length, after.length);
+		pushChange(
+			context,
+			appendOperationPath(path, "length"),
+			before.length,
+			after.length,
+			declarationChild(residual, "length"),
+		);
 
 		for (let index = before.length; index < after.length; index++) {
-			if (Object.hasOwn(after, index)) pushAddition(context, appendOperationPath(path, index), after[index]);
+			if (Object.hasOwn(after, index))
+				pushAddition(context, appendOperationPath(path, index), after[index], declarationChild(residual, index));
 		}
 	} else if (after.length < before.length) {
 		for (let index = after.length; index < before.length; index++) {
-			if (Object.hasOwn(before, index)) pushRemoval(context, appendOperationPath(path, index), before[index]);
+			if (Object.hasOwn(before, index))
+				pushRemoval(context, appendOperationPath(path, index), before[index], declarationChild(residual, index));
 		}
 
-		pushChange(context, appendOperationPath(path, "length"), before.length, after.length);
+		pushChange(
+			context,
+			appendOperationPath(path, "length"),
+			before.length,
+			after.length,
+			declarationChild(residual, "length"),
+		);
 	}
 
-	diffObjectProperties(context, before, after, path, true);
+	diffObjectProperties(context, before, after, path, true, residual);
 };
 
 const walkContainer = (
@@ -776,32 +882,38 @@ const walkContainer = (
 	}
 };
 
-const diffValue = (context: DiffContext, before: unknown, after: unknown, path: OperationPath): void => {
+const diffValue = (
+	context: DiffContext,
+	before: unknown,
+	after: unknown,
+	path: OperationPath,
+	residual: DeclarationTrie | undefined,
+): void => {
 	const replacing =
 		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
 
 	if (replacing && writesTables(context)) dropOccupancyRoutesUnder(path, context.capture);
 
-	const visit = admitEmitPath(context, path, before, after, isObjectLike(before) || before !== undefined);
+	const visit = admitEmitPath(context, path, before, after, isObjectLike(before) || before !== undefined, residual);
 
 	if (visit === "omit") return;
 
-	if (visit === "skip" || isSkippedPath(context, path)) {
+	if (visit === "skip" || isSkippedPath(context, path, residual)) {
 		if (isOmittedPath(context, path) || Object.is(before, after)) return;
 
 		if (isObjectLike(before) && isObjectLike(after) && sharesStorageIdentity(before, after)) return;
 
-		if (context.handle !== undefined && isUnderIgnoredOccupancy(context.handle, path)) return;
+		if (isIgnoredPath(context, path, residual)) return;
 
 		markChangedPath(context, path);
 
-		pushChange(context, path, before, after);
+		pushChange(context, path, before, after, residual);
 
 		return;
 	}
 
 	if (Object.is(before, after)) {
-		if (writesTables(context)) recordDescendantRoutes(context, path, new Set(), true);
+		if (writesTables(context)) recordDescendantRoutes(context, path, new Set(), true, residual);
 
 		return;
 	}
@@ -809,26 +921,28 @@ const diffValue = (context: DiffContext, before: unknown, after: unknown, path: 
 	if (replacing) {
 		markChangedPath(context, path);
 
-		pushChange(context, path, before, after);
+		pushChange(context, path, before, after, residual);
 
 		return;
 	}
 
 	if (isPlainArray(before) && isPlainArray(after)) {
-		walkContainer(context, before, after, path, () => diffArray(context, before, after, path));
+		walkContainer(context, before, after, path, () => diffArray(context, before, after, path, residual));
 
 		return;
 	}
 
 	if (isPlainObject(before) && isPlainObject(after)) {
-		walkContainer(context, before, after, path, () => diffObjectProperties(context, before, after, path, false));
+		walkContainer(context, before, after, path, () =>
+			diffObjectProperties(context, before, after, path, false, residual),
+		);
 
 		return;
 	}
 
 	markChangedPath(context, path);
 
-	pushChange(context, path, before, after);
+	pushChange(context, path, before, after, residual);
 };
 
 const getRootKind = (value: object): RootKind | undefined => {
@@ -941,7 +1055,7 @@ export function diffObjects(
 		capture: capture ?? createCaptureTables(),
 	};
 
-	diffValue(context, before, after, createOperationPath([]));
+	diffValue(context, before, after, createOperationPath([]), handle?.declarations);
 	rewriteSurvivingUndos(context);
 
 	return ops;

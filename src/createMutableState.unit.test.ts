@@ -349,3 +349,33 @@ describe("createMutableState: root certification", () => {
 		]);
 	});
 });
+
+describe("createMutableState: declaration spine", () => {
+	it("keeps a deep declared ignore after replacing an intermediate node", () => {
+		const state = createMutableState({
+			outer: { inner: { leaf: ignore({ n: 1 }) } },
+			tick: 0,
+		});
+		const emissions = recordEmissions(state);
+
+		transact(state, () => {
+			state.outer = { inner: { leaf: { n: 2 } } };
+			state.tick = 1;
+		});
+
+		emissions.length = 0;
+
+		const replacement = { n: 9 };
+
+		transact(state, () => {
+			state.outer.inner.leaf = replacement;
+			state.tick = 2;
+		});
+
+		expect(state.outer.inner.leaf).toBe(replacement);
+		expect(emissions).toHaveLength(1);
+		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
+			{ do: { verb: "assign", path: ["tick"], value: 2 }, undo: { verb: "assign", path: ["tick"], value: 1 } },
+		]);
+	});
+});
