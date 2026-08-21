@@ -1656,4 +1656,43 @@ describe("diffObjects: intern identity", () => {
 		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
 		expect(internId(origin, origin.sh!)).toBe(internId(replica, replica.sh!));
 	});
+
+	it("does not name a frozen array assigned across windows so a later alias numbering matches", () => {
+		const frozen = Object.freeze([1]);
+		const origin = createMutableState({
+			a: undefined as object | undefined,
+			b: undefined as object | undefined,
+			sh: undefined as { n: number } | undefined,
+			alias: undefined as { n: number } | undefined,
+		});
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.a = frozen;
+		});
+
+		transact(origin, () => {
+			origin.b = frozen;
+		});
+
+		transact(origin, () => {
+			origin.sh = { n: 1 };
+			origin.alias = origin.sh;
+		});
+
+		const replica = createMutableState({
+			a: undefined as object | undefined,
+			b: undefined as object | undefined,
+			sh: undefined as { n: number } | undefined,
+			alias: undefined as { n: number } | undefined,
+		});
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[1] ?? []), "do");
+		applyOperations(replica, projectTransport(heard[2] ?? []), "do");
+
+		expect(replica.alias).toBe(replica.sh);
+		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		expect(internId(origin, origin.sh!)).toBe(internId(replica, replica.sh!));
+	});
 });

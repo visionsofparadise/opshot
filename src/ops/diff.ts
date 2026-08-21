@@ -388,7 +388,7 @@ const mintAssignment = (
 
 				return;
 			}
-		} else if (isPlainObject(after) || isPlainArray(after)) {
+		} else if (admissionLane(after) !== "untracked" && (isPlainObject(after) || isPlainArray(after))) {
 			stageVend(handle, context.capture, after);
 
 			if (interiorReachesInternedOccupied(handle, after, context.capture)) {
