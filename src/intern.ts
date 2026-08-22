@@ -58,50 +58,30 @@ function internNode(handle: Handle, node: object): number {
 	return id;
 }
 
-const stagedBindIdOf = (capture: CaptureTables, raw: object): number | undefined => {
-	for (let index = capture.binds.length - 1; index >= 0; index--) {
-		const bind = capture.binds[index];
+const stagedBindIdOf = (capture: CaptureTables, raw: object): number | undefined => capture.bindIdByNode.get(raw);
 
-		if (bind?.node === raw) return bind.id;
-	}
+const stagedMintIdOf = (capture: CaptureTables, raw: object): number | undefined => capture.mintIdByNode.get(raw);
 
-	return undefined;
+const stagedNodeOf = (capture: CaptureTables, id: number): object | undefined =>
+	capture.bindNodeById.get(id) ?? capture.mintNodeById.get(id);
+
+const nextStagedIdOf = (handle: Handle, capture: CaptureTables): number =>
+	Math.max(handle.nextInternId, capture.nextStagedId);
+
+const stageMint = (capture: CaptureTables, raw: object, id: number): void => {
+	capture.mints.push({ node: raw, id });
+	capture.mintIdByNode.set(raw, id);
+	capture.mintNodeById.set(id, raw);
+
+	if (id + 1 > capture.nextStagedId) capture.nextStagedId = id + 1;
 };
 
-const stagedMintIdOf = (capture: CaptureTables, raw: object): number | undefined => {
-	for (const mint of capture.mints) {
-		if (mint.node === raw) return mint.id;
-	}
+const stageBind = (capture: CaptureTables, raw: object, id: number): void => {
+	capture.binds.push({ node: raw, id });
+	capture.bindIdByNode.set(raw, id);
+	capture.bindNodeById.set(id, raw);
 
-	return undefined;
-};
-
-const stagedNodeOf = (capture: CaptureTables, id: number): object | undefined => {
-	for (let index = capture.binds.length - 1; index >= 0; index--) {
-		const bind = capture.binds[index];
-
-		if (bind?.id === id) return bind.node;
-	}
-
-	for (const mint of capture.mints) {
-		if (mint.id === id) return mint.node;
-	}
-
-	return undefined;
-};
-
-const nextStagedIdOf = (handle: Handle, capture: CaptureTables): number => {
-	let next = handle.nextInternId;
-
-	for (const mint of capture.mints) {
-		if (mint.id >= next) next = mint.id + 1;
-	}
-
-	for (const bind of capture.binds) {
-		if (bind.id >= next) next = bind.id + 1;
-	}
-
-	return next;
+	if (id + 1 > capture.nextStagedId) capture.nextStagedId = id + 1;
 };
 
 const namedRawOf = (handle: Handle, id: number, capture?: CaptureTables): object | undefined => {
@@ -149,7 +129,7 @@ export function stageVend(handle: Handle, capture: CaptureTables, node: object):
 
 	const id = nextStagedIdOf(handle, capture);
 
-	capture.mints.push({ node: raw, id });
+	stageMint(capture, raw, id);
 
 	return id;
 }
@@ -168,6 +148,11 @@ export function commitVends(handle: Handle, capture: CaptureTables): void {
 	for (const { node, id } of capture.binds) commitName(handle, node, id);
 
 	capture.binds.length = 0;
+	capture.bindIdByNode.clear();
+	capture.bindNodeById.clear();
+	capture.mintIdByNode.clear();
+	capture.mintNodeById.clear();
+	capture.nextStagedId = 0;
 }
 
 export function nodeOfInternedId(handle: Handle, id: number, capture?: CaptureTables): object | undefined {
@@ -386,7 +371,7 @@ export function bindVendedIds(
 			}
 
 			if (capture === undefined) commitName(handle, raw, id);
-			else capture.binds.push({ node: raw, id });
+			else stageBind(capture, raw, id);
 
 			return true;
 		},

@@ -21,11 +21,21 @@ export type OccupancyVisit = "skip" | "continue";
 export interface CaptureTables {
 	mints: Array<{ readonly node: object; readonly id: number }>;
 	binds: Array<{ readonly node: object; readonly id: number }>;
+	bindIdByNode: Map<object, number>;
+	bindNodeById: Map<number, object>;
+	mintIdByNode: Map<object, number>;
+	mintNodeById: Map<number, object>;
+	nextStagedId: number;
 }
 
 export const createCaptureTables = (): CaptureTables => ({
 	mints: [],
 	binds: [],
+	bindIdByNode: new Map(),
+	bindNodeById: new Map(),
+	mintIdByNode: new Map(),
+	mintNodeById: new Map(),
+	nextStagedId: 0,
 });
 
 const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
