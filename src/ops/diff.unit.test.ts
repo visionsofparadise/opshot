@@ -72,24 +72,18 @@ const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> 
 	return copy;
 };
 
-const projectHalves = (ops: ReadonlyArray<Operation>, transportValue: (value: unknown) => unknown): Array<Operation> =>
+const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
 	ops.map((pair) => {
 		const projectHalf = (half: Mutation): Mutation => {
 			if (half.verb === "link") return createLinkMutation([...half.path], half.ref);
 
 			if (half.verb === "delete") return createDeleteMutation([...half.path]);
 
-			return createAssignMutation([...half.path], transportValue(half.value), undefined, half.ids);
+			return createAssignMutation([...half.path], rehydrateTransportValue(half.value), undefined, half.ids);
 		};
 
 		return { do: projectHalf(pair.do), undo: projectHalf(pair.undo) };
 	});
-
-const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
-	projectHalves(ops, (value) => rehydrateTransportValue(value));
-
-const projectCyclicTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
-	projectHalves(ops, (value) => structuredClone(value));
 
 const readValue = (operation: Mutation): unknown => ("value" in operation ? operation.value : undefined);
 
@@ -1188,7 +1182,7 @@ describe("diffObjects: link batch construction", () => {
 		const replica = createMutableState<{ a?: { x: { n: number; back?: object } } }>({ a: { x: { n: 1 } } });
 		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
 
-		for (const window of heard) applyOperations(replica, projectCyclicTransport(window), "do");
+		for (const window of heard) applyOperations(replica, projectTransport(window), "do");
 
 		expect(replica.a?.x.n).toBe(99);
 		expect(replica.a?.x.back).toBe(replica.a);
