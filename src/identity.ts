@@ -137,5 +137,5 @@ export function isSameIdentity(first: object, second: object): boolean {
 	const resolvedFirst = resolveIdentity(first);
 	const resolvedSecond = resolveIdentity(second);
 
-	return resolvedFirst === resolvedSecond || (resolvedFirst !== resolvedFirst && resolvedSecond !== resolvedSecond);
+	return resolvedFirst === resolvedSecond;
 }
