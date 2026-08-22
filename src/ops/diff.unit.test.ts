@@ -1215,6 +1215,28 @@ interface ResidueState {
 	alias?: { m: number };
 }
 
+interface InteriorState {
+	box: { n: number };
+	tick: number;
+}
+
+class ArrowBox {
+	x = 1;
+	bump = (): void => {
+		this.x += 1;
+	};
+}
+
+interface SealedState {
+	shared: { s: number };
+	box?: { keep?: number; bad?: object };
+}
+
+interface NestedRefusalState {
+	box: { bad?: object };
+	tick: number;
+}
+
 describe("diffObjects: occupancy omission", () => {
 	it("a window with one refused occupancy emits sibling keys and nothing at or under the refused path", async () => {
 		const errors = new Array<unknown>();
@@ -1380,6 +1402,125 @@ describe("diffObjects: occupancy omission", () => {
 		const assigned = heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "bag");
 
 		expect(readValue(assigned?.do ?? { verb: "delete", path: [] })).toEqual({ ...(state.bag as object) });
+	});
+
+	it("emits the interior mutation made under a refused overwrite and a JSON replica converges", async () => {
+		const errors = new Array<unknown>();
+		const origin = createMutableState<InteriorState>(
+			{ box: { n: 1 }, tick: 0 },
+			{
+				strict: true,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const handle = requireHandle(origin, "opshot: test requires a state");
+		const occupant = origin.box;
+		const heard = record(origin);
+		const replica = createMutableState<InteriorState>({ box: { n: 1 }, tick: 0 });
+
+		origin.box.n = 2;
+		origin.box = new Map<string, number>() as unknown as { n: number };
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect(origin.box).toBe(occupant);
+		expect(origin.box).toEqual({ n: 2 });
+		expect(pathOf(heard[0])).toEqual([["box", "n"]]);
+		expect(handle.lastDirty?.edges.get(rawTargetOf(occupant))?.has("n")).toBe(true);
+
+		origin.tick = 1;
+
+		await Promise.resolve();
+
+		expect(pathOf(heard[1])).toEqual([["tick"]]);
+
+		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
+
+		expect(replica.box).toEqual({ n: 2 });
+		expect({ ...snapshot(replica) }).toEqual({ ...snapshot(origin) });
+	});
+
+	it("refuses the container whose refused child cannot be stripped and a JSON replica converges", async () => {
+		const errors = new Array<unknown>();
+		const origin = createMutableState<SealedState>(
+			{ shared: { s: 1 } },
+			{
+				strict: true,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const handle = requireHandle(origin, "opshot: test requires a state");
+		const heard = record(origin);
+		const replica = createMutableState<SealedState>({ shared: { s: 1 } });
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+
+		origin.box = Object.seal({ keep: 1, bad: new ArrowBox() });
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect((errors[0] as OccupancyRefusalError).message).toContain("ArrowBox at /box/bad/bump");
+		expect(Object.hasOwn(origin, "box")).toBe(false);
+		expect(heard).toEqual([]);
+
+		origin.box = { bad: origin.shared };
+
+		await Promise.resolve();
+
+		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
+
+		expect(replica.box?.bad).toBe(replica.shared);
+		expect({ ...snapshot(replica) }).toEqual({ ...snapshot(origin) });
+		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
+	});
+
+	it("reverts a refusal revealed by an earlier revert and raises both, converging a JSON replica", async () => {
+		const errors = new Array<unknown>();
+		const origin = createMutableState<NestedRefusalState>(
+			{ box: {}, tick: 0 },
+			{
+				strict: true,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = record(origin);
+		const replica = createMutableState<NestedRefusalState>({ box: {}, tick: 0 });
+
+		origin.box.bad = new Map<string, number>();
+		origin.box = new Map<string, number>() as unknown as { bad?: object };
+		origin.tick = 1;
+
+		await Promise.resolve();
+
+		const refusal = errors[0] as OccupancyRefusalError;
+
+		expect(Object.hasOwn(origin.box, "bad")).toBe(false);
+		expect(origin.box).toEqual({});
+		expect(pathOf(heard[0])).toEqual([["tick"]]);
+		expect(errors).toHaveLength(1);
+		expect(refusal).toBeInstanceOf(OccupancyRefusalError);
+		expect(refusal.message).toBe("opshot: dangerous occupancies were refused");
+		expect(refusal.cause).toBeInstanceOf(AggregateError);
+
+		const causes = ((refusal.cause as AggregateError).errors as Array<Error>).map(
+			(cause) => cause.message.split("\n")[0],
+		);
+
+		expect(causes).toEqual([
+			"opshot: Map at /box cannot be tracked (its state lives in internal slots). Options:",
+			"opshot: Map at /box/bad cannot be tracked (its state lives in internal slots). Options:",
+		]);
+
+		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
+
+		expect({ ...snapshot(replica) }).toEqual({ ...snapshot(origin) });
 	});
 });
 

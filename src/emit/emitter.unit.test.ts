@@ -382,6 +382,98 @@ describe("write-window occupancy refusal", () => {
 		expect(errors).toHaveLength(1);
 		expect(heard.map(shapeOps)).toEqual([tickAssign(1, 2)]);
 	});
+
+	it("a refusal at a non-configurable slot emits the rest of the window and reports once", async () => {
+		const scheduler = manualScheduler();
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ box: { a: number; meta?: object }; tick: number }>(
+			{ box: { a: 1 }, tick: 0 },
+			{
+				strict: true,
+				emitOn: scheduler.emitOn,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		Object.defineProperty(state.box, "meta", { value: { x: 1 }, enumerable: true });
+		state.box.a = 2;
+
+		await Promise.resolve();
+
+		expect(() => {
+			scheduler.flushAll();
+		}).not.toThrow();
+
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect((errors[0] as Error).message).toContain("at /box/meta");
+		expect(heard.map((ops) => ops.map((operation) => operation.do.path))).toEqual([[["box", "a"]]]);
+
+		heard.length = 0;
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		expect(() => {
+			scheduler.flushAll();
+		}).not.toThrow();
+
+		expect(errors).toHaveLength(1);
+		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+	});
+
+	it("a refusal a sealed root cannot release reports once and leaves the next window emitting", async () => {
+		const scheduler = manualScheduler();
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ box: { a: number }; bad?: object }>(
+			{ box: { a: 1 } },
+			{
+				strict: true,
+				emitOn: scheduler.emitOn,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		state.bad = new Map<string, number>();
+		Object.seal(state);
+
+		await Promise.resolve();
+
+		expect(() => {
+			scheduler.flushAll();
+		}).not.toThrow();
+
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect((errors[0] as Error).message).toContain("Map at /bad");
+		expect(heard).toEqual([]);
+		expect(state.bad).toBeInstanceOf(Map);
+
+		state.box.a = 2;
+
+		await Promise.resolve();
+
+		expect(() => {
+			scheduler.flushAll();
+		}).not.toThrow();
+
+		expect(errors).toHaveLength(1);
+		expect(heard.map((ops) => ops.map((operation) => operation.do.path))).toEqual([[["box", "a"]]]);
+	});
 });
 
 describe("reconcileUntracked", () => {

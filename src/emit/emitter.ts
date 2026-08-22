@@ -1,10 +1,10 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
-import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
+import { getRegisteredTarget, isSameIdentity, registerSnapshotCopy } from "../identity";
 import { annotateDepartureUndos, commitVends, evictDepartedClusters } from "../intern";
 import { OccupancyRefusalError, createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
-import { liveAtPath, type OperationPath } from "../ops/path";
+import { createOperationPath, liveAtPath, type OperationPath } from "../ops/path";
 import { isObjectLike } from "../ops/predicates";
 import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
@@ -12,6 +12,8 @@ import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery, type PendingDelivery } from "./emitterDeliver";
 import { targetOf } from "./emitterRegistry";
 import type { DirtyIndex, Handle } from "../handle";
+import type { CaptureTables } from "../occupancy";
+import type { Operation } from "../ops/operation";
 
 export interface CapturedRange {
 	readonly delivery: PendingDelivery | undefined;
@@ -148,15 +150,27 @@ const nodeAtSnapshotPath = (from: object, path: OperationPath): unknown => {
 const restoredOccupantOf = (value: unknown): unknown =>
 	isObjectLike(value) ? (getRegisteredTarget(value) ?? value) : value;
 
-const revertRefusedPath = (handle: Handle, from: object, path: OperationPath): void => {
+const holdsOccupant = (parent: object, key: string | number, occupant: unknown): boolean => {
+	const parentRaw = targetOf(parent);
+
+	if (!Object.hasOwn(parentRaw, key)) return false;
+
+	const stored: unknown = Reflect.get(parentRaw, key);
+
+	if (Object.is(stored, occupant)) return true;
+
+	return isObjectLike(stored) && isObjectLike(occupant) && isSameIdentity(stored, occupant);
+};
+
+const revertRefusedPath = (handle: Handle, from: object, path: OperationPath): boolean => {
 	const key = path[path.length - 1];
 
-	if (key === undefined) return;
+	if (key === undefined) return false;
 
-	const parentPath = path.slice(0, -1);
+	const parentPath = createOperationPath(path.slice(0, -1));
 	const liveParent = liveAtPath(handle.proxy.root, parentPath);
 
-	if (!isObjectLike(liveParent)) return;
+	if (!isObjectLike(liveParent)) return true;
 
 	const snapshotParent = nodeAtSnapshotPath(from, parentPath);
 
@@ -165,16 +179,34 @@ const revertRefusedPath = (handle: Handle, from: object, path: OperationPath): v
 		(getRegisteredTarget(snapshotParent) ?? snapshotParent) === targetOf(liveParent) &&
 		Object.hasOwn(snapshotParent, key)
 	) {
-		Reflect.set(liveParent, key, restoredOccupantOf(Reflect.get(snapshotParent, key)));
+		const restored = restoredOccupantOf(Reflect.get(snapshotParent, key));
 
-		return;
+		if (holdsOccupant(liveParent, key, restored)) return false;
+
+		Reflect.set(liveParent, key, restored);
+
+		return holdsOccupant(liveParent, key, restored);
 	}
 
 	Reflect.deleteProperty(liveParent, key);
+
+	return !Object.hasOwn(targetOf(liveParent), key);
 };
 
-const revertRefusedPaths = (handle: Handle, from: object, paths: ReadonlyArray<OperationPath>): void => {
-	for (const path of paths) revertRefusedPath(handle, from, path);
+const revertRefusedPaths = (handle: Handle, from: object, paths: ReadonlyArray<OperationPath>): boolean => {
+	let settled = true;
+
+	for (const path of paths) {
+		let container: OperationPath = path;
+
+		while (container.length > 0 && !revertRefusedPath(handle, from, container)) {
+			container = createOperationPath(container.slice(0, -1));
+		}
+
+		if (container.length === 0) settled = false;
+	}
+
+	return settled;
 };
 
 const occupancyRefusalOf = (refusals: ReadonlyArray<Error>): OccupancyRefusalError => {
@@ -187,6 +219,59 @@ const occupancyRefusalOf = (refusals: ReadonlyArray<Error>): OccupancyRefusalErr
 	return new OccupancyRefusalError(new AggregateError(refusals, "opshot: dangerous occupancies were refused"));
 };
 
+interface CaptureDiff {
+	readonly to: object;
+	readonly ops: Array<Operation>;
+	readonly dirty: DirtyIndex;
+	readonly capture: CaptureTables;
+}
+
+const captureDiffOf = (handle: Handle, from: object): CaptureDiff => {
+	const to = snapshot(handle.proxy.root);
+	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
+	const capture = createCaptureTables();
+
+	if (from === to) {
+		syncHandleTables(handle, capture);
+
+		return { to, ops: [], dirty, capture };
+	}
+
+	return {
+		to,
+		ops: diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty, capture),
+		dirty,
+		capture,
+	};
+};
+
+interface SettledCapture {
+	readonly diff: CaptureDiff;
+	readonly refusals: ReadonlyArray<Error>;
+}
+
+const revertPassLimit = 64;
+
+const settledCaptureOf = (handle: Handle, from: object, probe: CaptureDiff): SettledCapture => {
+	const refusals = new Array<Error>();
+	let pass = probe;
+
+	for (let attempt = 0; attempt <= revertPassLimit; attempt++) {
+		if (pass.capture.refusals.length === 0) return { diff: pass, refusals };
+
+		refusals.push(...pass.capture.refusals);
+
+		const settled = revertRefusedPaths(handle, from, pass.capture.refusedPaths);
+		const next = captureDiffOf(handle, from);
+
+		if (!settled) return { diff: next, refusals };
+
+		pass = next;
+	}
+
+	return { diff: pass, refusals };
+};
+
 const captureRange = (
 	handle: Handle,
 	meta: unknown,
@@ -196,30 +281,21 @@ const captureRange = (
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
-	const to = snapshot(handle.proxy.root);
+	const probe = captureDiffOf(handle, from);
 
-	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
-	const capture = createCaptureTables();
-
-	if (from === to) syncHandleTables(handle, capture);
-
-	const ops =
-		from === to
-			? []
-			: diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty, capture);
-
-	const refusals = capture.refusals;
-
-	if (kind === "transaction" && refusals.length > 0) {
+	if (kind === "transaction" && probe.capture.refusals.length > 0) {
 		rollbackTransaction(handle);
 
-		throw occupancyRefusalOf(refusals);
+		throw occupancyRefusalOf(probe.capture.refusals);
 	}
 
-	if (refusals.length > 0) revertRefusedPaths(handle, from, capture.refusedPaths);
+	const settled = settledCaptureOf(handle, from, probe);
+	const refusals = settled.refusals;
+	const committed = settled.diff;
+	const ops = committed.ops;
 
-	commitVends(handle, capture);
-	handle.lastSnapshot = refusals.length > 0 ? snapshot(handle.proxy.root) : to;
+	commitVends(handle, committed.capture);
+	handle.lastSnapshot = committed.to;
 
 	const evicted = evictDepartedClusters(handle);
 
@@ -230,7 +306,7 @@ const captureRange = (
 	}
 
 	return {
-		delivery: ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, dirty) : undefined,
+		delivery: ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, committed.dirty) : undefined,
 		writeError: kind === "write" && refusals.length > 0 ? occupancyRefusalOf(refusals) : undefined,
 	};
 };
