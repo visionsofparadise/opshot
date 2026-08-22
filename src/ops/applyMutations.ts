@@ -256,8 +256,10 @@ const applyPlain = (
 		}
 	}
 
+	const payload = getValuePayload(operation, identity);
+
 	restoreValue(
-		getValuePayload(operation, identity),
+		payload,
 		(value) => Reflect.set(parent, key, value),
 		() => Reflect.get(parent, key),
 		identity,
@@ -267,8 +269,11 @@ const applyPlain = (
 
 	if (!isObjectLike(attached)) return;
 
-	if (operation.ids !== undefined) bindVendedIds(handle, attached, operation.ids, parent, key);
-	else internSubtree(handle, attached);
+	if (operation.ids !== undefined) {
+		if (isObjectLike(payload.recorded)) {
+			bindVendedIds(handle, attached, payload.recorded, operation.ids, parent, key);
+		}
+	} else internSubtree(handle, attached);
 };
 
 const applyMutation = (root: object, operation: Mutation, identity: "restore" | "construct", handle: Handle): void => {

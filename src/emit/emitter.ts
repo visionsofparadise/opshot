@@ -173,9 +173,9 @@ const captureRange = (
 	commitVends(handle, capture);
 	handle.lastSnapshot = to;
 
-	const departed = evictDepartedClusters(handle);
+	const evicted = evictDepartedClusters(handle);
 
-	if (ops.length > 0) annotateDepartureUndos(ops, departed);
+	if (ops.length > 0) annotateDepartureUndos(handle, ops, evicted);
 
 	if (ops.length > 0 && !handle.replaying) {
 		for (const operation of ops) stampOperation(handle, operation);

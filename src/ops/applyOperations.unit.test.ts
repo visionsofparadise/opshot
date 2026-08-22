@@ -773,4 +773,159 @@ describe("applyOperations: link halves", () => {
 
 		expect(replicaHandle.nextInternId).toBe(before);
 	});
+
+	it("transported undo of overlapping departed clusters restores the shared interior in either slot order", () => {
+		interface SharedInteriorState {
+			a?: { x: { s: { s: number } } };
+			b?: { y: { s: { s: number }; z: { n: number } } };
+		}
+
+		const build = (sharedFirst: boolean): SharedInteriorState => {
+			const shared = { s: 1 };
+
+			return {
+				a: { x: { s: shared } },
+				b: { y: sharedFirst ? { s: shared, z: { n: 2 } } : { z: { n: 2 }, s: shared } },
+			};
+		};
+
+		const namedNodesOf = (state: SharedInteriorState): ReadonlyArray<object> => [
+			state.a!,
+			state.a!.x,
+			state.a!.x.s,
+			state.b!,
+			state.b!.y,
+			state.b!.y.z,
+		];
+
+		for (const sharedFirst of [true, false]) {
+			const origin = createMutableState(build(sharedFirst));
+			const originHandle = requireHandle(origin, "opshot: test requires a state");
+			const admitted = namedNodesOf(origin).map((node) => internId(origin, node));
+			const minted = originHandle.nextInternId;
+			const heard = record(origin);
+
+			transact(origin, () => {
+				delete origin.a;
+				delete origin.b;
+			});
+
+			const replica = createMutableState(build(sharedFirst));
+			const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+			const transported = JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>;
+
+			applyOperations(replica, transported, "do");
+
+			expect(replica).toEqual(origin);
+			expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
+
+			applyOperations(origin, heard[0] ?? [], "undo");
+			applyOperations(replica, transported, "undo");
+
+			expect(replica).toEqual(origin);
+			expect(origin.a!.x.s).toBe(origin.b!.y.s);
+			expect(replica.a!.x.s).toBe(replica.b!.y.s);
+			expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
+			expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual(admitted);
+			expect(originHandle.nextInternId).toBe(minted);
+			expect(replicaHandle.nextInternId).toBe(minted);
+		}
+	});
+
+	it("transported undo of a cluster mutated while detached restores every member's id", () => {
+		interface DetachedState {
+			box?: { kid?: { k: number }; tail: { t: number } };
+		}
+
+		const build = (): DetachedState => ({ box: { kid: { k: 1 }, tail: { t: 1 } } });
+		const origin = createMutableState(build());
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const admitted = [
+			internId(origin, origin.box!),
+			internId(origin, origin.box!.kid!),
+			internId(origin, origin.box!.tail),
+		];
+		const minted = originHandle.nextInternId;
+		const heard = record(origin);
+		const held = origin.box!;
+
+		transact(origin, () => {
+			delete origin.box;
+			delete held.kid;
+		});
+
+		const replica = createMutableState(build());
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+		const transported = JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>;
+
+		applyOperations(replica, transported, "do");
+
+		expect(replica).toEqual(origin);
+		expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
+
+		applyOperations(origin, heard[0] ?? [], "undo");
+		applyOperations(replica, transported, "undo");
+
+		expect(replica).toEqual(origin);
+		expect(origin.box).toEqual({ kid: { k: 1 }, tail: { t: 1 } });
+		expect([
+			internId(origin, origin.box!),
+			internId(origin, origin.box!.kid!),
+			internId(origin, origin.box!.tail),
+		]).toEqual(admitted);
+		expect([
+			internId(replica, replica.box!),
+			internId(replica, replica.box!.kid!),
+			internId(replica, replica.box!.tail),
+		]).toEqual(admitted);
+		expect(originHandle.nextInternId).toBe(minted);
+		expect(replicaHandle.nextInternId).toBe(minted);
+	});
+
+	it("transported undo of a mixed batch restores sharing across separate departed clusters", () => {
+		interface MixedBatchState {
+			pair?: { p: { n: number }; q: { n: number } };
+			solo?: { n: number };
+		}
+
+		const build = (): MixedBatchState => {
+			const shared = { n: 1 };
+
+			return { pair: { p: shared, q: shared }, solo: shared };
+		};
+
+		const namedNodesOf = (state: MixedBatchState): ReadonlyArray<object> => [state.pair!, state.pair!.p, state.solo!];
+		const origin = createMutableState(build());
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const admitted = namedNodesOf(origin).map((node) => internId(origin, node));
+		const minted = originHandle.nextInternId;
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete origin.pair;
+			delete origin.solo;
+		});
+
+		const replica = createMutableState(build());
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+		const transported = JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>;
+
+		applyOperations(replica, transported, "do");
+
+		expect(replica).toEqual(origin);
+		expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
+
+		applyOperations(origin, heard[0] ?? [], "undo");
+		applyOperations(replica, transported, "undo");
+
+		expect(replica).toEqual(origin);
+		expect(origin.solo).toBe(origin.pair!.p);
+		expect(origin.pair!.q).toBe(origin.pair!.p);
+		expect(replica.solo).toBe(replica.pair!.p);
+		expect(replica.pair!.q).toBe(replica.pair!.p);
+		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
+		expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual(admitted);
+		expect(originHandle.nextInternId).toBe(minted);
+		expect(replicaHandle.nextInternId).toBe(minted);
+	});
 });

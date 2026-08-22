@@ -224,12 +224,13 @@ const walkUnoccupiedCluster = (
 };
 
 const walkSlots = (
+	carried: object,
 	node: object,
-	visit: (current: object, raw: object, parent?: object, key?: string) => boolean,
+	visit: (raw: object, parent?: object, key?: string) => boolean,
 ): void => {
 	const visits = new Set<object>();
 
-	const walk = (current: object, parent?: object, key?: string): void => {
+	const walk = (carriedCurrent: object, current: object, parent?: object, key?: string): void => {
 		const raw = occupancyNodeOf(current);
 		const looping = visits.has(raw);
 
@@ -237,23 +238,27 @@ const walkSlots = (
 
 		if (admissionLane(current) === "untracked") return;
 
-		if (!visit(current, raw, parent, key) || looping) return;
+		if (!visit(raw, parent, key) || looping) return;
 
-		for (const entry of walkDataEntries(current)) {
+		for (const entry of walkDataEntries(carriedCurrent)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
 
-			walk(entry.value, current, entry.key);
+			const child: unknown = Reflect.get(current, entry.key);
+
+			if (typeof child !== "object" || child === null) continue;
+
+			walk(entry.value, child, current, entry.key);
 		}
 	};
 
-	walk(node);
+	walk(carried, node);
 };
 
-export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, ReadonlyArray<number>> {
-	const departed = new Map<object, ReadonlyArray<number>>();
+export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, number> {
+	const evicted = new Map<object, number>();
 	const queued = departingNodes.get(handle);
 
-	if (queued === undefined) return departed;
+	if (queued === undefined) return evicted;
 
 	const ungrounded = new Array<object>();
 
@@ -263,40 +268,34 @@ export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, Reado
 
 	queued.clear();
 
+	const members = new Array<object>();
+
 	for (const node of ungrounded) {
-		const clusterIds = new Array<number>();
-
-		walkSlots(node, (_current, raw) => {
-			const id = committedIdOf(handle, raw);
-
-			if (id !== undefined) clusterIds.push(id);
-
-			return !isOccupiedMember(handle, raw);
-		});
-
 		walkUnoccupiedCluster(handle, node, (raw, id) => {
-			if (id !== undefined) {
-				handle.nodes.delete(raw);
-				handle.byId.delete(id);
-			} else handle.nodes.delete(raw);
-		});
+			members.push(raw);
 
-		if (clusterIds.length > 0) departed.set(node, clusterIds);
+			if (id !== undefined) evicted.set(raw, id);
+		});
 	}
 
-	return departed;
+	for (const raw of members) handle.nodes.delete(raw);
+
+	for (const id of evicted.values()) handle.byId.delete(id);
+
+	return evicted;
 }
 
 export function bindVendedIds(
 	handle: Handle,
 	node: object,
+	carried: object,
 	ids: ReadonlyArray<number>,
 	parent?: object,
 	key?: PropertyKey,
 ): void {
 	let index = 0;
 
-	walkSlots(node, (_current, raw, walkParent, walkKey) => {
+	walkSlots(carried, node, (raw, walkParent, walkKey) => {
 		const id = ids[index];
 
 		if (id === undefined) return true;
@@ -342,41 +341,50 @@ export function rewindAdmission(handle: Handle, node: object): ReadonlyArray<num
 }
 
 export function annotateDepartureUndos(
+	handle: Handle,
 	ops: Array<Operation>,
-	departed: ReadonlyMap<object, ReadonlyArray<number>>,
+	evicted: ReadonlyMap<object, number>,
 ): void {
-	for (const [node, ids] of departed) {
-		const restoredId = ids[0];
+	if (evicted.size === 0) return;
+
+	const claimedMembers = new Set<object>();
+
+	for (let index = ops.length - 1; index >= 0; index--) {
+		const operation = ops[index];
+
+		if (operation === undefined) continue;
+
+		const undo = operation.undo;
+
+		if (undo.verb !== "assign") continue;
+
+		const original: unknown = getValueOriginal(undo) ?? undo.value;
+
+		if (typeof original !== "object" || original === null) continue;
+
+		const restoredId = evicted.get(occupancyNodeOf(original));
 
 		if (restoredId === undefined) continue;
 
-		const removals = new Array<Operation>();
+		const ids = new Array<number>();
+		const claimsBefore = claimedMembers.size;
 
-		for (const operation of ops) {
-			if (operation.undo.verb !== "assign") continue;
+		walkSlots(original, original, (raw) => {
+			const retiredId = evicted.get(raw);
+			const id = retiredId ?? committedIdOf(handle, raw);
 
-			const original = getValueOriginal(operation.undo) ?? operation.undo.value;
+			if (id !== undefined) ids.push(id);
 
-			if (typeof original !== "object" || original === null) continue;
+			if (retiredId === undefined || claimedMembers.has(raw)) return false;
 
-			if (occupancyNodeOf(original) === node) removals.push(operation);
-		}
+			claimedMembers.add(raw);
 
-		const last = removals[removals.length - 1];
+			return true;
+		});
 
-		if (last?.undo.verb !== "assign") continue;
-
-		const lastUndo = last.undo;
-
-		(last as { undo: Operation["undo"] }).undo = createAssignMutation(
-			lastUndo.path,
-			lastUndo.value,
-			getValueOriginal(lastUndo) ?? lastUndo.value,
-			ids,
-		);
-
-		for (const earlier of removals.slice(0, -1)) {
-			(earlier as { undo: Operation["undo"] }).undo = createLinkMutation(earlier.undo.path, restoredId);
-		}
+		(operation as { undo: Operation["undo"] }).undo =
+			claimedMembers.size > claimsBefore
+				? createAssignMutation(undo.path, undo.value, original, ids)
+				: createLinkMutation(undo.path, restoredId);
 	}
 }
