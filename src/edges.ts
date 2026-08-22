@@ -218,6 +218,7 @@ interface NodeChain {
 interface NodeChainSet {
 	readonly occupied: boolean;
 	readonly entries: ReadonlyArray<NodeChain>;
+	readonly cut: boolean;
 }
 
 const uniqueNodeChains = (entries: ReadonlyArray<NodeChain>): Array<NodeChain> => {
@@ -288,7 +289,7 @@ const chainsAtNode = (
 
 	if (cached !== undefined) return cached;
 
-	if (computing.has(raw)) return { occupied: false, entries: [] };
+	if (computing.has(raw)) return { occupied: false, entries: [], cut: true };
 
 	if (raw === occupancyRootOf(handle)) {
 		const trie = handle.declarations;
@@ -301,6 +302,7 @@ const chainsAtNode = (
 					ignored: trie?.ignored === true,
 				},
 			],
+			cut: false,
 		};
 
 		memo.set(raw, result);
@@ -312,11 +314,14 @@ const chainsAtNode = (
 
 	const aggregated = new Array<NodeChain>();
 	let occupied = false;
+	let cut = false;
 	const edges = edgesOf(handle, raw);
 
 	if (edges !== undefined) {
 		for (const edge of edges) {
 			const parent = chainsAtNode(handle, edge.parent, memo, computing);
+
+			if (parent.cut) cut = true;
 
 			if (!parent.occupied) continue;
 
@@ -336,9 +341,9 @@ const chainsAtNode = (
 
 	computing.delete(raw);
 
-	const result: NodeChainSet = { occupied, entries: uniqueNodeChains(aggregated) };
+	const result: NodeChainSet = { occupied, entries: uniqueNodeChains(aggregated), cut };
 
-	memo.set(raw, result);
+	if (!cut) memo.set(raw, result);
 
 	return result;
 };

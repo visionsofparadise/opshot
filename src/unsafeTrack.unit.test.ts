@@ -1,5 +1,7 @@
 import { transact } from "./transact/transact";
 import { createMutableState } from "./createMutableState";
+import { edgeStatusOf, slotStatusOf } from "./edges";
+import { handleOf } from "./handle";
 import { isSameIdentity } from "./identity";
 import { OccupancyRefusalError } from "./occupancy";
 import { unsafeMarker, unsafeTrack } from "./unsafeTrack";
@@ -149,6 +151,30 @@ describe("unsafeTrack occupancy", () => {
 		expect(() => {
 			transact(state, () => {
 				state.a.x = { y: new Map() };
+			});
+		}).toThrow(OccupancyRefusalError);
+	});
+
+	it("keeps the clean chain of an aliased unsafe parent under a back-pointer cycle", () => {
+		const state = createMutableState(
+			{ c: { k1: unsafeTrack({}), w: {} } } as unknown as {
+				c: { k1: { m?: object }; w: { z?: object; k2?: object } };
+			},
+			{ strict: true },
+		);
+		const handle = handleOf(state);
+
+		expect(handle).toBeDefined();
+
+		state.c.w.z = state.c;
+		state.c.w.k2 = state.c.k1;
+
+		expect(slotStatusOf(handle!, state.c.k1, "m").unsafe).toBe(false);
+		expect(edgeStatusOf(handle!, state.c.k1).unsafe).toBe(false);
+
+		expect(() => {
+			transact(state, () => {
+				state.c.k1.m = new Map();
 			});
 		}).toThrow(OccupancyRefusalError);
 	});

@@ -1,4 +1,5 @@
 import { createMutableState } from "./createMutableState";
+import { isIgnoredFrontier, slotStatusOf } from "./edges";
 import { handleOf } from "./handle";
 import { ignore, ignoreMarker } from "./ignore";
 import { unsafeTrack } from "./unsafeTrack";
@@ -243,6 +244,33 @@ describe("ignore", () => {
 		const handle = handleOf(state);
 
 		expect(handle).toBeDefined();
+		expect(handle!.nodes.get(replacement)?.edges.length ?? 0).toBe(0);
+	});
+
+	it("keeps the declared ignore frontier of an aliased parent under a back-pointer cycle", () => {
+		const state = createMutableState({
+			c: { k1: {}, w: { k2: { hide: ignore({ s: 1 }) } } },
+		} as unknown as {
+			c: {
+				k1: { hide?: { s: number } };
+				w: { z?: object; k2: { hide?: { s: number } } };
+			};
+		});
+		const handle = handleOf(state);
+
+		expect(handle).toBeDefined();
+
+		state.c.w.z = state.c;
+		state.c.w.k2 = state.c.k1;
+
+		expect(slotStatusOf(handle!, state.c.k1, "hide").ignored).toBe(true);
+		expect(isIgnoredFrontier(handle!, state.c.k1, "hide")).toBe(true);
+
+		const replacement = { s: 2 };
+
+		state.c.k1.hide = replacement;
+
+		expect(state.c.k1.hide).toBe(replacement);
 		expect(handle!.nodes.get(replacement)?.edges.length ?? 0).toBe(0);
 	});
 });
