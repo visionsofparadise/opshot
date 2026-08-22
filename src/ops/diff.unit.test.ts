@@ -72,23 +72,24 @@ const rehydrateTransportValue = (value: unknown, memo: WeakMap<object, unknown> 
 	return copy;
 };
 
-const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
+const projectHalves = (ops: ReadonlyArray<Operation>, transportValue: (value: unknown) => unknown): Array<Operation> =>
 	ops.map((pair) => {
 		const projectHalf = (half: Mutation): Mutation => {
 			if (half.verb === "link") return createLinkMutation([...half.path], half.ref);
 
 			if (half.verb === "delete") return createDeleteMutation([...half.path]);
 
-			return createAssignMutation(
-				[...half.path],
-				"value" in half ? rehydrateTransportValue(half.value) : undefined,
-				undefined,
-				half.verb === "assign" ? half.ids : undefined,
-			);
+			return createAssignMutation([...half.path], transportValue(half.value), undefined, half.ids);
 		};
 
 		return { do: projectHalf(pair.do), undo: projectHalf(pair.undo) };
 	});
+
+const projectTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
+	projectHalves(ops, (value) => rehydrateTransportValue(value));
+
+const projectCyclicTransport = (ops: ReadonlyArray<Operation>): Array<Operation> =>
+	projectHalves(ops, (value) => structuredClone(value));
 
 const readValue = (operation: Mutation): unknown => ("value" in operation ? operation.value : undefined);
 
@@ -1155,6 +1156,61 @@ describe("diffObjects: link batch construction", () => {
 		applyOperations(replica, projectTransport(heard[1] ?? []), "do");
 
 		expect(replica.box).toEqual({ n: 99 });
+	});
+
+	it("evicts a cluster whose interior edge points back at its own entry", () => {
+		const origin = createMutableState<{ a?: { x: { n: number; back?: object } } }>({ a: { x: { n: 1 } } });
+		const handle = requireHandle(origin, "opshot: test requires a state");
+		const held = origin.a!;
+		const inner = held.x;
+		const heard = record(origin);
+
+		transact(origin, () => {
+			inner.back = held;
+		});
+
+		transact(origin, () => {
+			delete origin.a;
+		});
+
+		expect(internedIdOf(handle, held)).toBeUndefined();
+		expect(internedIdOf(handle, inner)).toBeUndefined();
+		expect(handle.byId.size).toBe(1);
+
+		held.x.n = 99;
+
+		transact(origin, () => {
+			origin.a = held;
+		});
+
+		expect(origin.a?.x.back).toBe(origin.a);
+
+		const replica = createMutableState<{ a?: { x: { n: number; back?: object } } }>({ a: { x: { n: 1 } } });
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+
+		for (const window of heard) applyOperations(replica, projectCyclicTransport(window), "do");
+
+		expect(replica.a?.x.n).toBe(99);
+		expect(replica.a?.x.back).toBe(replica.a);
+		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
+	});
+
+	it("evicts a cluster whose entry points back at itself", () => {
+		const state = createMutableState<{ cyc?: { n: number; self?: object } }>({ cyc: { n: 1 } });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const node = state.cyc!;
+
+		transact(state, () => {
+			node.self = node;
+		});
+
+		transact(state, () => {
+			delete state.cyc;
+		});
+
+		expect(internedIdOf(handle, node)).toBeUndefined();
+		expect(internedIdOf(handle, state)).toBe(0);
+		expect(handle.byId.size).toBe(1);
 	});
 });
 

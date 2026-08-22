@@ -130,7 +130,7 @@ export function removeInEdge(handle: Handle, node: object, parent: object, key: 
 
 	record.edges.splice(index, 1);
 
-	if (record.edges.length === 0 && rawNode !== occupancyRootOf(handle)) queueDeparture(handle, rawNode);
+	if (rawNode !== occupancyRootOf(handle)) queueDeparture(handle, rawNode);
 }
 
 export function edgeStatusOf(handle: Handle, node: object): { occupied: boolean; unsafe: boolean } {

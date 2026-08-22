@@ -255,13 +255,15 @@ export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, Reado
 
 	if (queued === undefined) return departed;
 
-	const root = rawTargetOf(handle.proxy.root);
+	const ungrounded = new Array<object>();
 
 	for (const node of queued) {
-		if (node === root) continue;
+		if (!isOccupiedMember(handle, node)) ungrounded.push(node);
+	}
 
-		if ((handle.nodes.get(node)?.edges.length ?? 0) > 0) continue;
+	queued.clear();
 
+	for (const node of ungrounded) {
 		const clusterIds = new Array<number>();
 
 		walkSlots(node, (_current, raw) => {
@@ -281,8 +283,6 @@ export function evictDepartedClusters(handle: Handle): ReadonlyMap<object, Reado
 
 		if (clusterIds.length > 0) departed.set(node, clusterIds);
 	}
-
-	queued.clear();
 
 	return departed;
 }
