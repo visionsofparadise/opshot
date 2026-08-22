@@ -163,6 +163,52 @@ describe("substituteStates", () => {
 		expect(result.props.inner).toEqual({ wrapper: state });
 	});
 
+	it("finds a state on a non-writable entry-root edge", () => {
+		const state = createState();
+		const root: Record<string, unknown> = {};
+
+		Object.defineProperty(root, "inner", {
+			value: state,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		expect(substituteStates(root, wrapSource).sources[0]).toBe(state);
+	});
+
+	it("finds a state behind a non-writable root edge that relaxation reaches", () => {
+		const state = createState();
+		const back: Record<string, unknown> = { state };
+		const alias = { back };
+
+		Object.defineProperty(back, "a", {
+			value: alias,
+			enumerable: true,
+			writable: false,
+			configurable: true,
+		});
+
+		const props = substituteStates(back, wrapSource).props as {
+			readonly a: { readonly back: { readonly state: unknown } };
+		};
+
+		expect(props.a).not.toBe(alias);
+		expect(props.a.back.state).toEqual({ wrapper: state });
+	});
+
+	it("leaves a Map entry root unsearched", () => {
+		const state = createState();
+		const bag = new Map<string, unknown>();
+
+		Object.assign(bag, { inner: state });
+
+		const result = substituteStates(bag, wrapSource);
+
+		expect(result.sources).toEqual([]);
+		expect(result.props).toBe(bag);
+	});
+
 	it("does not discover a state under a frozen container in props", () => {
 		const state = createState();
 		const frozen = Object.freeze({ inner: state });

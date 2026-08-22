@@ -1,7 +1,7 @@
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
 import { walkDataEntries, type DataEntry } from "../utils/dataEntries";
-import { admissionLane } from "../valtio/classify";
+import { admissionLane, unfrozenAdmissionLane } from "../valtio/classify";
 
 export interface SubstitutionResult<T> {
 	readonly props: T;
@@ -101,7 +101,7 @@ function visitContainer(container: object, pass: DiscoveryPass, mode: WalkMode):
 	return dependedOnBackEdge;
 }
 
-function relaxVerdicts(pass: DiscoveryPass): void {
+function relaxVerdicts(pass: DiscoveryPass, entryContainer?: object): void {
 	let gained = true;
 
 	while (gained) {
@@ -116,7 +116,8 @@ function relaxVerdicts(pass: DiscoveryPass): void {
 			for (const entry of entries) {
 				if (keys.has(entry.key)) continue;
 
-				if (childRole(entry.value, entry.writable, "nested") !== "descend") continue;
+				if (childRole(entry.value, entry.writable, container === entryContainer ? "entry" : "nested") !== "descend")
+					continue;
 
 				const child = entry.value;
 
@@ -176,7 +177,7 @@ function substituteContainer(
 		const pass = createDiscoveryPass();
 
 		visitContainer(container, pass, "entry");
-		relaxVerdicts(pass);
+		relaxVerdicts(pass, container);
 		cacheNestedVerdicts(pass, container);
 		stateKeys = pass.verdicts.get(container) ?? noStateKeys;
 	}
@@ -236,7 +237,7 @@ export function substituteStates<T extends object>(root: T, wrap: (source: objec
 		visitedSources: new Set<object>(),
 	};
 
-	if (isReactOwnNode(root)) {
+	if (isReactOwnNode(root) || unfrozenAdmissionLane(root) !== "tracked") {
 		return { props: root, sources: substitution.sources };
 	}
 
