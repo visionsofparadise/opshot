@@ -3,6 +3,7 @@ import { peelReadProxy } from "./peelReadProxy";
 import type { DeclarationTrie } from "./declarations";
 import type { NodeRecord } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
+import type { CaptureTables } from "./occupancy";
 import type { EmissionScheduler } from "./settings";
 
 const occupancies = new WeakMap<object, Set<WeakRef<Handle>>>();
@@ -37,6 +38,7 @@ export interface Handle {
 	stamp: object;
 	version: number;
 	replaying: boolean;
+	transactionCapture?: CaptureTables;
 }
 
 export function registerHandle(target: object, handle: Handle): void {

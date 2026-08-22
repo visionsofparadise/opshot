@@ -58,60 +58,120 @@ function internNode(handle: Handle, node: object): number {
 	return id;
 }
 
+const stagedBindIdOf = (capture: CaptureTables, raw: object): number | undefined => {
+	for (let index = capture.binds.length - 1; index >= 0; index--) {
+		const bind = capture.binds[index];
+
+		if (bind?.node === raw) return bind.id;
+	}
+
+	return undefined;
+};
+
+const stagedMintIdOf = (capture: CaptureTables, raw: object): number | undefined => {
+	for (const mint of capture.mints) {
+		if (mint.node === raw) return mint.id;
+	}
+
+	return undefined;
+};
+
+const stagedNodeOf = (capture: CaptureTables, id: number): object | undefined => {
+	for (let index = capture.binds.length - 1; index >= 0; index--) {
+		const bind = capture.binds[index];
+
+		if (bind?.id === id) return bind.node;
+	}
+
+	for (const mint of capture.mints) {
+		if (mint.id === id) return mint.node;
+	}
+
+	return undefined;
+};
+
+const nextStagedIdOf = (handle: Handle, capture: CaptureTables): number => {
+	let next = handle.nextInternId;
+
+	for (const mint of capture.mints) {
+		if (mint.id >= next) next = mint.id + 1;
+	}
+
+	for (const bind of capture.binds) {
+		if (bind.id >= next) next = bind.id + 1;
+	}
+
+	return next;
+};
+
+const namedRawOf = (handle: Handle, id: number, capture?: CaptureTables): object | undefined => {
+	const staged = capture === undefined ? undefined : stagedNodeOf(capture, id);
+
+	return staged ?? handle.byId.get(id);
+};
+
 export function internedIdOf(handle: Handle, node: object, capture?: CaptureTables): number | undefined {
 	const raw = occupancyNodeOf(node);
+	const bound = capture === undefined ? undefined : stagedBindIdOf(capture, raw);
+
+	if (bound !== undefined) return bound;
+
 	const committed = committedIdOf(handle, raw);
 
 	if (committed !== undefined) return committed;
 
 	if (capture === undefined) return undefined;
 
-	for (const mint of capture.mints) {
-		if (mint.node === raw) return mint.id;
-	}
-
-	return undefined;
+	return stagedMintIdOf(capture, raw);
 }
 
 /**
  * Stages the next intern id for `node` in capture-walk order. Undo restoration uses the assign-half `ids` override, not this function.
  *
  * @param handle - State handle.
- * @param capture - Capture tables that hold staged mints until commit.
+ * @param capture - Capture tables that hold staged names until commit.
  * @param node - Node to vend an id for.
  * @returns The committed id, a previously staged id, or the next staged id.
  */
 export function stageVend(handle: Handle, capture: CaptureTables, node: object): number {
 	const raw = occupancyNodeOf(node);
+	const bound = stagedBindIdOf(capture, raw);
+
+	if (bound !== undefined) return bound;
+
 	const committed = committedIdOf(handle, raw);
 
 	if (committed !== undefined) return committed;
 
-	for (const mint of capture.mints) {
-		if (mint.node === raw) return mint.id;
-	}
+	const staged = stagedMintIdOf(capture, raw);
 
-	const id = handle.nextInternId + capture.mints.length;
+	if (staged !== undefined) return staged;
+
+	const id = nextStagedIdOf(handle, capture);
 
 	capture.mints.push({ node: raw, id });
 
 	return id;
 }
 
+const commitName = (handle: Handle, raw: object, id: number): void => {
+	writeId(handle, raw, id);
+
+	if (id >= handle.nextInternId) handle.nextInternId = id + 1;
+};
+
 export function commitVends(handle: Handle, capture: CaptureTables): void {
-	if (capture.mints.length === 0) return;
-
-	for (const { node, id } of capture.mints) writeId(handle, node, id);
-
-	const last = capture.mints[capture.mints.length - 1];
-
-	if (last !== undefined) handle.nextInternId = last.id + 1;
+	for (const { node, id } of capture.mints) commitName(handle, node, id);
 
 	capture.mints.length = 0;
+
+	for (const { node, id } of capture.binds) commitName(handle, node, id);
+
+	capture.binds.length = 0;
 }
 
-export function nodeOfInternedId(handle: Handle, id: number): object | undefined {
-	const raw = handle.byId.get(id);
+export function nodeOfInternedId(handle: Handle, id: number, capture?: CaptureTables): object | undefined {
+	const raw = namedRawOf(handle, id, capture);
 
 	if (raw === undefined) return undefined;
 
@@ -296,6 +356,7 @@ export function bindVendedIds(
 	node: object,
 	carried: object,
 	ids: ReadonlyArray<number>,
+	capture: CaptureTables | undefined,
 	parent?: object,
 	key?: PropertyKey,
 ): void {
@@ -312,7 +373,7 @@ export function bindVendedIds(
 
 			index += 1;
 
-			const held = handle.byId.get(id);
+			const held = namedRawOf(handle, id, capture);
 			const slotParent = walkParent ?? parent;
 			const slotKey: PropertyKey | undefined = walkKey ?? key;
 
@@ -324,9 +385,8 @@ export function bindVendedIds(
 				return false;
 			}
 
-			writeId(handle, raw, id);
-
-			if (id >= handle.nextInternId) handle.nextInternId = id + 1;
+			if (capture === undefined) commitName(handle, raw, id);
+			else capture.binds.push({ node: raw, id });
 
 			return true;
 		},

@@ -10,6 +10,7 @@ import {
 	createAssignMutation,
 	createDeleteMutation,
 	createLinkMutation,
+	type AssignMutation,
 	type LinkMutation,
 	type Mutation,
 	type Operation,
@@ -972,6 +973,58 @@ describe("applyOperations: link halves", () => {
 		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
 		expect(internedIdOf(replicaHandle, replica.box!.odd)).toBeUndefined();
 		expect(originHandle.nextInternId).toBe(minted);
+		expect(replicaHandle.nextInternId).toBe(minted);
+	});
+
+	it("a throw after an override bind leaves the batch's naming rolled back", () => {
+		interface ThrownBatchState {
+			keep?: { k: number };
+			first?: { n: number };
+			second?: { m: number };
+		}
+
+		const build = (): ThrownBatchState => ({ keep: { k: 1 }, first: { n: 1 }, second: { m: 2 } });
+		const origin = createMutableState(build());
+		const heard = record(origin);
+
+		transact(origin, () => {
+			delete origin.first;
+			delete origin.second;
+		});
+
+		const replica = createMutableState(build());
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+		const transported = JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>;
+
+		applyOperations(replica, transported, "do");
+
+		const unresolvable = transported[0];
+		const carrier = transported[1];
+
+		if (unresolvable === undefined || carrier === undefined) {
+			throw new Error("opshot: test expected a two-operation window");
+		}
+
+		expect(carrier.undo.verb).toBe("assign");
+		expect((carrier.undo as AssignMutation).ids).toBeDefined();
+
+		const namedNodes: ReadonlyArray<object> = [replica, replica.keep!];
+		const named = namedNodes.map((node) => internId(replica, node));
+		const bound = replicaHandle.byId.size;
+		const minted = replicaHandle.nextInternId;
+		const tampered: ReadonlyArray<Operation> = [
+			{ do: unresolvable.do, undo: { ...unresolvable.undo, path: ["missing", "first"] } as Mutation },
+			carrier,
+		];
+
+		expect(() => {
+			applyOperations(replica, tampered, "undo");
+		}).toThrow("does not resolve to a supported operation address");
+
+		expect(Object.hasOwn(replica, "first")).toBe(false);
+		expect(Object.hasOwn(replica, "second")).toBe(false);
+		expect(namedNodes.map((node) => internId(replica, node))).toEqual(named);
+		expect(replicaHandle.byId.size).toBe(bound);
 		expect(replicaHandle.nextInternId).toBe(minted);
 	});
 });

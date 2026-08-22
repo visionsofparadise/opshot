@@ -184,7 +184,7 @@ const applyLink = (root: object, operation: LinkMutation, handle: Handle): void 
 
 	if (path.length === 0) throw linkError(path, ref, "does not resolve to a supported operation address");
 
-	const resolved = nodeOfInternedId(handle, ref);
+	const resolved = nodeOfInternedId(handle, ref, handle.transactionCapture);
 
 	if (resolved === undefined) throw linkError(path, ref, "does not resolve");
 
@@ -271,9 +271,9 @@ const applyPlain = (
 
 	if (operation.ids !== undefined) {
 		if (isObjectLike(payload.recorded)) {
-			bindVendedIds(handle, attached, payload.recorded, operation.ids, parent, key);
+			bindVendedIds(handle, attached, payload.recorded, operation.ids, handle.transactionCapture, parent, key);
 		}
-	} else internSubtree(handle, attached);
+	} else internSubtree(handle, attached, undefined, handle.transactionCapture);
 };
 
 const applyMutation = (root: object, operation: Mutation, identity: "restore" | "construct", handle: Handle): void => {

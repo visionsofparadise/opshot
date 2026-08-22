@@ -229,7 +229,7 @@ interface CaptureDiff {
 const captureDiffOf = (handle: Handle, from: object): CaptureDiff => {
 	const to = snapshot(handle.proxy.root);
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
-	const capture = createCaptureTables();
+	const capture = handle.transactionCapture ?? createCaptureTables();
 
 	if (from === to) {
 		syncHandleTables(handle, capture);

@@ -6,7 +6,7 @@ import {
 	emitWrites,
 } from "../emit/emitter";
 import { requireHandle } from "../handle";
-import { OccupancyRefusalError } from "../occupancy";
+import { createCaptureTables, OccupancyRefusalError } from "../occupancy";
 import { closeTransaction, isTransactionOpen, openTransaction } from "./nest";
 import { rollbackTransaction } from "./rollback";
 
@@ -104,6 +104,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		const previousHeld = handle.isFlushHeld;
 
 		handle.isFlushHeld = true;
+		handle.transactionCapture = createCaptureTables();
 
 		openTransaction();
 
@@ -127,6 +128,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 					attachRollbackCause(mutateError, rollbackError);
 				}
 
+				handle.transactionCapture = undefined;
 				handle.isFlushHeld = previousHeld;
 				deliverQuietly([starting]);
 			} else {
@@ -148,6 +150,8 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 			deliverQuietly([starting]);
 
 			throw error;
+		} finally {
+			handle.transactionCapture = undefined;
 		}
 
 		deliverQuietly([starting, transaction]);

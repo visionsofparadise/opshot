@@ -24,6 +24,7 @@ export interface CaptureTables {
 	refusedPaths: Array<OperationPath>;
 	omissions: Set<string>;
 	mints: Array<{ readonly node: object; readonly id: number }>;
+	binds: Array<{ readonly node: object; readonly id: number }>;
 }
 
 export const createCaptureTables = (): CaptureTables => ({
@@ -31,6 +32,7 @@ export const createCaptureTables = (): CaptureTables => ({
 	refusedPaths: [],
 	omissions: new Set(),
 	mints: [],
+	binds: [],
 });
 
 export class OccupancyRefusalError extends Error {
