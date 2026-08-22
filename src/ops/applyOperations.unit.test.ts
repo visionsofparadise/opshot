@@ -1,8 +1,9 @@
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
-import { createMutableState } from "../createMutableState";
+import { createMutableState, type Unmarked } from "../createMutableState";
 import { requireHandle } from "../handle";
 import { identify, isSameIdentity } from "../identity";
+import { ignore, type Ignored } from "../ignore";
 import { internedIdOf, nodeOfInternedId } from "../intern";
 import { applyOperations } from "./applyOperations";
 import {
@@ -925,6 +926,51 @@ describe("applyOperations: link halves", () => {
 		expect(replica.pair!.q).toBe(replica.pair!.p);
 		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
 		expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual(admitted);
+		expect(originHandle.nextInternId).toBe(minted);
+		expect(replicaHandle.nextInternId).toBe(minted);
+	});
+
+	it("transported undo of a cluster holding an ignored slot names only its tracked members", () => {
+		interface IgnoredSlotSource {
+			box?: { a: { n: number }; odd: Ignored<{ o: number }>; b: { n: number } };
+		}
+
+		const build = (): IgnoredSlotSource => ({ box: { a: { n: 1 }, odd: ignore({ o: 1 }), b: { n: 2 } } });
+		const namedNodesOf = (state: Unmarked<IgnoredSlotSource>): ReadonlyArray<object> => [
+			state.box!,
+			state.box!.a,
+			state.box!.b,
+		];
+		const origin = createMutableState(build());
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const admitted = namedNodesOf(origin).map((node) => internId(origin, node));
+		const minted = originHandle.nextInternId;
+		const heard = record(origin);
+
+		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
+
+		transact(origin, () => {
+			delete origin.box;
+		});
+
+		const replica = createMutableState(build());
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+		const transported = JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>;
+
+		applyOperations(replica, transported, "do");
+
+		expect(replica).toEqual(origin);
+		expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
+
+		applyOperations(origin, heard[0] ?? [], "undo");
+		applyOperations(replica, transported, "undo");
+
+		expect(replica).toEqual(origin);
+		expect(origin.box).toEqual({ a: { n: 1 }, odd: { o: 1 }, b: { n: 2 } });
+		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
+		expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual(admitted);
+		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
+		expect(internedIdOf(replicaHandle, replica.box!.odd)).toBeUndefined();
 		expect(originHandle.nextInternId).toBe(minted);
 		expect(replicaHandle.nextInternId).toBe(minted);
 	});

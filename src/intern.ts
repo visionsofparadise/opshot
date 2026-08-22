@@ -223,9 +223,13 @@ const walkUnoccupiedCluster = (
 	});
 };
 
+const isNamedSlot = (handle: Handle, raw: object, evicted?: ReadonlyMap<object, number>): boolean =>
+	handle.nodes.has(raw) || evicted?.has(raw) === true;
+
 const walkSlots = (
 	carried: object,
 	node: object,
+	isTracked: (raw: object) => boolean,
 	visit: (raw: object, parent?: object, key?: string) => boolean,
 ): void => {
 	const visits = new Set<object>();
@@ -237,6 +241,8 @@ const walkSlots = (
 		if (!looping) visits.add(raw);
 
 		if (admissionLane(current) === "untracked") return;
+
+		if (!isTracked(raw)) return;
 
 		if (!visit(raw, parent, key) || looping) return;
 
@@ -295,31 +301,36 @@ export function bindVendedIds(
 ): void {
 	let index = 0;
 
-	walkSlots(carried, node, (raw, walkParent, walkKey) => {
-		const id = ids[index];
+	walkSlots(
+		carried,
+		node,
+		(raw) => isNamedSlot(handle, raw),
+		(raw, walkParent, walkKey) => {
+			const id = ids[index];
 
-		if (id === undefined) return true;
+			if (id === undefined) return true;
 
-		index += 1;
+			index += 1;
 
-		const held = handle.byId.get(id);
-		const slotParent = walkParent ?? parent;
-		const slotKey: PropertyKey | undefined = walkKey ?? key;
+			const held = handle.byId.get(id);
+			const slotParent = walkParent ?? parent;
+			const slotKey: PropertyKey | undefined = walkKey ?? key;
 
-		if (held !== undefined) {
-			if (occupancyNodeOf(held) !== raw && slotParent !== undefined && slotKey !== undefined) {
-				Reflect.set(slotParent, slotKey, liveOfInterned(held));
+			if (held !== undefined) {
+				if (occupancyNodeOf(held) !== raw && slotParent !== undefined && slotKey !== undefined) {
+					Reflect.set(slotParent, slotKey, liveOfInterned(held));
+				}
+
+				return false;
 			}
 
-			return false;
-		}
+			writeId(handle, raw, id);
 
-		writeId(handle, raw, id);
+			if (id >= handle.nextInternId) handle.nextInternId = id + 1;
 
-		if (id >= handle.nextInternId) handle.nextInternId = id + 1;
-
-		return true;
-	});
+			return true;
+		},
+	);
 }
 
 export function rewindAdmission(handle: Handle, node: object): ReadonlyArray<number> {
@@ -369,18 +380,23 @@ export function annotateDepartureUndos(
 		const ids = new Array<number>();
 		const claimsBefore = claimedMembers.size;
 
-		walkSlots(original, original, (raw) => {
-			const retiredId = evicted.get(raw);
-			const id = retiredId ?? committedIdOf(handle, raw);
+		walkSlots(
+			original,
+			original,
+			(raw) => isNamedSlot(handle, raw, evicted),
+			(raw) => {
+				const retiredId = evicted.get(raw);
+				const id = retiredId ?? committedIdOf(handle, raw);
 
-			if (id !== undefined) ids.push(id);
+				if (id !== undefined) ids.push(id);
 
-			if (retiredId === undefined || claimedMembers.has(raw)) return false;
+				if (retiredId === undefined || claimedMembers.has(raw)) return false;
 
-			claimedMembers.add(raw);
+				claimedMembers.add(raw);
 
-			return true;
-		});
+				return true;
+			},
+		);
 
 		(operation as { undo: Operation["undo"] }).undo =
 			claimedMembers.size > claimsBefore
