@@ -1,12 +1,6 @@
-import {
-	captureTransactionWrites,
-	captureWrites,
-	deliverCapturedRanges,
-	emitCapturedWrites,
-	emitWrites,
-} from "../emit/emitter";
+import { captureTransactionWrites, captureWrites, deliverCapturedRanges, emitWrites } from "../emit/emitter";
 import { requireHandle } from "../handle";
-import { createCaptureTables, OccupancyRefusalError } from "../occupancy";
+import { createCaptureTables } from "../occupancy";
 import { closeTransaction, isTransactionOpen, openTransaction } from "./nest";
 import { rollbackTransaction } from "./rollback";
 
@@ -72,7 +66,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		try {
 			emit();
 		} catch (error) {
-			if (error instanceof OccupancyRefusalError || handle.lastSnapshot === baseline) throw error;
+			if (handle.lastSnapshot === baseline) throw error;
 
 			listenerFailures.push(...flattenDeliveryFailures(error));
 		}
@@ -88,18 +82,6 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 
 	try {
 		const starting = captureWrites(handle);
-
-		if (starting.writeError !== undefined) {
-			try {
-				emitCapturedWrites(handle, starting);
-			} catch (error) {
-				if (error instanceof OccupancyRefusalError) throw error;
-
-				listenerFailures.push(...flattenDeliveryFailures(error));
-			}
-
-			return;
-		}
 
 		const previousHeld = handle.isFlushHeld;
 

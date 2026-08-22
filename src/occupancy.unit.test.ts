@@ -6,7 +6,7 @@ import { createCaptureTables, syncHandleTables } from "./occupancy";
 import { unsafeTrack } from "./unsafeTrack";
 
 describe("occupancy re-sync", () => {
-	it("re-syncing an admitted-unsafe node collects no second refusal", () => {
+	it("re-syncing an admitted-unsafe node keeps its intern id and occupancy", () => {
 		const map = new Map<string, number>([["k", 1]]);
 		const state = createMutableState({ box: unsafeTrack(map) });
 		const handle = handleOf(state);
@@ -22,7 +22,6 @@ describe("occupancy re-sync", () => {
 
 		syncHandleTables(handle!, capture);
 
-		expect(capture.refusals).toEqual([]);
 		expect(internedIdOf(handle!, map)).toBe(internId);
 		expect(edgeStatusOf(handle!, map).occupied).toBe(true);
 		expect(state.box).toBeInstanceOf(Map);

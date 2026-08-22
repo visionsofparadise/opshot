@@ -36,8 +36,6 @@ export interface MutableStateOptions extends MutableNodeOptions {
 	 * Group that receives this state's changes.
 	 */
 	readonly group?: Group;
-
-	readonly onError?: (error: unknown) => void;
 }
 
 /**
@@ -215,7 +213,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		throw rejectionError(base, decision.kind);
 	}
 
-	assertSafeDataPaths(base, [], new Set(), strict ? "admission" : "rootsOnly", declarations);
+	assertSafeDataPaths(base, [], new Set(), strict ? "admission" : "rootsOnly", [declarations]);
 
 	const handle: Handle = {
 		proxy: { root: base },
@@ -228,7 +226,6 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		groups: options?.group !== undefined ? getGroupChain(options.group) : undefined,
 		emitOn: options?.emitOn,
 		strict,
-		onError: options?.onError,
 		declarations,
 		nodes: new WeakMap(),
 		byId: new Map(),

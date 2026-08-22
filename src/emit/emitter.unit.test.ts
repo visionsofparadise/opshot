@@ -2,7 +2,6 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { handleOf } from "../handle";
-import { OccupancyRefusalError } from "../occupancy";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -85,7 +84,7 @@ describe("emitter", () => {
 			transact(origin, () => {
 				origin.bag = { fresh: { n: 2 }, map: new Map() };
 			});
-		}).toThrow(OccupancyRefusalError);
+		}).toThrow("Map at /bag/map cannot be tracked");
 
 		transact(origin, () => {
 			origin.node = { n: 1 };
@@ -261,45 +260,11 @@ const tickAssign = (from: number, to: number) => [
 	},
 ];
 
-describe("write-window occupancy refusal", () => {
-	it("a bare write producing one dangerous occupancy throws the refusal out of the flush after sibling ops", async () => {
-		const scheduler = manualScheduler();
-		const state = createMutableState({ box: null as unknown, tick: 0 }, { emitOn: scheduler.emitOn });
-		const heard = new Array<ReadonlyArray<Operation>>();
-
-		subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
-
-		state.box = new Map<string, number>();
-		state.tick = 1;
-
-		await Promise.resolve();
-
-		expect(heard).toEqual([]);
-
-		let refusal: unknown;
-
-		try {
-			scheduler.flushAll();
-		} catch (error) {
-			refusal = error;
-		}
-
-		expect(refusal).toBeInstanceOf(OccupancyRefusalError);
-		expect((refusal as OccupancyRefusalError).message).toContain("Map at /box");
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-	});
-
-	it("a configured onError receives the refusal and nothing throws", async () => {
-		const errors = new Array<unknown>();
+describe("write-window classification", () => {
+	it("a raw-target write of dangerous material is user-owned: no throw, the window emits the tracked sibling, and a replica agrees with the stream", async () => {
 		const state = createMutableState(
-			{ box: null as unknown, tick: 0 },
-			{
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
+			{ x: null as { a: number; bad?: Map<string, number> } | null, tick: 0 },
+			{ strict: true },
 		);
 		const heard = new Array<ReadonlyArray<Operation>>();
 
@@ -307,94 +272,35 @@ describe("write-window occupancy refusal", () => {
 			heard.push([...ops]);
 		});
 
-		state.box = new Map<string, number>();
+		const heldRaw: { a: number; bad?: Map<string, number> } = { a: 1 };
+
+		state.x = heldRaw;
+
+		await Promise.resolve();
+
+		heldRaw.bad = new Map();
 		state.tick = 1;
 
 		await Promise.resolve();
 
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect((errors[0] as Error).message).toContain("Map at /box");
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-	});
+		expect(heard.map((ops) => ops.map((operation) => operation.do.path))).toEqual([[["x"]], [["tick"]]]);
 
-	it("two dangerous occupancies in one window raise one OccupancyRefusalError whose cause is the AggregateError", async () => {
-		const scheduler = manualScheduler();
-		const state = createMutableState(
-			{ left: null as unknown, right: null as unknown, tick: 0 },
-			{ emitOn: scheduler.emitOn },
+		const replica = createMutableState(
+			{ x: null as { a: number; bad?: Map<string, number> } | null, tick: 0 },
+			{ strict: true },
 		);
-		const heard = new Array<ReadonlyArray<Operation>>();
 
-		subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
+		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
 
-		state.left = new Map<string, number>();
-		state.right = new Set<number>();
-		state.tick = 1;
-
-		await Promise.resolve();
-
-		let refusal: unknown;
-
-		try {
-			scheduler.flushAll();
-		} catch (error) {
-			refusal = error;
-		}
-
-		expect(refusal).toBeInstanceOf(OccupancyRefusalError);
-		expect((refusal as OccupancyRefusalError).cause).toBeInstanceOf(AggregateError);
-		expect(((refusal as OccupancyRefusalError).cause as AggregateError).errors).toHaveLength(2);
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
+		expect(replica.tick).toBe(1);
+		expect(replica.x?.a).toBe(1);
+		expect(Object.hasOwn(replica.x as object, "bad")).toBe(false);
 	});
 
-	it("a refused bare write reverts the slot so the next window diffs from the restored state", async () => {
-		const errors = new Array<unknown>();
-		const state = createMutableState(
-			{ box: null as unknown, tick: 0 },
-			{
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const heard = new Array<ReadonlyArray<Operation>>();
-
-		subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
-
-		state.box = new Map<string, number>();
-		state.tick = 1;
-
-		await Promise.resolve();
-
-		expect(errors).toHaveLength(1);
-		expect(state.box).toBeNull();
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-
-		heard.length = 0;
-		state.tick = 2;
-
-		await Promise.resolve();
-
-		expect(errors).toHaveLength(1);
-		expect(heard.map(shapeOps)).toEqual([tickAssign(1, 2)]);
-	});
-
-	it("a refusal at a non-configurable slot emits the rest of the window and reports once", async () => {
-		const scheduler = manualScheduler();
-		const errors = new Array<unknown>();
+	it("a defineProperty occupancy is an untracked edge: the window emits the tracked sibling, nothing raises, and a replica converges with the stream", async () => {
 		const state = createMutableState<{ box: { a: number; meta?: object }; tick: number }>(
 			{ box: { a: 1 }, tick: 0 },
-			{
-				strict: true,
-				emitOn: scheduler.emitOn,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
+			{ strict: true },
 		);
 		const heard = new Array<ReadonlyArray<Operation>>();
 
@@ -407,72 +313,17 @@ describe("write-window occupancy refusal", () => {
 
 		await Promise.resolve();
 
-		expect(() => {
-			scheduler.flushAll();
-		}).not.toThrow();
-
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect((errors[0] as Error).message).toContain("at /box/meta");
 		expect(heard.map((ops) => ops.map((operation) => operation.do.path))).toEqual([[["box", "a"]]]);
 
-		heard.length = 0;
-		state.tick = 1;
-
-		await Promise.resolve();
-
-		expect(() => {
-			scheduler.flushAll();
-		}).not.toThrow();
-
-		expect(errors).toHaveLength(1);
-		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
-	});
-
-	it("a refusal a sealed root cannot release reports once and leaves the next window emitting", async () => {
-		const scheduler = manualScheduler();
-		const errors = new Array<unknown>();
-		const state = createMutableState<{ box: { a: number }; bad?: object }>(
-			{ box: { a: 1 } },
-			{
-				strict: true,
-				emitOn: scheduler.emitOn,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
+		const replica = createMutableState<{ box: { a: number; meta?: object }; tick: number }>(
+			{ box: { a: 1 }, tick: 0 },
+			{ strict: true },
 		);
-		const heard = new Array<ReadonlyArray<Operation>>();
 
-		subscribe(state, (ops) => {
-			heard.push([...ops]);
-		});
+		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
 
-		state.bad = new Map<string, number>();
-		Object.seal(state);
-
-		await Promise.resolve();
-
-		expect(() => {
-			scheduler.flushAll();
-		}).not.toThrow();
-
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect((errors[0] as Error).message).toContain("Map at /bad");
-		expect(heard).toEqual([]);
-		expect(state.bad).toBeInstanceOf(Map);
-
-		state.box.a = 2;
-
-		await Promise.resolve();
-
-		expect(() => {
-			scheduler.flushAll();
-		}).not.toThrow();
-
-		expect(errors).toHaveLength(1);
-		expect(heard.map((ops) => ops.map((operation) => operation.do.path))).toEqual([[["box", "a"]]]);
+		expect(replica.box.a).toBe(2);
+		expect(Object.hasOwn(replica.box, "meta")).toBe(false);
 	});
 });
 

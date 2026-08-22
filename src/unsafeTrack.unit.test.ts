@@ -3,7 +3,6 @@ import { createMutableState } from "./createMutableState";
 import { edgeStatusOf, slotStatusOf } from "./edges";
 import { handleOf } from "./handle";
 import { isSameIdentity } from "./identity";
-import { OccupancyRefusalError } from "./occupancy";
 import { unsafeMarker, unsafeTrack } from "./unsafeTrack";
 
 describe("unsafeTrack occupancy", () => {
@@ -48,7 +47,7 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.b.nested = new Map<string, number>();
 			});
-		}).toThrow(OccupancyRefusalError);
+		}).toThrow("cannot be tracked");
 	});
 
 	it("admits a nested unsafeTrack under every occupancy of a shared node", () => {
@@ -92,7 +91,7 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.b.nested = new Map<string, number>();
 			});
-		}).toThrow(OccupancyRefusalError);
+		}).toThrow("cannot be tracked");
 
 		expect(state.b.nested).toEqual({ n: 1 });
 		expect(state.a.nested).toEqual({ n: 1 });
@@ -129,7 +128,7 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.a.nested = new Map<string, number>();
 			});
-		}).toThrow(OccupancyRefusalError);
+		}).toThrow("cannot be tracked");
 
 		expect(state.a.nested).toEqual({ n: 1 });
 		expect(state.b.nested).toEqual({ n: 1 });
@@ -152,7 +151,7 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.a.x = { y: new Map() };
 			});
-		}).toThrow(OccupancyRefusalError);
+		}).toThrow("cannot be tracked");
 	});
 
 	it("keeps the clean chain of an aliased unsafe parent under a back-pointer cycle", () => {
@@ -176,6 +175,6 @@ describe("unsafeTrack occupancy", () => {
 			transact(state, () => {
 				state.c.k1.m = new Map();
 			});
-		}).toThrow(OccupancyRefusalError);
+		}).toThrow("cannot be tracked");
 	});
 });

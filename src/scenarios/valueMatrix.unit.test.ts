@@ -4,7 +4,7 @@ import { ignore, type Ignored } from "../ignore";
 import { isSameIdentity } from "../identity";
 import { internedIdOf } from "../intern";
 import { isState } from "../isState";
-import { OccupancyRefusalError } from "../occupancy";
+
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
@@ -19,28 +19,6 @@ const record = <T extends object>(state: T): Array<Array<Operation>> => {
 	});
 
 	return heard;
-};
-
-const flushBareWrite = async <T extends object>(
-	initial: T,
-	mutate: (state: T) => void,
-): Promise<{ readonly state: T; readonly error: unknown; readonly heard: Array<Array<Operation>> }> => {
-	let error: unknown;
-	const state = createMutableState(initial, {
-		emitOn: (flush) => {
-			try {
-				flush();
-			} catch (caught) {
-				error = caught;
-			}
-		},
-	}) as T;
-	const heard = record(state);
-
-	mutate(state);
-	await Promise.resolve();
-
-	return { state, error, heard };
 };
 
 const cloneOperations = (ops: ReadonlyArray<Operation>): Array<Operation> =>
@@ -738,13 +716,13 @@ describe("dangerous exotic", () => {
 		expect(state.box).toBeUndefined();
 	});
 
-	it("write", async () => {
-		const { state, error, heard } = await flushBareWrite<{ box?: Map<string, number> }>({}, (live) => {
-			live.box = new Map();
-		});
+	it("write", () => {
+		const state = createMutableState<{ box?: Map<string, number> }>({});
+		const heard = record(state);
 
-		expect(error).toBeInstanceOf(OccupancyRefusalError);
-		expect((error as Error).message).toContain("Map at /box");
+		expect(() => {
+			state.box = new Map();
+		}).toThrow("Map at /box cannot be tracked");
 		expect(heard).toEqual([]);
 		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
@@ -766,13 +744,13 @@ describe("dangerous private", () => {
 		expect(state.box).toBeUndefined();
 	});
 
-	it("write", async () => {
-		const { state, error, heard } = await flushBareWrite<{ box?: PrivateBox }>({}, (live) => {
-			live.box = new PrivateBox();
-		});
+	it("write", () => {
+		const state = createMutableState<{ box?: PrivateBox }>({});
+		const heard = record(state);
 
-		expect(error).toBeInstanceOf(OccupancyRefusalError);
-		expect((error as Error).message).toContain("PrivateBox at /box");
+		expect(() => {
+			state.box = new PrivateBox();
+		}).toThrow("PrivateBox at /box cannot be tracked");
 		expect(heard).toEqual([]);
 		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
@@ -794,13 +772,13 @@ describe("dangerous own function on class", () => {
 		expect(state.box).toBeUndefined();
 	});
 
-	it("write", async () => {
-		const { state, error, heard } = await flushBareWrite<{ box?: ArrowBox }>({}, (live) => {
-			live.box = new ArrowBox();
-		});
+	it("write", () => {
+		const state = createMutableState<{ box?: ArrowBox }>({});
+		const heard = record(state);
 
-		expect(error).toBeInstanceOf(OccupancyRefusalError);
-		expect((error as Error).message).toContain("ArrowBox at /box/bump");
+		expect(() => {
+			state.box = new ArrowBox();
+		}).toThrow("ArrowBox at /box/bump cannot be tracked");
 		expect(heard).toEqual([]);
 		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
@@ -822,16 +800,15 @@ describe("dangerous non-writable object property", () => {
 		expect(state.box).toBeUndefined();
 	});
 
-	it("write", async () => {
-		const { state, error, heard } = await flushBareWrite<{ box?: object }>({}, (live) => {
-			live.box = nonWritableObjectCarrier();
-		});
+	it("write", () => {
+		const state = createMutableState<{ box?: object }>({});
+		const heard = record(state);
 
-		expect(error).toBeInstanceOf(OccupancyRefusalError);
-		expect((error as Error).message).toContain("at /box/outer");
-		expect(heard[0]?.some((operation) => operation.do.path.includes("outer"))).toBeFalsy();
-		expect(state.box).toBeDefined();
-		expect(Object.hasOwn(state.box as object, "outer")).toBe(false);
+		expect(() => {
+			state.box = nonWritableObjectCarrier();
+		}).toThrow("at /box/outer cannot be tracked");
+		expect(heard).toEqual([]);
+		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
 });
 

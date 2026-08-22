@@ -3,10 +3,9 @@ import { descendChains, isIgnoredFrontier, slotStatusOf } from "./edges";
 import { getRegisteredTarget } from "./identity";
 import { commitVends, stageVend } from "./intern";
 import { isPlainArray } from "./ops/cloneValue";
-import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./ops/path";
+import { appendOperationPath, createOperationPath, type OperationPath } from "./ops/path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./ops/predicates";
 import { walkDataEntries } from "./utils/dataEntries";
-import { nonWritablePropertyError, rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision, classifyValue } from "./valtio/classify";
 import type { DeclarationTrie } from "./declarations";
 import type { DirtyIndex, Handle } from "./handle";
@@ -17,30 +16,17 @@ const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? 
 
 const liveOf = (value: object): object => getRegisteredTarget(value) ?? rawTargetOf(value);
 
-export type OccupancyVisit = "omit" | "skip" | "continue";
+export type OccupancyVisit = "skip" | "continue";
 
 export interface CaptureTables {
-	refusals: Array<Error>;
-	refusedPaths: Array<OperationPath>;
-	omissions: Set<string>;
 	mints: Array<{ readonly node: object; readonly id: number }>;
 	binds: Array<{ readonly node: object; readonly id: number }>;
 }
 
 export const createCaptureTables = (): CaptureTables => ({
-	refusals: [],
-	refusedPaths: [],
-	omissions: new Set(),
 	mints: [],
 	binds: [],
 });
-
-export class OccupancyRefusalError extends Error {
-	constructor(refusal: Error) {
-		super(refusal.message, refusal instanceof AggregateError ? { cause: refusal } : undefined);
-		this.name = "OccupancyRefusalError";
-	}
-}
 
 const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
 	typeof key === "number" ? String(key) : key;
@@ -48,33 +34,17 @@ const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
-const pathKeyOf = (path: OperationPath): string => formatOperationPath(path);
-
-const pathAsStrings = (path: OperationPath): Array<string> => path.map((segment) => String(segment));
-
-const collectRefusal = (capture: CaptureTables, error: Error, path: OperationPath, pathKey: string): void => {
-	capture.refusals.push(error);
-	capture.refusedPaths.push(path);
-	capture.omissions.add(pathKey);
-};
-
 export function bindVisitedOccupancy(
 	handle: Handle,
 	path: OperationPath,
 	parent: object,
 	key: string | number,
 	child: unknown,
-	capture: CaptureTables,
-	sameOccupant = false,
 	unsafe = false,
 ): OccupancyVisit {
 	if (path.length === 0) return "continue";
 
 	if (isIgnoredFrontier(handle, parent, key)) return "skip";
-
-	const pathKey = pathKeyOf(path);
-
-	if (capture.omissions.has(pathKey)) return "omit";
 
 	const parentRaw = liveOf(parent);
 	const occupancyKey = occupancyKeyOf(key);
@@ -85,11 +55,9 @@ export function bindVisitedOccupancy(
 
 		if (parentKind === "plain" || parentKind === "plainArray") return "continue";
 
-		if (admitted || sameOccupant) return "continue";
+		if (admitted) return "continue";
 
-		collectRefusal(capture, rejectionError(parentRaw, parentKind, pathAsStrings(path)), path, pathKey);
-
-		return "omit";
+		return "skip";
 	}
 
 	const stored: unknown = Reflect.get(parentRaw, occupancyKey);
@@ -100,15 +68,8 @@ export function bindVisitedOccupancy(
 	const childLive = liveOf(occupantSource);
 	const descriptor = Reflect.getOwnPropertyDescriptor(parentRaw, occupancyKey);
 
-	if (descriptor !== undefined && descriptor.writable !== true && admissionDecision(childLive).lane !== "untracked") {
-		if (admitted) return "skip";
-
-		if (sameOccupant) return "skip";
-
-		collectRefusal(capture, nonWritablePropertyError(childLive, pathAsStrings(path)), path, pathKey);
-
-		return "omit";
-	}
+	if (descriptor !== undefined && descriptor.writable !== true && admissionDecision(childLive).lane !== "untracked")
+		return "skip";
 
 	const decision = admissionDecision(childLive);
 
@@ -117,27 +78,14 @@ export function bindVisitedOccupancy(
 	if (decision.lane === "dangerous") {
 		if (admitted) return "continue";
 
-		if (sameOccupant) return "skip";
-
-		collectRefusal(capture, rejectionError(childLive, decision.kind, pathAsStrings(path)), path, pathKey);
-
-		return "omit";
+		return "skip";
 	}
 
 	if (!admitted && classifyValue(childLive) === "cleanClass") {
 		for (const entry of walkDataEntries(childLive)) {
 			if (typeof entry.value !== "function") continue;
 
-			if (sameOccupant) break;
-
-			collectRefusal(
-				capture,
-				rejectionError(childLive, "cleanClass", pathAsStrings(appendOperationPath(path, entry.key))),
-				path,
-				pathKey,
-			);
-
-			return "omit";
+			return "skip";
 		}
 	}
 
@@ -180,7 +128,7 @@ export function markDirtyPath(
 	edges.add(edge);
 }
 
-const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: CaptureTables): void => {
+const walkLiveOccupancies = (handle: Handle, capture: CaptureTables): void => {
 	const root = handle.proxy.root;
 	const visits = new Set<object>();
 	const rootChains: ReadonlyArray<DeclarationTrie | undefined> =
@@ -208,16 +156,7 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 
 			if (ignored) continue;
 
-			const visit = bindVisitedOccupancy(
-				handle,
-				childPath,
-				node,
-				entry.key,
-				entry.value,
-				capture,
-				sameOccupant,
-				unsafe,
-			);
+			const visit = bindVisitedOccupancy(handle, childPath, node, entry.key, entry.value, unsafe);
 
 			if (visit !== "continue") continue;
 
@@ -231,10 +170,10 @@ const walkLiveOccupancies = (handle: Handle, sameOccupant: boolean, capture: Cap
 export function seedOccupancies(handle: Handle): void {
 	const capture = createCaptureTables();
 
-	walkLiveOccupancies(handle, false, capture);
+	walkLiveOccupancies(handle, capture);
 	commitVends(handle, capture);
 }
 
 export function syncHandleTables(handle: Handle, capture: CaptureTables): void {
-	walkLiveOccupancies(handle, true, capture);
+	walkLiveOccupancies(handle, capture);
 }

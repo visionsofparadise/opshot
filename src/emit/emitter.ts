@@ -1,12 +1,9 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
-import { getRegisteredTarget, isSameIdentity, registerSnapshotCopy } from "../identity";
+import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
 import { annotateDepartureUndos, commitVends, evictDepartedClusters } from "../intern";
-import { OccupancyRefusalError, createCaptureTables, syncHandleTables } from "../occupancy";
+import { createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
-import { createOperationPath, liveAtPath, type OperationPath } from "../ops/path";
-import { isObjectLike } from "../ops/predicates";
-import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery, type PendingDelivery } from "./emitterDeliver";
@@ -15,10 +12,7 @@ import type { DirtyIndex, Handle } from "../handle";
 import type { CaptureTables } from "../occupancy";
 import type { Operation } from "../ops/operation";
 
-export interface CapturedRange {
-	readonly delivery: PendingDelivery | undefined;
-	readonly writeError: Error | undefined;
-}
+export type CapturedRange = PendingDelivery | undefined;
 
 function scheduleFlush(handle: Handle): void {
 	if (handle.isFlushScheduled) return;
@@ -135,90 +129,6 @@ const reconcileUntracked = (snap: object, live: object, seen: WeakSet<object>): 
 	return result ?? snap;
 };
 
-const nodeAtSnapshotPath = (from: object, path: OperationPath): unknown => {
-	let current: unknown = from;
-
-	for (const segment of path) {
-		if (!isObjectLike(current) || !Object.hasOwn(current, segment)) return undefined;
-
-		current = Reflect.get(current, segment);
-	}
-
-	return current;
-};
-
-const restoredOccupantOf = (value: unknown): unknown =>
-	isObjectLike(value) ? (getRegisteredTarget(value) ?? value) : value;
-
-const holdsOccupant = (parent: object, key: string | number, occupant: unknown): boolean => {
-	const parentRaw = targetOf(parent);
-
-	if (!Object.hasOwn(parentRaw, key)) return false;
-
-	const stored: unknown = Reflect.get(parentRaw, key);
-
-	if (Object.is(stored, occupant)) return true;
-
-	return isObjectLike(stored) && isObjectLike(occupant) && isSameIdentity(stored, occupant);
-};
-
-const revertRefusedPath = (handle: Handle, from: object, path: OperationPath): boolean => {
-	const key = path[path.length - 1];
-
-	if (key === undefined) return false;
-
-	const parentPath = createOperationPath(path.slice(0, -1));
-	const liveParent = liveAtPath(handle.proxy.root, parentPath);
-
-	if (!isObjectLike(liveParent)) return true;
-
-	const snapshotParent = nodeAtSnapshotPath(from, parentPath);
-
-	if (
-		isObjectLike(snapshotParent) &&
-		(getRegisteredTarget(snapshotParent) ?? snapshotParent) === targetOf(liveParent) &&
-		Object.hasOwn(snapshotParent, key)
-	) {
-		const restored = restoredOccupantOf(Reflect.get(snapshotParent, key));
-
-		if (holdsOccupant(liveParent, key, restored)) return false;
-
-		Reflect.set(liveParent, key, restored);
-
-		return holdsOccupant(liveParent, key, restored);
-	}
-
-	Reflect.deleteProperty(liveParent, key);
-
-	return !Object.hasOwn(targetOf(liveParent), key);
-};
-
-const revertRefusedPaths = (handle: Handle, from: object, paths: ReadonlyArray<OperationPath>): boolean => {
-	let settled = true;
-
-	for (const path of paths) {
-		let container: OperationPath = path;
-
-		while (container.length > 0 && !revertRefusedPath(handle, from, container)) {
-			container = createOperationPath(container.slice(0, -1));
-		}
-
-		if (container.length === 0) settled = false;
-	}
-
-	return settled;
-};
-
-const occupancyRefusalOf = (refusals: ReadonlyArray<Error>): OccupancyRefusalError => {
-	if (refusals.length === 1) {
-		const only = refusals[0];
-
-		if (only !== undefined) return new OccupancyRefusalError(only);
-	}
-
-	return new OccupancyRefusalError(new AggregateError(refusals, "opshot: dangerous occupancies were refused"));
-};
-
 interface CaptureDiff {
 	readonly to: object;
 	readonly ops: Array<Operation>;
@@ -226,10 +136,9 @@ interface CaptureDiff {
 	readonly capture: CaptureTables;
 }
 
-const captureDiffOf = (handle: Handle, from: object): CaptureDiff => {
+const captureDiffOf = (handle: Handle, from: object, capture: CaptureTables): CaptureDiff => {
 	const to = snapshot(handle.proxy.root);
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
-	const capture = handle.transactionCapture ?? createCaptureTables();
 
 	if (from === to) {
 		syncHandleTables(handle, capture);
@@ -245,53 +154,12 @@ const captureDiffOf = (handle: Handle, from: object): CaptureDiff => {
 	};
 };
 
-interface SettledCapture {
-	readonly diff: CaptureDiff;
-	readonly refusals: ReadonlyArray<Error>;
-}
-
-const revertPassLimit = 64;
-
-const settledCaptureOf = (handle: Handle, from: object, probe: CaptureDiff): SettledCapture => {
-	const refusals = new Array<Error>();
-	let pass = probe;
-
-	for (let attempt = 0; attempt <= revertPassLimit; attempt++) {
-		if (pass.capture.refusals.length === 0) return { diff: pass, refusals };
-
-		refusals.push(...pass.capture.refusals);
-
-		const settled = revertRefusedPaths(handle, from, pass.capture.refusedPaths);
-		const next = captureDiffOf(handle, from);
-
-		if (!settled) return { diff: next, refusals };
-
-		pass = next;
-	}
-
-	return { diff: pass, refusals };
-};
-
-const captureRange = (
-	handle: Handle,
-	meta: unknown,
-	channelId: object | undefined,
-	kind: "write" | "transaction",
-): CapturedRange => {
+const captureRange = (handle: Handle, meta: unknown, channelId: object | undefined): CapturedRange => {
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
-	const probe = captureDiffOf(handle, from);
-
-	if (kind === "transaction" && probe.capture.refusals.length > 0) {
-		rollbackTransaction(handle);
-
-		throw occupancyRefusalOf(probe.capture.refusals);
-	}
-
-	const settled = settledCaptureOf(handle, from, probe);
-	const refusals = settled.refusals;
-	const committed = settled.diff;
+	const capture = handle.transactionCapture ?? createCaptureTables();
+	const committed = captureDiffOf(handle, from, capture);
 	const ops = committed.ops;
 
 	commitVends(handle, committed.capture);
@@ -305,58 +173,33 @@ const captureRange = (
 		for (const operation of ops) stampOperation(handle, operation);
 	}
 
-	return {
-		delivery: ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, committed.dirty) : undefined,
-		writeError: kind === "write" && refusals.length > 0 ? occupancyRefusalOf(refusals) : undefined,
-	};
-};
-
-const deliverCaptured = (captured: CapturedRange): void => {
-	if (captured.delivery !== undefined) enqueueDelivery(captured.delivery);
-
-	drainDeliveries();
+	return ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, committed.dirty) : undefined;
 };
 
 export function deliverCapturedRanges(ranges: ReadonlyArray<CapturedRange>): void {
 	for (const captured of ranges) {
-		if (captured.delivery !== undefined) enqueueDelivery(captured.delivery);
+		if (captured !== undefined) enqueueDelivery(captured);
 	}
 
 	drainDeliveries();
 }
 
-const raiseWriteError = (handle: Handle, error: Error): void => {
-	if (handle.onError !== undefined) handle.onError(error);
-	else throw error;
-};
+const emitRange = (handle: Handle, meta: unknown, channelId: object | undefined): void => {
+	const captured = captureRange(handle, meta, channelId);
 
-const emitRange = (
-	handle: Handle,
-	meta: unknown,
-	channelId: object | undefined,
-	kind: "write" | "transaction",
-): void => {
-	const captured = captureRange(handle, meta, channelId, kind);
+	if (captured !== undefined) enqueueDelivery(captured);
 
-	deliverCaptured(captured);
-
-	if (captured.writeError !== undefined) raiseWriteError(handle, captured.writeError);
+	drainDeliveries();
 };
 
 export function captureWrites(handle: Handle): CapturedRange {
-	return captureRange(handle, undefined, undefined, "write");
+	return captureRange(handle, undefined, undefined);
 }
 
 export function captureTransactionWrites(handle: Handle, meta: unknown, channelId: object | undefined): CapturedRange {
-	return captureRange(handle, meta, channelId, "transaction");
+	return captureRange(handle, meta, channelId);
 }
 
 export function emitWrites(handle: Handle): void {
-	emitRange(handle, undefined, undefined, "write");
-}
-
-export function emitCapturedWrites(handle: Handle, captured: CapturedRange): void {
-	deliverCaptured(captured);
-
-	if (captured.writeError !== undefined) raiseWriteError(handle, captured.writeError);
+	emitRange(handle, undefined, undefined);
 }

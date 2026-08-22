@@ -13,7 +13,7 @@ import { walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
-import { appendOperationPath, createOperationPath, formatOperationPath, liveAtPath, type OperationPath } from "./path";
+import { appendOperationPath, createOperationPath, liveAtPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import type { DeclarationTrie } from "../declarations";
 import type { DirtyIndex, Handle } from "../handle";
@@ -112,14 +112,7 @@ const interiorReachesInternedOccupied = (handle: Handle, node: object, capture?:
 	return visit(node);
 };
 
-const admitEmitPath = (
-	context: DiffContext,
-	path: OperationPath,
-	before: unknown,
-	after: unknown,
-	beforePresent: boolean,
-	residual: ChainSet,
-): OccupancyVisit => {
+const admitEmitPath = (context: DiffContext, path: OperationPath, residual: ChainSet): OccupancyVisit => {
 	if (!writesTables(context) || path.length === 0) return "continue";
 
 	if (isChainsIgnored(residual)) return "skip";
@@ -137,7 +130,6 @@ const admitEmitPath = (
 
 	if (!isObjectLike(liveParent) || lastSegment === undefined) throw new MissingDiffParentError();
 
-	const sameOccupant = beforePresent && sharesStorageIdentity(before, after);
 	const slot = slotStatusOf(context.handle, liveParent, lastSegment);
 	let unsafe = slot.occupied ? slot.unsafe : isChainsUnsafe(residual);
 
@@ -147,23 +139,13 @@ const admitEmitPath = (
 		if (status.occupied) unsafe = status.unsafe;
 	}
 
-	return bindVisitedOccupancy(
-		context.handle,
-		path,
-		liveParent,
-		lastSegment,
-		liveChild,
-		context.capture,
-		sameOccupant,
-		unsafe,
-	);
+	return bindVisitedOccupancy(context.handle, path, liveParent, lastSegment, liveChild, unsafe);
 };
 
 const admitDescendants = (
 	context: DiffContext,
 	path: OperationPath,
 	visits: Set<object> = new Set(),
-	sameOccupant = false,
 	residual: ChainSet,
 	unsafe = false,
 ): void => {
@@ -196,20 +178,11 @@ const admitDescendants = (
 
 		if (ignored) continue;
 
-		const visit = bindVisitedOccupancy(
-			context.handle,
-			childPath,
-			liveNode,
-			entry.key,
-			entry.value,
-			context.capture,
-			sameOccupant,
-			childUnsafe,
-		);
+		const visit = bindVisitedOccupancy(context.handle, childPath, liveNode, entry.key, entry.value, childUnsafe);
 
 		if (visit !== "continue") continue;
 
-		admitDescendants(context, childPath, visits, sameOccupant, childChains, childUnsafe);
+		admitDescendants(context, childPath, visits, childChains, childUnsafe);
 	}
 };
 
@@ -314,42 +287,6 @@ const mintDecomposedChange = (
 	mintDecomposedContents(context, path, after, residual);
 };
 
-const internLiveSkippingOmissions = (context: DiffContext, handle: Handle, node: object, path: OperationPath): void => {
-	if (context.capture.omissions.size === 0) {
-		internSubtree(handle, node, undefined, context.capture);
-
-		return;
-	}
-
-	const omitted = new Set<object>();
-	const visits = new Set<object>();
-
-	const collect = (current: object, currentPath: OperationPath): void => {
-		const raw = occupancyNodeOf(current);
-
-		if (visits.has(raw)) return;
-
-		visits.add(raw);
-
-		for (const entry of walkDataEntries(current)) {
-			if (typeof entry.value !== "object" || entry.value === null) continue;
-
-			const childPath = appendOperationPath(currentPath, segmentFor(current, entry.key));
-
-			if (isOmittedPath(context, childPath)) {
-				omitted.add(occupancyNodeOf(entry.value));
-
-				continue;
-			}
-
-			collect(entry.value, childPath);
-		}
-	};
-
-	collect(node, path);
-	internSubtree(handle, node, (_parent, _key, child) => omitted.has(occupancyNodeOf(child)), context.capture);
-};
-
 const mintAssignment = (
 	context: DiffContext,
 	path: OperationPath,
@@ -358,7 +295,7 @@ const mintAssignment = (
 	beforePresent: boolean,
 	residual: ChainSet,
 ): void => {
-	if (isSkippedPath(context, path, residual)) return;
+	if (isIgnoredPath(context, path, residual)) return;
 
 	const handle = context.handle;
 
@@ -392,14 +329,12 @@ const mintAssignment = (
 			}
 		}
 
-		admitDescendants(context, path, new Set(), false, residual);
-		internLiveSkippingOmissions(context, handle, after, path);
-	} else if (isObjectLike(after)) admitDescendants(context, path, new Set(), false, residual);
+		admitDescendants(context, path, new Set(), residual);
+		internSubtree(handle, after, undefined, context.capture);
+	} else if (isObjectLike(after)) admitDescendants(context, path, new Set(), residual);
 
-	const assigned = withoutOmittedChildren(context, after, path);
-
-	if (beforePresent) commitOperation(context, changePair(path, before, assigned, handle, context.capture));
-	else commitOperation(context, additionPair(path, assigned));
+	if (beforePresent) commitOperation(context, changePair(path, before, after, handle, context.capture));
+	else commitOperation(context, additionPair(path, after));
 };
 
 const markChangedPath = (context: DiffContext, path: OperationPath): void => {
@@ -412,14 +347,14 @@ const markChangedPath = (context: DiffContext, path: OperationPath): void => {
 	markDirtyPath(context.dirty, context.handle, path, liveParent);
 };
 
+const emitsSkippedOccupancy = (value: unknown): boolean => isObjectLike(value) && admissionLane(value) === "untracked";
+
 const pushAddition = (context: DiffContext, path: OperationPath, after: unknown, residual: ChainSet): void => {
-	const visit = admitEmitPath(context, path, undefined, after, false, residual);
+	const visit = admitEmitPath(context, path, residual);
 
-	if (visit === "omit") return;
-
-	if (visit === "skip" && isOmittedPath(context, path)) return;
-
-	if (isIgnoredPath(context, path, residual)) return;
+	if (visit === "skip") {
+		if (isIgnoredPath(context, path, residual) || !emitsSkippedOccupancy(after)) return;
+	} else if (isIgnoredPath(context, path, residual)) return;
 
 	markChangedPath(context, path);
 
@@ -427,7 +362,7 @@ const pushAddition = (context: DiffContext, path: OperationPath, after: unknown,
 };
 
 const pushRemoval = (context: DiffContext, path: OperationPath, before: unknown, residual: ChainSet): void => {
-	if (isSkippedPath(context, path, residual)) return;
+	if (isIgnoredPath(context, path, residual)) return;
 
 	if (writesTables(context)) markChangedPath(context, path);
 
@@ -484,22 +419,6 @@ const exitAncestorPair = (ancestors: Ancestors, before: object, after: object): 
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
 
-const isOmittedPath = (context: DiffContext, path: OperationPath): boolean => {
-	if (context.capture.omissions.size === 0) return false;
-
-	const pathKey = formatOperationPath(path);
-
-	if (context.capture.omissions.has(pathKey)) return true;
-
-	for (const omitted of context.capture.omissions) {
-		if (omitted === "/") return true;
-
-		if (pathKey.startsWith(`${omitted}/`)) return true;
-	}
-
-	return false;
-};
-
 const isIgnoredPath = (context: DiffContext, path: OperationPath, residual: ChainSet): boolean => {
 	if (isChainsIgnored(residual)) return true;
 
@@ -509,49 +428,6 @@ const isIgnoredPath = (context: DiffContext, path: OperationPath, residual: Chai
 	const key = path[path.length - 1];
 
 	return isObjectLike(parent) && key !== undefined && isIgnoredFrontier(context.handle, parent, key);
-};
-
-const isSkippedPath = (context: DiffContext, path: OperationPath, residual: ChainSet): boolean => {
-	if (isOmittedPath(context, path)) return true;
-
-	if (context.handle === undefined || path.length === 0) return false;
-
-	return isIgnoredPath(context, path, residual);
-};
-
-const withoutOmittedChildren = (context: DiffContext, value: unknown, path: OperationPath): unknown => {
-	if (!isObjectLike(value) || context.capture.omissions.size === 0) return value;
-
-	let clone: Record<string, unknown> | Array<unknown> | undefined;
-
-	const written = (): Record<string, unknown> | Array<unknown> => {
-		if (clone !== undefined) return clone;
-
-		clone = isPlainArray(value) ? value.slice() : { ...(value as Record<string, unknown>) };
-
-		return clone;
-	};
-
-	for (const entry of walkDataEntries(value)) {
-		const childPath = appendOperationPath(path, entry.key);
-
-		if (isOmittedPath(context, childPath)) {
-			const next = written();
-
-			if (Array.isArray(next)) Reflect.deleteProperty(next, Number(entry.key));
-			else Reflect.deleteProperty(next, entry.key);
-
-			continue;
-		}
-
-		const stripped = withoutOmittedChildren(context, entry.value, childPath);
-
-		if (stripped === entry.value) continue;
-
-		(written() as Record<string, unknown>)[entry.key] = stripped;
-	}
-
-	return clone ?? value;
 };
 
 const dataEntryValuesOf = (value: object, ignoreArrayIndexes: boolean): Map<string, unknown> => {
@@ -670,16 +546,14 @@ const diffValue = (
 	const replacing =
 		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
 
-	const visit = admitEmitPath(context, path, before, after, isObjectLike(before) || before !== undefined, residual);
+	const visit = admitEmitPath(context, path, residual);
 
-	if (visit === "omit") return;
-
-	if (visit === "skip" || isSkippedPath(context, path, residual)) {
-		if (isOmittedPath(context, path) || Object.is(before, after)) return;
+	if (visit === "skip" || isIgnoredPath(context, path, residual)) {
+		if (Object.is(before, after)) return;
 
 		if (isObjectLike(before) && isObjectLike(after) && sharesStorageIdentity(before, after)) return;
 
-		if (isIgnoredPath(context, path, residual)) return;
+		if (isIgnoredPath(context, path, residual) || !emitsSkippedOccupancy(after)) return;
 
 		markChangedPath(context, path);
 

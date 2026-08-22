@@ -29,7 +29,6 @@ export interface Handle {
 	disarmWatch?: () => void;
 	emitOn?: EmissionScheduler;
 	strict: boolean;
-	onError?: (error: unknown) => void;
 	declarations: DeclarationTrie | undefined;
 	nodes: WeakMap<object, NodeRecord>;
 	byId: Map<number, object>;

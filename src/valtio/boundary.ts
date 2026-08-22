@@ -1,6 +1,5 @@
 import { getUntracked } from "proxy-compare";
 import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
-import { declarationChild, type DeclarationTrie } from "../declarations";
 import { addInEdge, descendChains, isIgnoredFrontier, removeInEdge, seedInEdgesUnder, slotStatusOf } from "../edges";
 import { handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget } from "../identity";
@@ -11,6 +10,7 @@ import { walkDataEntries } from "../utils/dataEntries";
 import { nonWritablePropertyError, rejectionError, snapshotDonationError } from "./boundaryErrors";
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
+import type { DeclarationTrie } from "../declarations";
 
 const { proxyStateMap, proxyCache } = unstable_getInternalStates();
 
@@ -47,58 +47,70 @@ interface AssignmentStatus {
 	readonly originIndex: number;
 }
 
-let assignmentStatus: AssignmentStatus | undefined;
+let assignmentStatuses: Array<AssignmentStatus> | undefined;
 
 const computeOutermostAssignment = (
 	target: object,
 	prop: string | symbol,
 	originIndex: number,
-): AssignmentStatus | undefined => {
+): Array<AssignmentStatus> | undefined => {
 	if (typeof prop !== "string") return undefined;
 
-	const handle = handleOwning(target);
+	const handles = handlesOf(target);
 
-	if (handle === undefined) return undefined;
+	if (handles.length === 0) return undefined;
 
-	const slot = slotStatusOf(handle, target, segmentForProp(target, prop));
+	return handles.map((handle) => {
+		const slot = slotStatusOf(handle, target, segmentForProp(target, prop));
 
-	return {
-		handle,
-		ignored: slot.ignored,
-		unsafe: slot.unsafe,
-		chains: slot.chains,
-		originIndex,
-	};
+		return {
+			handle,
+			ignored: slot.ignored,
+			unsafe: slot.unsafe,
+			chains: slot.chains,
+			originIndex,
+		};
+	});
 };
 
-const statusOfCurrentAssignment = (): AssignmentStatus | undefined => {
-	if (assignmentStatus === undefined) return undefined;
+const statusOfCurrentAssignment = (): Array<AssignmentStatus> | undefined => {
+	if (assignmentStatuses === undefined) return undefined;
 
-	if (setFrameStack.length <= assignmentStatus.originIndex + 1) return assignmentStatus;
+	const originIndex = assignmentStatuses[0]?.originIndex;
 
-	let chains = assignmentStatus.chains;
-	let unsafe = assignmentStatus.unsafe;
-	let ignored = assignmentStatus.ignored;
+	if (originIndex === undefined || setFrameStack.length <= originIndex + 1) return assignmentStatuses;
 
-	for (let index = assignmentStatus.originIndex + 1; index < setFrameStack.length; index++) {
+	for (let index = originIndex + 1; index < setFrameStack.length; index++) {
 		const frame = setFrameStack[index];
 
-		if (frame === undefined || typeof frame.prop !== "string") return assignmentStatus;
-
-		const descended = descendChains(chains, segmentForProp(frame.target, frame.prop));
-
-		ignored = ignored || descended.ignored;
-		unsafe = unsafe || descended.unsafe;
-		chains = descended.chains;
+		if (frame === undefined || typeof frame.prop !== "string") return assignmentStatuses;
 	}
 
-	return {
-		handle: assignmentStatus.handle,
-		chains,
-		unsafe,
-		ignored,
-		originIndex: assignmentStatus.originIndex,
-	};
+	return assignmentStatuses.map((assignment) => {
+		let chains = assignment.chains;
+		let unsafe = assignment.unsafe;
+		let ignored = assignment.ignored;
+
+		for (let index = assignment.originIndex + 1; index < setFrameStack.length; index++) {
+			const frame = setFrameStack[index];
+
+			if (frame === undefined || typeof frame.prop !== "string") return assignment;
+
+			const descended = descendChains(chains, segmentForProp(frame.target, frame.prop));
+
+			ignored = ignored || descended.ignored;
+			unsafe = unsafe || descended.unsafe;
+			chains = descended.chains;
+		}
+
+		return {
+			handle: assignment.handle,
+			chains,
+			unsafe,
+			ignored,
+			originIndex: assignment.originIndex,
+		};
+	});
 };
 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>, unsafe = false): AdmissionLane => {
@@ -131,25 +143,28 @@ const walkDataPaths = (
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode,
-	residual: DeclarationTrie | undefined,
+	chains: ReadonlyArray<DeclarationTrie | undefined>,
 	ignored: boolean,
 	unsafe: boolean,
 ): void => {
-	if (visits.has(value)) return;
+	const node = mode === "admission" ? rawTargetOf(value) : value;
 
-	visits.add(value);
+	if (visits.has(node)) return;
+
+	visits.add(node);
 
 	if (ignored) return;
 
-	for (const entry of walkDataEntries(value)) {
+	for (const entry of walkDataEntries(node)) {
 		const childPath = [...path, entry.key];
-		const childResidual = declarationChild(residual, entry.key);
-		const childIgnored = childResidual?.ignored === true;
-		const childUnsafe = unsafe || childResidual?.unsafe === true;
+		const descended = descendChains(chains, segmentForProp(node, entry.key));
+		const childIgnored = descended.ignored;
+		const childUnsafe = unsafe || descended.unsafe;
+		const childChains = descended.chains;
 		const child: unknown = entry.value;
 
-		if (mode === "admission" && classifyValue(value) === "cleanClass" && !unsafe && typeof child === "function")
-			throw rejectionError(value, "cleanClass", childPath);
+		if (mode === "admission" && classifyValue(node) === "cleanClass" && !unsafe && typeof child === "function")
+			throw rejectionError(node, "cleanClass", childPath);
 
 		if (typeof child !== "object" || child === null) continue;
 
@@ -162,24 +177,30 @@ const walkDataPaths = (
 
 		if (childIgnored) continue;
 
-		if (proxyStateMap.has(child)) continue;
+		let childNode: object = child;
+
+		if (proxyStateMap.has(childNode)) {
+			if (mode !== "admission") continue;
+
+			childNode = rawTargetOf(childNode);
+		}
 
 		if (mode === "admission") {
 			if (childUnsafe) {
-				walkDataPaths(child, childPath, visits, mode, childResidual, childIgnored, childUnsafe);
+				walkDataPaths(childNode, childPath, visits, mode, childChains, childIgnored, childUnsafe);
 
 				continue;
 			}
 
-			if (certifyAdmission(child, childPath, childUnsafe) === "tracked")
-				walkDataPaths(child, childPath, visits, mode, childResidual, childIgnored, childUnsafe);
+			if (certifyAdmission(childNode, childPath, childUnsafe) === "tracked")
+				walkDataPaths(childNode, childPath, visits, mode, childChains, childIgnored, childUnsafe);
 
 			continue;
 		}
 
-		if (admissionLane(child) === "untracked") continue;
+		if (admissionLane(childNode) === "untracked") continue;
 
-		walkDataPaths(child, childPath, visits, mode, childResidual, childIgnored, childUnsafe);
+		walkDataPaths(childNode, childPath, visits, mode, childChains, childIgnored, childUnsafe);
 	}
 };
 
@@ -188,17 +209,55 @@ export const assertSafeDataPaths = (
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode = "admission",
-	declarations?: DeclarationTrie,
+	chains: ReadonlyArray<DeclarationTrie | undefined> = [],
 ): void => {
 	walkDataPaths(
 		value,
 		path,
 		visits,
 		mode,
-		declarations,
-		declarations?.ignored === true,
-		declarations?.unsafe === true,
+		chains,
+		chains.some((residual) => residual?.ignored === true),
+		chains.some((residual) => residual?.unsafe === true),
 	);
+};
+
+const certifyCurrentAssignment = (target: object, prop: string | symbol, resolved: object): void => {
+	if (typeof prop !== "string") return;
+
+	const assignments = statusOfCurrentAssignment();
+
+	if (assignments === undefined) return;
+
+	const path = [prop];
+
+	for (const assignment of assignments) {
+		if (!assignment.handle.strict || assignment.ignored || assignment.unsafe) continue;
+
+		if (typeof resolved === "function") {
+			const parentKind = classifyValue(rawTargetOf(target));
+
+			if (parentKind !== "plain" && parentKind !== "plainArray")
+				throw rejectionError(rawTargetOf(target), parentKind, path);
+
+			continue;
+		}
+
+		const decision = admissionDecision(resolved);
+
+		if (decision.lane === "dangerous") throw rejectionError(resolved, decision.kind, path);
+
+		if (decision.lane === "tracked")
+			walkDataPaths(
+				resolved,
+				path,
+				new Set(),
+				"admission",
+				assignment.chains,
+				assignment.ignored,
+				assignment.unsafe,
+			);
+	}
 };
 
 const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
@@ -292,13 +351,19 @@ class MissingMutationTrapError extends Error {
 }
 
 const canProxyCurrentAssignment = (value: unknown): boolean => {
-	const assignment = statusOfCurrentAssignment();
+	const assignments = statusOfCurrentAssignment();
 
-	if (assignment === undefined) return canProxy(value, currentSetParentOf());
+	if (assignments === undefined) return canProxy(value, currentSetParentOf());
 
-	if (assignment.ignored) return false;
+	const judging = assignments.filter((assignment) => !assignment.ignored);
 
-	return canProxy(value, currentSetParentOf(), assignment.unsafe || !assignment.handle.strict);
+	if (judging.length === 0) return false;
+
+	return canProxy(
+		value,
+		currentSetParentOf(),
+		judging.every((assignment) => assignment.unsafe || !assignment.handle.strict),
+	);
 };
 
 const truncatedOccupantsOf = (
@@ -415,7 +480,7 @@ export function installBoundary(): void {
 					const previous: unknown = typeof prop === "string" ? Reflect.get(target, prop) : undefined;
 					const originIndex = setFrameStack.length;
 
-					assignmentStatus ??= computeOutermostAssignment(target, prop, originIndex);
+					assignmentStatuses ??= computeOutermostAssignment(target, prop, originIndex);
 
 					setFrameStack.push({ target, prop });
 
@@ -424,6 +489,8 @@ export function installBoundary(): void {
 							if (getRegisteredTarget(resolved) !== undefined) throw snapshotDonationError(prop);
 
 							if (refusesWrite(target, prop, resolved)) return false;
+
+							certifyCurrentAssignment(target, prop, resolved);
 
 							const alreadyTracked = proxyStateMap.has(resolved) || proxyCache.has(resolved);
 							const instrumented =
@@ -438,6 +505,8 @@ export function installBoundary(): void {
 
 						if (refusesWrite(target, prop, resolved)) return false;
 
+						if (typeof resolved === "function") certifyCurrentAssignment(target, prop, resolved);
+
 						const result = defaultSet(target, prop, resolved, receiver);
 
 						if (result && !isInitializing()) commitSetInEdges(target, prop, previous, resolved, truncated);
@@ -446,8 +515,11 @@ export function installBoundary(): void {
 					} finally {
 						setFrameStack.pop();
 
-						if (assignmentStatus !== undefined && setFrameStack.length <= assignmentStatus.originIndex)
-							assignmentStatus = undefined;
+						if (
+							assignmentStatuses !== undefined &&
+							setFrameStack.length <= (assignmentStatuses[0]?.originIndex ?? 0)
+						)
+							assignmentStatuses = undefined;
 					}
 				},
 				deleteProperty(target, prop) {

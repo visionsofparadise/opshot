@@ -383,6 +383,35 @@ describe("applyOperations", () => {
 		applyOperations(state, secondOps, "do");
 		expect(state.root.nested.value).toBe(3);
 	});
+
+	it("a programmatic applyOperations op carrying a dangerous value throws from the apply write and the batch rolls back including staged naming", () => {
+		const state = createMutableState({ box: null as unknown, extra: 0 as number | { n: number } });
+		const handle = requireHandle(state, "opshot: applyOperations requires a state");
+		const internedBefore = handle.nextInternId;
+		const namedBefore = handle.byId.size;
+
+		expect(() => {
+			applyOperations(
+				state,
+				[
+					{
+						do: createAssignMutation(["extra"], { n: 1 }),
+						undo: createAssignMutation(["extra"], 0),
+					},
+					{
+						do: createAssignMutation(["box"], new Map()),
+						undo: createAssignMutation(["box"], null),
+					},
+				],
+				"do",
+			);
+		}).toThrow("Map at /box cannot be tracked");
+
+		expect(state.box).toBeNull();
+		expect(state.extra).toBe(0);
+		expect(handle.nextInternId).toBe(internedBefore);
+		expect(handle.byId.size).toBe(namedBefore);
+	});
 });
 
 it("applies undo halves in reverse delivery order for overlapping paths", () => {

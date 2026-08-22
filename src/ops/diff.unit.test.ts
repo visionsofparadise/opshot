@@ -7,7 +7,6 @@ import { handleOf, requireHandle } from "../handle";
 import { isSameIdentity } from "../identity";
 import { ignore } from "../ignore";
 import { internedIdOf } from "../intern";
-import { OccupancyRefusalError } from "../occupancy";
 import { walkDataEntries } from "../utils/dataEntries";
 import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
@@ -1208,113 +1207,33 @@ describe("diffObjects: link batch construction", () => {
 	});
 });
 
-interface ResidueState {
-	shared: { n: number };
-	p: object;
-	fresh?: { m: number };
-	alias?: { m: number };
-}
-
-interface InteriorState {
-	box: { n: number };
-	tick: number;
-}
-
-class ArrowBox {
-	x = 1;
-	bump = (): void => {
-		this.x += 1;
-	};
-}
-
-interface SealedState {
-	shared: { s: number };
-	box?: { keep?: number; bad?: object };
-}
-
-interface NestedRefusalState {
-	box: { bad?: object };
-	tick: number;
-}
-
-describe("diffObjects: occupancy omission", () => {
-	it("a window with one refused occupancy emits sibling keys and nothing at or under the refused path", async () => {
-		const errors = new Array<unknown>();
-		const state = createMutableState(
-			{ danger: null as unknown, sibling: 0, nested: { a: 1 } },
-			{
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
+describe("diffObjects: occupancy classification", () => {
+	it("a container carrying a refused child refuses whole at the statement", () => {
+		const state = createMutableState<{ bag: unknown; list: Array<unknown> }>({
+			bag: { keep: 1 },
+			list: [1, 2, 3],
+		});
 		const heard = record(state);
+		const bag = state.bag;
+		const list = state.list.slice();
 
-		state.danger = new Map<string, number>();
-		state.sibling = 1;
-		state.nested.a = 2;
+		expect(() => {
+			state.bag = { keep: 1, drop: new Map<string, number>() };
+		}).toThrow("Map at /bag/drop cannot be tracked");
+		expect(() => {
+			state.list = [1, new Map<string, number>(), 3];
+		}).toThrow("Map at /list/1 cannot be tracked");
 
-		await Promise.resolve();
-
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect((errors[0] as OccupancyRefusalError).message).toContain("Map at /danger");
-		expect(pathOf(heard[0])).toEqual([["sibling"], ["nested", "a"]]);
+		expect(state.bag).toBe(bag);
+		expect(state.list).toEqual(list);
+		expect(heard).toEqual([]);
 	});
 
-	it("an enclosing container assign strips the refused child from its payload value", async () => {
-		const errors = new Array<unknown>();
-		const state = createMutableState(
-			{ bag: { keep: 1 } as { keep: number; drop?: Map<string, number> }, list: [1, 2, 3] as Array<unknown> },
-			{
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const heard = record(state);
-
-		state.bag = { keep: 1, drop: new Map<string, number>() };
-		state.list = [1, new Map<string, number>(), 3];
-
-		await Promise.resolve();
-
-		expect(errors).toHaveLength(1);
-
-		const bagValue = readValue(
-			heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "bag")?.do ?? {
-				verb: "delete",
-				path: [],
-			},
-		);
-		const listValue = readValue(
-			heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "list")?.do ?? {
-				verb: "delete",
-				path: [],
-			},
-		);
-
-		expect(bagValue).toEqual({ keep: 1 });
-		expect(bagValue).not.toHaveProperty("drop");
-		expect(Array.isArray(listValue)).toBe(true);
-
-		const list = listValue as Array<unknown>;
-
-		expect(list).toHaveLength(3);
-		expect(list[0]).toBe(1);
-		expect(Object.hasOwn(list, 1)).toBe(false);
-		expect(list[2]).toBe(3);
-	});
-
-	it("a refusal under a create-time ignore() prefix omits without minting a change pair", async () => {
-		const errors = new Array<unknown>();
-		const state = createMutableState(
-			{ wrap: ignore({ n: 0 as number, nested: undefined as Map<string, number> | undefined }), tick: 0 },
-			{
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
+	it("an ignored prefix omits without minting a change pair", async () => {
+		const state = createMutableState({
+			wrap: ignore({ n: 0 as number, nested: undefined as Map<string, number> | undefined }),
+			tick: 0,
+		});
 		const heard = record(state);
 
 		state.wrap = { n: 1, nested: new Map<string, number>() };
@@ -1322,205 +1241,8 @@ describe("diffObjects: occupancy omission", () => {
 
 		await Promise.resolve();
 
-		expect(errors).toEqual([]);
 		expect(pathOf(heard[0])).toEqual([["tick"]]);
 		expect(heard[0]?.some((operation) => operation.do.path[0] === "wrap")).toBe(false);
-	});
-
-	it("reverts a refused overwrite so the next window links the alias and a JSON replica converges", async () => {
-		const errors = new Array<unknown>();
-		const origin = createMutableState<ResidueState>(
-			{ shared: { n: 1 }, p: { q: 1 } },
-			{
-				strict: true,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const handle = requireHandle(origin, "opshot: test requires a state");
-		const occupant = origin.p;
-		const heard = record(origin);
-
-		origin.p = new Map<string, number>();
-
-		await Promise.resolve();
-
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect(heard).toEqual([]);
-		expect(origin.p).toBe(occupant);
-		expect(origin.p).toEqual({ q: 1 });
-
-		const replica = createMutableState<ResidueState>({ shared: { n: 1 }, p: { q: 1 } });
-		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
-
-		origin.p = origin.shared;
-
-		await Promise.resolve();
-
-		applyOperations(replica, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
-
-		expect(replica.p).toBe(replica.shared);
-		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
-
-		const fresh = { m: 1 };
-
-		origin.fresh = fresh;
-		origin.alias = fresh;
-
-		await Promise.resolve();
-
-		applyOperations(replica, JSON.parse(JSON.stringify(heard[1] ?? [])) as Array<Operation>, "do");
-
-		expect(replica.alias).toBe(replica.fresh);
-		expect(replica.p).toBe(replica.shared);
-		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
-	});
-
-	it("reverts a refused child out of the container the same window assigned", async () => {
-		const errors = new Array<unknown>();
-		const state = createMutableState<{ bag?: { keep: number; bad?: Map<string, number> } }>(
-			{},
-			{
-				strict: true,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const heard = record(state);
-
-		state.bag = { keep: 1, bad: new Map<string, number>() };
-
-		await Promise.resolve();
-
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect((errors[0] as OccupancyRefusalError).message).toContain("Map at /bag/bad");
-		expect(state.bag).toEqual({ keep: 1 });
-		expect(Object.hasOwn(state.bag as object, "bad")).toBe(false);
-
-		const assigned = heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "bag");
-
-		expect(readValue(assigned?.do ?? { verb: "delete", path: [] })).toEqual({ ...(state.bag as object) });
-	});
-
-	it("emits the interior mutation made under a refused overwrite and a JSON replica converges", async () => {
-		const errors = new Array<unknown>();
-		const origin = createMutableState<InteriorState>(
-			{ box: { n: 1 }, tick: 0 },
-			{
-				strict: true,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const handle = requireHandle(origin, "opshot: test requires a state");
-		const occupant = origin.box;
-		const heard = record(origin);
-		const replica = createMutableState<InteriorState>({ box: { n: 1 }, tick: 0 });
-
-		origin.box.n = 2;
-		origin.box = new Map<string, number>() as unknown as { n: number };
-
-		await Promise.resolve();
-
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect(origin.box).toBe(occupant);
-		expect(origin.box).toEqual({ n: 2 });
-		expect(pathOf(heard[0])).toEqual([["box", "n"]]);
-		expect(handle.lastDirty?.edges.get(rawTargetOf(occupant))?.has("n")).toBe(true);
-
-		origin.tick = 1;
-
-		await Promise.resolve();
-
-		expect(pathOf(heard[1])).toEqual([["tick"]]);
-
-		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
-
-		expect(replica.box).toEqual({ n: 2 });
-		expect({ ...snapshot(replica) }).toEqual({ ...snapshot(origin) });
-	});
-
-	it("refuses the container whose refused child cannot be stripped and a JSON replica converges", async () => {
-		const errors = new Array<unknown>();
-		const origin = createMutableState<SealedState>(
-			{ shared: { s: 1 } },
-			{
-				strict: true,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const handle = requireHandle(origin, "opshot: test requires a state");
-		const heard = record(origin);
-		const replica = createMutableState<SealedState>({ shared: { s: 1 } });
-		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
-
-		origin.box = Object.seal({ keep: 1, bad: new ArrowBox() });
-
-		await Promise.resolve();
-
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
-		expect((errors[0] as OccupancyRefusalError).message).toContain("ArrowBox at /box/bad/bump");
-		expect(Object.hasOwn(origin, "box")).toBe(false);
-		expect(heard).toEqual([]);
-
-		origin.box = { bad: origin.shared };
-
-		await Promise.resolve();
-
-		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
-
-		expect(replica.box?.bad).toBe(replica.shared);
-		expect({ ...snapshot(replica) }).toEqual({ ...snapshot(origin) });
-		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
-	});
-
-	it("reverts a refusal revealed by an earlier revert and raises both, converging a JSON replica", async () => {
-		const errors = new Array<unknown>();
-		const origin = createMutableState<NestedRefusalState>(
-			{ box: {}, tick: 0 },
-			{
-				strict: true,
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
-		const heard = record(origin);
-		const replica = createMutableState<NestedRefusalState>({ box: {}, tick: 0 });
-
-		origin.box.bad = new Map<string, number>();
-		origin.box = new Map<string, number>() as unknown as { bad?: object };
-		origin.tick = 1;
-
-		await Promise.resolve();
-
-		const refusal = errors[0] as OccupancyRefusalError;
-
-		expect(Object.hasOwn(origin.box, "bad")).toBe(false);
-		expect(origin.box).toEqual({});
-		expect(pathOf(heard[0])).toEqual([["tick"]]);
-		expect(errors).toHaveLength(1);
-		expect(refusal).toBeInstanceOf(OccupancyRefusalError);
-		expect(refusal.message).toBe("opshot: dangerous occupancies were refused");
-		expect(refusal.cause).toBeInstanceOf(AggregateError);
-
-		const causes = ((refusal.cause as AggregateError).errors as Array<Error>).map(
-			(cause) => cause.message.split("\n")[0],
-		);
-
-		expect(causes).toEqual([
-			"opshot: Map at /box cannot be tracked (its state lives in internal slots). Options:",
-			"opshot: Map at /box/bad cannot be tracked (its state lives in internal slots). Options:",
-		]);
-
-		for (const ops of heard) applyOperations(replica, JSON.parse(JSON.stringify(ops)) as Array<Operation>, "do");
-
-		expect({ ...snapshot(replica) }).toEqual({ ...snapshot(origin) });
 	});
 });
 
@@ -1892,29 +1614,22 @@ describe("diffObjects: intern identity", () => {
 		);
 	});
 
-	it("replays a window that omits a refused child and aliases a new node with matching intern numbering", async () => {
-		const errors = new Array<unknown>();
-		const origin = createMutableState(
-			{
-				bag: { keep: 1 } as { keep: number; drop?: Map<string, number> },
-				extra: undefined as { n: number } | undefined,
-				alias: undefined as { n: number } | undefined,
-			},
-			{
-				onError: (error) => {
-					errors.push(error);
-				},
-			},
-		);
+	it("a refused container write never lands, so a later alias window matches intern numbering", async () => {
+		const origin = createMutableState({
+			bag: { keep: 1 } as { keep: number; drop?: Map<string, number> },
+			extra: undefined as { n: number } | undefined,
+			alias: undefined as { n: number } | undefined,
+		});
 		const heard = record(origin);
 
-		origin.bag = { keep: 1, drop: new Map<string, number>() };
+		expect(() => {
+			origin.bag = { keep: 1, drop: new Map<string, number>() };
+		}).toThrow("Map at /bag/drop cannot be tracked");
+
 		origin.extra = { n: 1 };
 		origin.alias = origin.extra;
 
 		await Promise.resolve();
-
-		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
 
 		const replica = createMutableState({
 			bag: { keep: 1 } as { keep: number; drop?: Map<string, number> },

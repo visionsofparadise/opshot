@@ -8,6 +8,7 @@ import { ignore } from "../ignore";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
+import { TrackedMap } from "../tracked/trackedMap";
 import { transact } from "../transact/transact";
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
@@ -267,13 +268,18 @@ describe("boundary: dangerous", () => {
 			x = 1;
 		}
 
-		const state = createMutableState<{ point: Point & { fn?: () => number } }>({ point: new Point() });
+		const state = createMutableState<{ point: Point & { fn?: () => number }; box: { fn?: () => number } }>({
+			point: new Point(),
+			box: {},
+		});
 
 		expect(() => {
-			transact(state, () => {
-				state.point.fn = () => 1;
-			});
-		}).toThrow("opshot: Point at /point/fn cannot be tracked");
+			state.point.fn = () => 1;
+		}).toThrow("opshot: Point at /fn cannot be tracked");
+		expect(Object.hasOwn(state.point, "fn")).toBe(false);
+
+		state.box.fn = () => 1;
+		expect(typeof state.box.fn).toBe("function");
 	});
 });
 
@@ -406,16 +412,15 @@ describe("boundary: strict false", () => {
 		expect(strict.box).toBe(null);
 	});
 
-	it("walks past a non-writable and a frozen child and skips an already-tracked node", () => {
+	it("admits a non-writable and a frozen child under non-strict, and a strict attach of a non-strict node carrying a non-writable interior throws", () => {
 		const frozen = Object.freeze({ n: 1 });
 		const locked = holderWithNonWritable({ n: 1 });
 
 		expect(() => createMutableState({ locked, frozen }, { strict: false })).not.toThrow();
 
 		const tracked = createMutableState({ inner: holderWithNonWritable({ n: 1 }) }, { strict: false });
-		const nested = createMutableState({ child: tracked });
 
-		expect(nested.child).toBe(tracked);
+		expect(() => createMutableState({ child: tracked })).toThrow("cannot be tracked");
 	});
 });
 
@@ -561,5 +566,97 @@ describe("boundary: in-edges", () => {
 		});
 
 		expect(edgeStatusOf(handle, occupant).occupied).toBe(false);
+	});
+});
+
+class ArrowBox {
+	x = 1;
+	bump = (): void => {
+		this.x += 1;
+	};
+}
+
+describe("boundary: trap admission", () => {
+	it("a strict plain dangerous write throws at the statement, the slot is unchanged, nothing emits, and the next window emits normally", async () => {
+		const state = createMutableState({ x: null as unknown, tick: 0 });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			state.x = new Map();
+		}).toThrow("Map at /x cannot be tracked");
+		expect(state.x).toBeNull();
+
+		await Promise.resolve();
+
+		expect(emissions).toHaveLength(0);
+
+		state.tick = 1;
+
+		await Promise.resolve();
+
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
+			[{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } }],
+		]);
+	});
+
+	it("a strict assignment of a container carrying a dangerous interior throws naming the relative cause and nothing lands", () => {
+		const state = createMutableState<{ box: unknown }>({ box: null });
+
+		expect(() => {
+			state.box = { keep: 1, bad: new Map() };
+		}).toThrow("Map at /box/bad cannot be tracked");
+		expect(state.box).toBeNull();
+	});
+
+	it("a cleanClass own-function interior throws the same way", () => {
+		const state = createMutableState<{ box: unknown }>({ box: null });
+
+		expect(() => {
+			state.box = new ArrowBox();
+		}).toThrow("ArrowBox at /box/bump cannot be tracked");
+		expect(state.box).toBeNull();
+	});
+
+	it("strictest-wins: a dangerous write through a non-strict handle throws when a strict handle also holds the node", () => {
+		const strictState = createMutableState(
+			{ shared: null as { n: number; bad?: Map<string, number> } | null, tick: 0 },
+			{ strict: true },
+		);
+		const looseState = createMutableState(
+			{ shared: null as { n: number; bad?: Map<string, number> } | null, tick: 0 },
+			{ strict: false },
+		);
+
+		strictState.shared = { n: 1 };
+		looseState.shared = strictState.shared;
+
+		const shared = looseState.shared;
+
+		if (shared === null) throw new Error("expected a shared node");
+
+		expect(() => {
+			shared.bad = new Map();
+		}).toThrow("Map at /bad cannot be tracked");
+		expect(Object.hasOwn(strictState.shared as object, "bad")).toBe(false);
+		expect(Object.hasOwn(looseState.shared as object, "bad")).toBe(false);
+	});
+
+	it("a cross-state attach of a non-strict-admitted node carrying dangerous interior into a strict state throws", () => {
+		const loose = createMutableState({ node: { keep: 1, bad: new Map<string, number>() } }, { strict: false });
+		const strict = createMutableState<{ box: unknown }>({ box: null });
+
+		expect(() => {
+			strict.box = loose.node;
+		}).toThrow("Map at /box/bad cannot be tracked");
+		expect(strict.box).toBeNull();
+	});
+
+	it("TrackedMap.set of a dangerous value under strict throws at the statement", () => {
+		const state = createMutableState({ lookup: new TrackedMap<string, unknown>() });
+
+		expect(() => {
+			state.lookup.set("bad", new Map());
+		}).toThrow("cannot be tracked");
+		expect(state.lookup.has("bad")).toBe(false);
 	});
 });
