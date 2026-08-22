@@ -165,7 +165,7 @@ describe("transact", () => {
 
 		expect(mutated).toBe(false);
 		expect(state.tick).toBe(1);
-		expect(state.box).toBeInstanceOf(Map);
+		expect(state.box).toBeNull();
 		expect(heard.map((ops) => ops.map((operation) => operation.do.path))).toEqual([[["tick"]]]);
 	});
 

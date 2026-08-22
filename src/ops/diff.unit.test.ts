@@ -1208,6 +1208,13 @@ describe("diffObjects: link batch construction", () => {
 	});
 });
 
+interface ResidueState {
+	shared: { n: number };
+	p: object;
+	fresh?: { m: number };
+	alias?: { m: number };
+}
+
 describe("diffObjects: occupancy omission", () => {
 	it("a window with one refused occupancy emits sibling keys and nothing at or under the refused path", async () => {
 		const errors = new Array<unknown>();
@@ -1296,6 +1303,83 @@ describe("diffObjects: occupancy omission", () => {
 		expect(errors).toEqual([]);
 		expect(pathOf(heard[0])).toEqual([["tick"]]);
 		expect(heard[0]?.some((operation) => operation.do.path[0] === "wrap")).toBe(false);
+	});
+
+	it("reverts a refused overwrite so the next window links the alias and a JSON replica converges", async () => {
+		const errors = new Array<unknown>();
+		const origin = createMutableState<ResidueState>(
+			{ shared: { n: 1 }, p: { q: 1 } },
+			{
+				strict: true,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const handle = requireHandle(origin, "opshot: test requires a state");
+		const occupant = origin.p;
+		const heard = record(origin);
+
+		origin.p = new Map<string, number>();
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect(heard).toEqual([]);
+		expect(origin.p).toBe(occupant);
+		expect(origin.p).toEqual({ q: 1 });
+
+		const replica = createMutableState<ResidueState>({ shared: { n: 1 }, p: { q: 1 } });
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+
+		origin.p = origin.shared;
+
+		await Promise.resolve();
+
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+
+		expect(replica.p).toBe(replica.shared);
+		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
+
+		const fresh = { m: 1 };
+
+		origin.fresh = fresh;
+		origin.alias = fresh;
+
+		await Promise.resolve();
+
+		applyOperations(replica, JSON.parse(JSON.stringify(heard[1] ?? [])) as Array<Operation>, "do");
+
+		expect(replica.alias).toBe(replica.fresh);
+		expect(replica.p).toBe(replica.shared);
+		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
+	});
+
+	it("reverts a refused child out of the container the same window assigned", async () => {
+		const errors = new Array<unknown>();
+		const state = createMutableState<{ bag?: { keep: number; bad?: Map<string, number> } }>(
+			{},
+			{
+				strict: true,
+				onError: (error) => {
+					errors.push(error);
+				},
+			},
+		);
+		const heard = record(state);
+
+		state.bag = { keep: 1, bad: new Map<string, number>() };
+
+		await Promise.resolve();
+
+		expect(errors[0]).toBeInstanceOf(OccupancyRefusalError);
+		expect((errors[0] as OccupancyRefusalError).message).toContain("Map at /bag/bad");
+		expect(state.bag).toEqual({ keep: 1 });
+		expect(Object.hasOwn(state.bag as object, "bad")).toBe(false);
+
+		const assigned = heard[0]?.find((operation) => operation.do.path.length === 1 && operation.do.path[0] === "bag");
+
+		expect(readValue(assigned?.do ?? { verb: "delete", path: [] })).toEqual({ ...(state.bag as object) });
 	});
 });
 

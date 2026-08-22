@@ -13,7 +13,7 @@ import { walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { isPlainArray, isPlainObject } from "./cloneValue";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
-import { appendOperationPath, createOperationPath, formatOperationPath, type OperationPath } from "./path";
+import { appendOperationPath, createOperationPath, formatOperationPath, liveAtPath, type OperationPath } from "./path";
 import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import type { DeclarationTrie } from "../declarations";
 import type { DirtyIndex, Handle } from "../handle";
@@ -81,18 +81,6 @@ const chainsAtRoot = (declarations: DeclarationTrie | undefined): ChainSet =>
 
 const segmentFor = (parent: object, key: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
-
-const liveAtPath = (root: object, path: OperationPath): unknown => {
-	let current: unknown = root;
-
-	for (const segment of path) {
-		if (!isObjectLike(current)) return undefined;
-
-		current = Reflect.get(current, segment);
-	}
-
-	return current;
-};
 
 const writesTables = (context: DiffContext): context is DiffContext & { handle: Handle; dirty: DirtyIndex } =>
 	context.handle !== undefined && context.dirty !== undefined;

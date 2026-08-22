@@ -746,7 +746,7 @@ describe("dangerous exotic", () => {
 		expect(error).toBeInstanceOf(OccupancyRefusalError);
 		expect((error as Error).message).toContain("Map at /box");
 		expect(heard).toEqual([]);
-		expect(state.box).toBeInstanceOf(Map);
+		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
 });
 
@@ -774,7 +774,7 @@ describe("dangerous private", () => {
 		expect(error).toBeInstanceOf(OccupancyRefusalError);
 		expect((error as Error).message).toContain("PrivateBox at /box");
 		expect(heard).toEqual([]);
-		expect(state.box).toBeInstanceOf(PrivateBox);
+		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
 });
 
@@ -802,7 +802,7 @@ describe("dangerous own function on class", () => {
 		expect(error).toBeInstanceOf(OccupancyRefusalError);
 		expect((error as Error).message).toContain("ArrowBox at /box/bump");
 		expect(heard).toEqual([]);
-		expect(state.box).toBeInstanceOf(ArrowBox);
+		expect(Object.hasOwn(state, "box")).toBe(false);
 	});
 });
 
@@ -831,7 +831,7 @@ describe("dangerous non-writable object property", () => {
 		expect((error as Error).message).toContain("at /box/outer");
 		expect(heard[0]?.some((operation) => operation.do.path.includes("outer"))).toBeFalsy();
 		expect(state.box).toBeDefined();
-		expect(Object.getOwnPropertyDescriptor(state.box as object, "outer")?.writable).toBe(false);
+		expect(Object.hasOwn(state.box as object, "outer")).toBe(false);
 	});
 });
 

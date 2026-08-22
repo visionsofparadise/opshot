@@ -21,12 +21,14 @@ export type OccupancyVisit = "omit" | "skip" | "continue";
 
 export interface CaptureTables {
 	refusals: Array<Error>;
+	refusedPaths: Array<OperationPath>;
 	omissions: Set<string>;
 	mints: Array<{ readonly node: object; readonly id: number }>;
 }
 
 export const createCaptureTables = (): CaptureTables => ({
 	refusals: [],
+	refusedPaths: [],
 	omissions: new Set(),
 	mints: [],
 });
@@ -48,8 +50,9 @@ const pathKeyOf = (path: OperationPath): string => formatOperationPath(path);
 
 const pathAsStrings = (path: OperationPath): Array<string> => path.map((segment) => String(segment));
 
-const collectRefusal = (capture: CaptureTables, error: Error, pathKey: string): void => {
+const collectRefusal = (capture: CaptureTables, error: Error, path: OperationPath, pathKey: string): void => {
 	capture.refusals.push(error);
+	capture.refusedPaths.push(path);
 	capture.omissions.add(pathKey);
 };
 
@@ -82,7 +85,7 @@ export function bindVisitedOccupancy(
 
 		if (admitted || sameOccupant) return "continue";
 
-		collectRefusal(capture, rejectionError(parentRaw, parentKind, pathAsStrings(path)), pathKey);
+		collectRefusal(capture, rejectionError(parentRaw, parentKind, pathAsStrings(path)), path, pathKey);
 
 		return "omit";
 	}
@@ -100,7 +103,7 @@ export function bindVisitedOccupancy(
 
 		if (sameOccupant) return "skip";
 
-		collectRefusal(capture, nonWritablePropertyError(childLive, pathAsStrings(path)), pathKey);
+		collectRefusal(capture, nonWritablePropertyError(childLive, pathAsStrings(path)), path, pathKey);
 
 		return "omit";
 	}
@@ -114,7 +117,7 @@ export function bindVisitedOccupancy(
 
 		if (sameOccupant) return "skip";
 
-		collectRefusal(capture, rejectionError(childLive, decision.kind, pathAsStrings(path)), pathKey);
+		collectRefusal(capture, rejectionError(childLive, decision.kind, pathAsStrings(path)), path, pathKey);
 
 		return "omit";
 	}
@@ -128,6 +131,7 @@ export function bindVisitedOccupancy(
 			collectRefusal(
 				capture,
 				rejectionError(childLive, "cleanClass", pathAsStrings(appendOperationPath(path, entry.key))),
+				path,
 				pathKey,
 			);
 

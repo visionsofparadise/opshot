@@ -4,6 +4,8 @@ import { annotateDepartureUndos, commitVends, evictDepartedClusters } from "../i
 import { OccupancyRefusalError, createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
+import { liveAtPath, type OperationPath } from "../ops/path";
+import { isObjectLike } from "../ops/predicates";
 import { rollbackTransaction } from "../transact/rollback";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
@@ -131,6 +133,50 @@ const reconcileUntracked = (snap: object, live: object, seen: WeakSet<object>): 
 	return result ?? snap;
 };
 
+const nodeAtSnapshotPath = (from: object, path: OperationPath): unknown => {
+	let current: unknown = from;
+
+	for (const segment of path) {
+		if (!isObjectLike(current) || !Object.hasOwn(current, segment)) return undefined;
+
+		current = Reflect.get(current, segment);
+	}
+
+	return current;
+};
+
+const restoredOccupantOf = (value: unknown): unknown =>
+	isObjectLike(value) ? (getRegisteredTarget(value) ?? value) : value;
+
+const revertRefusedPath = (handle: Handle, from: object, path: OperationPath): void => {
+	const key = path[path.length - 1];
+
+	if (key === undefined) return;
+
+	const parentPath = path.slice(0, -1);
+	const liveParent = liveAtPath(handle.proxy.root, parentPath);
+
+	if (!isObjectLike(liveParent)) return;
+
+	const snapshotParent = nodeAtSnapshotPath(from, parentPath);
+
+	if (
+		isObjectLike(snapshotParent) &&
+		(getRegisteredTarget(snapshotParent) ?? snapshotParent) === targetOf(liveParent) &&
+		Object.hasOwn(snapshotParent, key)
+	) {
+		Reflect.set(liveParent, key, restoredOccupantOf(Reflect.get(snapshotParent, key)));
+
+		return;
+	}
+
+	Reflect.deleteProperty(liveParent, key);
+};
+
+const revertRefusedPaths = (handle: Handle, from: object, paths: ReadonlyArray<OperationPath>): void => {
+	for (const path of paths) revertRefusedPath(handle, from, path);
+};
+
 const occupancyRefusalOf = (refusals: ReadonlyArray<Error>): OccupancyRefusalError => {
 	if (refusals.length === 1) {
 		const only = refusals[0];
@@ -170,8 +216,10 @@ const captureRange = (
 		throw occupancyRefusalOf(refusals);
 	}
 
+	if (refusals.length > 0) revertRefusedPaths(handle, from, capture.refusedPaths);
+
 	commitVends(handle, capture);
-	handle.lastSnapshot = to;
+	handle.lastSnapshot = refusals.length > 0 ? snapshot(handle.proxy.root) : to;
 
 	const evicted = evictDepartedClusters(handle);
 

@@ -349,7 +349,7 @@ describe("write-window occupancy refusal", () => {
 		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
 	});
 
-	it("a refused bare write commits the overlay so the next window diffs from the post-refusal snapshot", async () => {
+	it("a refused bare write reverts the slot so the next window diffs from the restored state", async () => {
 		const errors = new Array<unknown>();
 		const state = createMutableState(
 			{ box: null as unknown, tick: 0 },
@@ -371,6 +371,7 @@ describe("write-window occupancy refusal", () => {
 		await Promise.resolve();
 
 		expect(errors).toHaveLength(1);
+		expect(state.box).toBeNull();
 		expect(heard.map(shapeOps)).toEqual([tickAssign(0, 1)]);
 
 		heard.length = 0;
