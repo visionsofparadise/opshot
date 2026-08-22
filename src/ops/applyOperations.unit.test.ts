@@ -6,6 +6,7 @@ import { identify, isSameIdentity } from "../identity";
 import { ignore, type Ignored } from "../ignore";
 import { internedIdOf, nodeOfInternedId } from "../intern";
 import { applyOperations } from "./applyOperations";
+import type { ApplyDirection } from "./applyMutations";
 import {
 	createAssignMutation,
 	createDeleteMutation,
@@ -47,6 +48,27 @@ describe("applyOperations", () => {
 		expect(() => applyOperations(state, [{ do: half } as unknown as Operation], "do")).toThrow(
 			"opshot: applyOperations applies well-formed { do, undo } pairs",
 		);
+	});
+
+	it("rejects a direction that is neither do nor undo", () => {
+		const state = createMutableState({ count: 0 });
+		const heard = record(state);
+
+		transact(state, () => {
+			state.count = 1;
+		});
+
+		const ops = heard[0] ?? [];
+		const delivered = heard.length;
+
+		expect(() => applyOperations(state, ops, {} as unknown as ApplyDirection)).toThrow(
+			'opshot: applyOperations applies a direction of "do" or "undo"',
+		);
+		expect(() => applyOperations(state, ops, "redo" as unknown as ApplyDirection)).toThrow(
+			'opshot: applyOperations applies a direction of "do" or "undo"',
+		);
+		expect(state.count).toBe(1);
+		expect(heard.length).toBe(delivered);
 	});
 
 	it("restores removed targets with identity, exact content, and DAG aliases", () => {

@@ -96,6 +96,12 @@ export function runOperations(
 ): void {
 	for (const operation of operations) assertApplicable(operation);
 
+	const appliedDirection: string = direction;
+
+	if (appliedDirection !== "do" && appliedDirection !== "undo") {
+		throw new Error('opshot: applyOperations applies a direction of "do" or "undo"');
+	}
+
 	if (isTransactionOpen()) {
 		throw new Error(
 			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
