@@ -3,6 +3,7 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { edgeStatusOf } from "../edges";
+import { applyOperations } from "../ops/applyOperations";
 import { handleOf } from "../handle";
 import { ignore } from "../ignore";
 import { type Operation } from "../ops/operation";
@@ -802,6 +803,68 @@ describe("boundary: trap admission across states", () => {
 
 		expect(landed).toHaveLength(1);
 		expect(Object.hasOwn(state.sink, "gate")).toBe(false);
+	});
+
+	it("a function assigned through a prototype accessor is left to the setter, which is judged where it stores", () => {
+		class Gate {
+			kept: unknown = null;
+
+			set gate(value: unknown) {
+				this.kept = value;
+			}
+		}
+
+		const admitting = createMutableState({ holder: new Gate() }, { strict: true });
+
+		expect(() => {
+			admitting.holder.gate = () => 1;
+		}).toThrow("Gate at /kept cannot be tracked");
+		expect(Object.hasOwn(admitting.holder, "gate")).toBe(false);
+
+		class PlainStore {
+			store: Record<string, unknown> = {};
+
+			set gate(value: unknown) {
+				this.store.fn = value;
+			}
+		}
+
+		const state = createMutableState({ holder: new PlainStore() }, { strict: true });
+
+		state.holder.gate = () => 1;
+
+		expect(typeof state.holder.store.fn).toBe("function");
+	});
+
+	it("a non-enumerable dangerous property inside an assigned subtree is a ride-along the assignment admits", async () => {
+		const state = createMutableState<{ slot: { keep: number } | null; tick: number }>(
+			{ slot: null, tick: 0 },
+			{ strict: true },
+		);
+		const emissions = recordEmissions(state);
+		const payload = { keep: 1 };
+
+		Object.defineProperty(payload, "hidden", { value: new Map(), enumerable: false, writable: true });
+
+		state.slot = payload;
+
+		await Promise.resolve();
+
+		expect(state.slot?.keep).toBe(1);
+		expect(emissions.flatMap((emission) => emission.ops.map((operation) => operation.do.path.join("/")))).toEqual([
+			"slot",
+		]);
+
+		const replica = createMutableState<{ slot: { keep: number } | null; tick: number }>(
+			{ slot: null, tick: 0 },
+			{ strict: true },
+		);
+
+		for (const emission of emissions)
+			applyOperations(replica, JSON.parse(JSON.stringify(emission.ops)) as Array<Operation>, "do");
+
+		expect(replica.slot?.keep).toBe(1);
+		expect(Object.hasOwn(replica.slot as object, "hidden")).toBe(false);
 	});
 
 	it("a refused compound array mutator keeps the prefix it already landed and emits it", async () => {
