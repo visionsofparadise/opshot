@@ -2,12 +2,12 @@ import { chainsAtRoot, type ChainSet } from "../edges";
 import { isSameIdentity } from "../identity";
 import { internedIdOf, internSubtree, stageVend } from "../intern";
 import { createCaptureTables, type CaptureTables } from "../occupancy";
-import { dataEntryValuesOf, walkDataEntries } from "../utils/dataEntries";
+import { dataEntryValuesOf, segmentFor, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath, type StepVerdict } from "./admission";
 import { walkContainer, type Ancestors } from "./ancestorPairs";
 import { isPlainArray, isPlainObject } from "./cloneValue";
-import { interiorReachesInternedOccupied, internedOccupied, occupancyNodeOf } from "./internedOccupancy";
+import { internedOccupied, occupancyNodeOf } from "./internedOccupancy";
 import { additionPair, changePair, linkOperation, linkUndo, removalPair } from "./mintPairs";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
@@ -113,6 +113,73 @@ const mintDecomposedChange = (
 	mintDecomposedContents(context, path, after, verdict);
 };
 
+const surveyAssignedSubtree = (
+	handle: Handle,
+	capture: CaptureTables,
+	path: OperationPath,
+	node: object,
+	residual: ChainSet,
+	liveNode: unknown,
+	stopAtInternedOccupied: boolean,
+	dirty: DirtyIndex | undefined,
+): { readonly reachesInternedOccupied: boolean } => {
+	const visits = new Set<object>();
+	const pending = new Array<object>();
+
+	const visit = (
+		current: object,
+		currentPath: OperationPath,
+		currentResidual: ChainSet,
+		currentLive: unknown,
+	): boolean => {
+		const raw = occupancyNodeOf(current);
+
+		if (visits.has(raw)) return false;
+
+		visits.add(raw);
+
+		if (admissionLane(current) === "untracked") return false;
+
+		if (stopAtInternedOccupied) {
+			if (current !== node) pending.push(current);
+		} else stageVend(handle, capture, current);
+
+		for (const entry of walkDataEntries(current)) {
+			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			const child = entry.value;
+			const key = segmentFor(current, entry.key);
+			const childPath = appendOperationPath(currentPath, key);
+
+			if (stopAtInternedOccupied && internedOccupied(handle, child, capture)) return true;
+
+			let childResidual = currentResidual;
+			let childLive: unknown = undefined;
+
+			if (isObjectLike(currentLive)) {
+				const childVerdict = admitStep(handle, dirty, childPath, currentLive, currentResidual);
+
+				childResidual = childVerdict.chains;
+				childLive = childVerdict.liveChild;
+			}
+
+			if (visit(child, childPath, childResidual, childLive)) return true;
+		}
+
+		return false;
+	};
+
+	if (stopAtInternedOccupied) stageVend(handle, capture, node);
+
+	const reachesInternedOccupied = visit(node, path, residual, liveNode);
+
+	if (stopAtInternedOccupied && !reachesInternedOccupied) {
+		for (const pendingNode of pending) stageVend(handle, capture, pendingNode);
+	}
+
+	return { reachesInternedOccupied };
+};
+
 const mintAssignment = (
 	context: DiffContext,
 	path: OperationPath,
@@ -139,10 +206,30 @@ const mintAssignment = (
 
 				return;
 			}
-		} else if (admissionLane(after) !== "untracked" && (isPlainObject(after) || isPlainArray(after))) {
-			stageVend(handle, context.capture, after);
 
-			if (interiorReachesInternedOccupied(handle, after, context.capture)) {
+			surveyAssignedSubtree(
+				handle,
+				context.capture,
+				path,
+				after,
+				verdict.chains,
+				verdict.liveChild,
+				false,
+				context.dirty,
+			);
+		} else if (admissionLane(after) !== "untracked" && (isPlainObject(after) || isPlainArray(after))) {
+			const { reachesInternedOccupied } = surveyAssignedSubtree(
+				handle,
+				context.capture,
+				path,
+				after,
+				verdict.chains,
+				verdict.liveChild,
+				true,
+				context.dirty,
+			);
+
+			if (reachesInternedOccupied) {
 				if (!beforePresent) {
 					mintDecomposedAddition(context, path, after, verdict);
 
@@ -153,10 +240,10 @@ const mintAssignment = (
 
 				return;
 			}
+		} else {
+			admitDescendants(handle, path, new Set(), verdict.chains, verdict.liveChild);
+			internSubtree(handle, after, undefined, context.capture);
 		}
-
-		admitDescendants(handle, path, new Set(), verdict.chains, verdict.liveChild);
-		internSubtree(handle, after, undefined, context.capture);
 	} else if (isObjectLike(after)) admitDescendants(context.handle, path, new Set(), verdict.chains, verdict.liveChild);
 
 	if (beforePresent) commitOperation(context, changePair(path, before, after, handle, context.capture));
