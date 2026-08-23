@@ -1,3 +1,5 @@
+import { isCanonicalArrayIndexString } from "../ops/predicates";
+
 export interface DataEntry {
 	readonly key: string;
 	readonly value: unknown;
@@ -25,6 +27,21 @@ export const walkDataEntries = (value: object, includeArrayLength = false): Arra
 			value: value.length,
 			writable: lengthDescriptor?.writable === true,
 		});
+	}
+
+	return entries;
+};
+
+export const segmentFor = (parent: object, key: string): string | number =>
+	Array.isArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
+
+export const dataEntryValuesOf = (value: object, ignoreArrayIndexes: boolean): Map<string, unknown> => {
+	const entries = new Map<string, unknown>();
+
+	for (const entry of walkDataEntries(value)) {
+		if (ignoreArrayIndexes && isCanonicalArrayIndexString(entry.key)) continue;
+
+		entries.set(entry.key, entry.value);
 	}
 
 	return entries;

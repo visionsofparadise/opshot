@@ -1,4 +1,4 @@
-import { walkDataEntries } from "./dataEntries";
+import { dataEntryValuesOf, segmentFor, walkDataEntries } from "./dataEntries";
 
 const symbolKey = Symbol("symbolKey");
 
@@ -54,5 +54,41 @@ describe("walkDataEntries", () => {
 			{ key: "1", value: 20, writable: true },
 			{ key: "length", value: 2, writable: true },
 		]);
+	});
+});
+
+describe("segmentFor", () => {
+	it("coerces canonical array indexes to numbers", () => {
+		expect(segmentFor([10, 20], "0")).toBe(0);
+		expect(segmentFor([10, 20], "1")).toBe(1);
+	});
+
+	it("keeps named keys on arrays as strings", () => {
+		expect(segmentFor([10], "named")).toBe("named");
+		expect(segmentFor([10], "length")).toBe("length");
+	});
+
+	it("keeps object keys as strings even when they look like indexes", () => {
+		expect(segmentFor({ 0: 1 }, "0")).toBe("0");
+	});
+});
+
+describe("dataEntryValuesOf", () => {
+	it("includes array indexes and named keys when not filtering", () => {
+		const list = Object.assign([10, 20], { named: 3 });
+
+		expect([...dataEntryValuesOf(list, false).keys()]).toEqual(["0", "1", "named"]);
+		expect(dataEntryValuesOf(list, false).get("0")).toBe(10);
+		expect(dataEntryValuesOf(list, false).get("named")).toBe(3);
+	});
+
+	it("filters canonical array indexes when ignoreArrayIndexes is true", () => {
+		const list = Object.assign([10, 20], { named: 3 });
+
+		expect([...dataEntryValuesOf(list, true).entries()]).toEqual([["named", 3]]);
+	});
+
+	it("keeps named object keys when filtering array indexes", () => {
+		expect([...dataEntryValuesOf({ a: 1, b: 2 }, true).keys()]).toEqual(["a", "b"]);
 	});
 });

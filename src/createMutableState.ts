@@ -14,12 +14,10 @@ import { registerHandle, type Handle } from "./handle";
 import { ignoreMarker, type Ignored } from "./ignore";
 import { isState } from "./isState";
 import { seedOccupancies } from "./occupancy";
-import { isPlainArray } from "./ops/cloneValue";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./ops/path";
-import { isCanonicalArrayIndexString } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
 import { unsafeMarker, type UnsafeTracked } from "./unsafeTrack";
-import { walkDataEntries } from "./utils/dataEntries";
+import { segmentFor, walkDataEntries } from "./utils/dataEntries";
 import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
 import { rejectionError } from "./valtio/boundaryErrors";
 import { admissionDecision } from "./valtio/classify";
@@ -61,9 +59,6 @@ const isIgnoredWrapper = (value: unknown): value is Ignored<unknown> =>
 
 const isUnsafeWrapper = (value: unknown): value is UnsafeTracked<unknown> =>
 	typeof value === "object" && value !== null && Object.hasOwn(value, unsafeMarker);
-
-const segmentFor = (parent: object, key: string): string | number =>
-	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
 interface MarkerWalk {
 	readonly trie: MutableDeclarationTrie;

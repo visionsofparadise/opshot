@@ -2,10 +2,8 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { declarationChild, type DeclarationTrie } from "./declarations";
 import { registerHandle, type Handle } from "./handle";
 import { queueDeparture } from "./intern";
-import { isPlainArray } from "./ops/cloneValue";
-import { isCanonicalArrayIndexString } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
-import { walkDataEntries } from "./utils/dataEntries";
+import { segmentFor, walkDataEntries } from "./utils/dataEntries";
 import { admissionLane } from "./valtio/classify";
 
 const { proxyStateMap } = unstable_getInternalStates();
@@ -19,9 +17,6 @@ const rawOf = (node: object): object => {
 };
 
 const occupancyRootOf = (handle: Handle): object => rawTargetOf(handle.proxy.root);
-
-const segmentFor = (parent: object, key: string): string | number =>
-	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
 interface InEdge {
 	readonly parent: object;
@@ -202,11 +197,13 @@ export function isIgnoredFrontier(handle: Handle, parent: object, key: string | 
 	return hit;
 }
 
+export type ChainSet = ReadonlyArray<DeclarationTrie | undefined>;
+
 export interface ChainStatus {
 	readonly occupied: boolean;
 	readonly unsafe: boolean;
 	readonly ignored: boolean;
-	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
+	readonly chains: ChainSet;
 }
 
 interface NodeChain {
@@ -349,12 +346,12 @@ const chainsAtNode = (
 };
 
 export function descendChains(
-	chains: ReadonlyArray<DeclarationTrie | undefined>,
+	chains: ChainSet,
 	key: string | number,
 ): {
 	readonly ignored: boolean;
 	readonly unsafe: boolean;
-	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
+	readonly chains: ChainSet;
 } {
 	const next = new Array<DeclarationTrie | undefined>();
 	let ignored = false;
@@ -381,6 +378,15 @@ export function descendChains(
 		chains: uniqueResiduals(next),
 	};
 }
+
+export const childChainsOf = (chains: ChainSet, key: string | number): ChainSet => descendChains(chains, key).chains;
+
+export const isChainsIgnored = (chains: ChainSet): boolean => chains.some((chain) => chain?.ignored === true);
+
+export const isChainsUnsafe = (chains: ChainSet): boolean => chains.length === 0;
+
+export const chainsAtRoot = (declarations: DeclarationTrie | undefined): ChainSet =>
+	declarations?.unsafe === true ? [] : [declarations];
 
 export function slotStatusOf(handle: Handle, parent: object, key: string | number): ChainStatus {
 	const parentChains = chainsAtNode(handle, parent, new Map(), new Set());
@@ -443,7 +449,7 @@ const seedFrom = (
 };
 
 export function seedInEdges(handle: Handle): void {
-	seedFrom(handle, handle.proxy.root, handle.declarations?.unsafe === true ? [] : [handle.declarations], new Set());
+	seedFrom(handle, handle.proxy.root, chainsAtRoot(handle.declarations), new Set());
 }
 
 export function seedInEdgesUnder(

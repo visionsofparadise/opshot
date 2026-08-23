@@ -2,10 +2,9 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { descendChains, isIgnoredFrontier, slotStatusOf } from "./edges";
 import { getRegisteredTarget } from "./identity";
 import { commitVends, stageVend } from "./intern";
-import { isPlainArray } from "./ops/cloneValue";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./ops/path";
-import { isCanonicalArrayIndexString, isObjectLike } from "./ops/predicates";
-import { walkDataEntries } from "./utils/dataEntries";
+import { isObjectLike } from "./ops/predicates";
+import { segmentFor, walkDataEntries } from "./utils/dataEntries";
 import { admissionDecision, classifyValue } from "./valtio/classify";
 import type { DeclarationTrie } from "./declarations";
 import type { DirtyIndex, Handle } from "./handle";
@@ -40,9 +39,6 @@ export const createCaptureTables = (): CaptureTables => ({
 
 const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
 	typeof key === "number" ? String(key) : key;
-
-const segmentFor = (parent: object, key: string): string | number =>
-	isPlainArray(parent) && isCanonicalArrayIndexString(key) ? Number(key) : key;
 
 export function bindVisitedOccupancy(
 	handle: Handle,
