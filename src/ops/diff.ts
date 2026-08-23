@@ -31,9 +31,6 @@ class IncompatibleObjectRootsError extends Error {
 	}
 }
 
-const writesTables = (context: DiffContext): context is DiffContext & { handle: Handle; dirty: DirtyIndex } =>
-	context.handle !== undefined && context.dirty !== undefined;
-
 const commitOperation = (context: DiffContext, pair: Operation): void => {
 	context.ops.push(pair);
 };
@@ -298,7 +295,7 @@ const pushRemoval = (
 ): void => {
 	if (verdict.ignored) return;
 
-	if (writesTables(context)) markChangedPath(context.handle, context.dirty, path, liveParent);
+	markChangedPath(context.handle, context.dirty, path, liveParent);
 
 	const handle = context.handle;
 
@@ -477,8 +474,6 @@ const diffValue = (
 
 		if (ignored || !emitsSkippedOccupancy(after)) return;
 
-		markChangedPath(context.handle, context.dirty, path, liveParent);
-
 		pushChange(context, path, before, after, verdict, liveParent);
 
 		return;
@@ -487,8 +482,6 @@ const diffValue = (
 	if (Object.is(before, after)) return;
 
 	if (replacing) {
-		markChangedPath(context.handle, context.dirty, path, liveParent);
-
 		pushChange(context, path, before, after, verdict, liveParent);
 
 		return;
@@ -507,8 +500,6 @@ const diffValue = (
 
 		return;
 	}
-
-	markChangedPath(context.handle, context.dirty, path, liveParent);
 
 	pushChange(context, path, before, after, verdict, liveParent);
 };
