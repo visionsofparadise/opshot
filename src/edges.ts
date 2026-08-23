@@ -112,6 +112,16 @@ export function addInEdge(handle: Handle, node: object, parent: object, key: str
 	registerHandle(rawNode, handle);
 }
 
+export function hasOtherRoutes(handle: Handle, node: object, parent: object, key: string | number): boolean {
+	const edges = handle.nodes.get(rawOf(node))?.edges;
+
+	if (edges === undefined) return false;
+
+	const rawParent = rawOf(parent);
+
+	return edges.some((edge) => rawOf(edge.parent) !== rawParent || edge.key !== key);
+}
+
 export function removeInEdge(handle: Handle, node: object, parent: object, key: string | number): void {
 	const rawNode = rawOf(node);
 	const rawParent = rawOf(parent);
@@ -387,6 +397,19 @@ export const isChainsUnsafe = (chains: ChainSet): boolean => chains.length === 0
 
 export const chainsAtRoot = (declarations: DeclarationTrie | undefined): ChainSet =>
 	declarations?.unsafe === true ? [] : [declarations];
+
+export function nodeChainsOf(handle: Handle, node: object): ChainSet {
+	const nodeChains = chainsAtNode(handle, node, new Map(), new Set());
+	const chains = new Array<DeclarationTrie | undefined>();
+
+	for (const entry of nodeChains.entries) {
+		if (entry.tainted) continue;
+
+		chains.push(entry.residual);
+	}
+
+	return uniqueResiduals(chains);
+}
 
 export function slotStatusOf(handle: Handle, parent: object, key: string | number): ChainStatus {
 	const parentChains = chainsAtNode(handle, parent, new Map(), new Set());

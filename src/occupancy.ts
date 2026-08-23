@@ -47,10 +47,11 @@ export function bindVisitedOccupancy(
 	key: string | number,
 	child: unknown,
 	unsafe = false,
+	ignoredFrontier?: boolean,
 ): OccupancyVisit {
 	if (path.length === 0) return "continue";
 
-	if (isIgnoredFrontier(handle, parent, key)) return "skip";
+	if (ignoredFrontier ?? isIgnoredFrontier(handle, parent, key)) return "skip";
 
 	const parentRaw = liveOf(parent);
 	const occupancyKey = occupancyKeyOf(key);
