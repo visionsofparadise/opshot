@@ -1,5 +1,3 @@
-import { isObjectLike } from "./predicates";
-
 /**
  * Path segments to a value in state.
  *
@@ -18,15 +16,3 @@ const formatSegment = (segment: string | number): string => String(segment);
 
 export const formatOperationPath = (path: OperationPath): string =>
 	path.length === 0 ? "/" : `/${path.map(formatSegment).join("/")}`;
-
-export const liveAtPath = (root: object, path: OperationPath): unknown => {
-	let current: unknown = root;
-
-	for (const segment of path) {
-		if (!isObjectLike(current)) return undefined;
-
-		current = Reflect.get(current, segment);
-	}
-
-	return current;
-};
