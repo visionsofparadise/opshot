@@ -1,6 +1,7 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
+import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
 import {
+	addInEdge,
 	chainsAtRoot,
 	childChainsOf,
 	descendChains,
@@ -8,17 +9,33 @@ import {
 	hasOtherRoutes,
 	isChainsIgnored,
 	isIgnoredFrontier,
+	isTrackedEdge,
 	nodeChainsOf,
+	resolveChildChains,
 	slotStatusOf,
 } from "../edges";
 import { requireHandle, type DirtyIndex } from "../handle";
 import { ignore } from "../ignore";
 import { bindVisitedOccupancy } from "../occupancy";
+import { internedOccupied } from "./internedOccupancy";
 import { transact } from "../transact/transact";
 import { unsafeTrack } from "../unsafeTrack";
+import { walkDataEntries } from "../utils/dataEntries";
 import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath } from "./admission";
 import { createOperationPath } from "./path";
 import { isObjectLike } from "./predicates";
+
+class PrivateStore {
+	#hidden = 1;
+
+	read(): number {
+		return this.#hidden;
+	}
+}
+
+class MethodHost {
+	run = (): number => 1;
+}
 
 const { proxyStateMap } = unstable_getInternalStates();
 
@@ -336,5 +353,164 @@ describe("admission", () => {
 		expect(atBX.visit).toBe("skip");
 		expect(atBX.ignored).toBe(true);
 		expect(isIgnoredFrontier(handle, parent, "x")).toBe(true);
+	});
+
+	it("isTrackedEdge is true only for a writable tracked child", () => {
+		const frozen = Object.freeze({ n: 1 });
+		const lockedChild = { n: 1 };
+		const locked: { locked?: { n: number } } = {};
+
+		Object.defineProperty(locked, "locked", { value: lockedChild, writable: false, enumerable: true });
+
+		const host = new MethodHost();
+		const bag = {
+			plain: { n: 1 },
+			frozen,
+			scalar: 1,
+			map: new Map<string, number>(),
+			set: new Set<number>(),
+			closed: new PrivateStore(),
+		};
+		const entries = Object.fromEntries(walkDataEntries(bag).map((entry) => [entry.key, entry]));
+		const lockedEntry = walkDataEntries(locked)[0];
+		const methodEntry = walkDataEntries(host).find((entry) => entry.key === "run");
+
+		expect(isTrackedEdge(entries.plain!)).toBe(true);
+		expect(isTrackedEdge(entries.frozen!)).toBe(false);
+		expect(isTrackedEdge(entries.scalar!)).toBe(false);
+		expect(isTrackedEdge(entries.map!)).toBe(false);
+		expect(isTrackedEdge(entries.set!)).toBe(false);
+		expect(isTrackedEdge(entries.closed!)).toBe(false);
+		expect(methodEntry).toBeDefined();
+		expect(isTrackedEdge(methodEntry!)).toBe(false);
+		expect(lockedEntry).toBeDefined();
+		expect(isTrackedEdge(lockedEntry!)).toBe(false);
+	});
+
+	it("seedFrom records no in-edge for a node reached only across a dangerous edge", () => {
+		const map = new Map<string, number>([["k", 1]]);
+		const state = createMutableState({ box: map }, { strict: false });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const raw = rawTargetOf(map);
+		const record = handle.nodes.get(raw);
+
+		expect(edgeStatusOf(handle, map).occupied).toBe(false);
+		expect(internedOccupied(handle, map)).toBe(false);
+		expect(record?.edges.length ?? 0).toBe(0);
+	});
+
+	it("resolveChildChains refuses an already-ignored parent residual", () => {
+		const state = createMutableState({ wrap: ignore({ child: { n: 1 } }), tick: 0 });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const wrap = admitStep(
+			handle,
+			emptyDirty(),
+			createOperationPath(["wrap"]),
+			state,
+			chainsAtRoot(handle.declarations),
+		);
+
+		expect(resolveChildChains(handle, wrap.liveChild, wrap.chains, "child", state.wrap.child)).toBeUndefined();
+	});
+
+	it("resolveChildChains refuses a declared-ignored key", () => {
+		const state = createMutableState({ wrap: ignore({ n: 1 }), tick: 0 });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const residual = chainsAtRoot(handle.declarations);
+
+		expect(resolveChildChains(handle, state, residual, "wrap", state.wrap)).toBeUndefined();
+	});
+
+	it("resolveChildChains refuses a sole-route child whose aliased parent declares the key ignored", () => {
+		const state = createMutableState({
+			a: { x: { n: 1 } },
+			b: { x: ignore({ n: 1 }) },
+		} as unknown as { a: { x: { n: number } }; b: { x: { n: number } } });
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const parent = state.a;
+		const parentChains = nodeChainsOf(handle, parent);
+
+		expect(parentChains).toBeDefined();
+		expect(resolveChildChains(handle, parent, parentChains!, "x", state.a.x)).toBeUndefined();
+	});
+
+	it("resolveChildChains returns the descended set for a sole-route child", () => {
+		const state = createMutableState({ box: { n: 1 } });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const residual = chainsAtRoot(handle.declarations);
+		const resolved = resolveChildChains(handle, state, residual, "box", state.box);
+
+		expect(resolved).toBeDefined();
+		expect(resolved!.otherRoutes).toBe(false);
+		expect(resolved!.chains).toEqual(descendChains(residual, "box").chains);
+		expect(resolved!.descended).toEqual(descendChains(residual, "box").chains);
+	});
+
+	it("resolveChildChains returns nodeChainsOf for an other-routes child", () => {
+		const state = createMutableState({
+			a: { n: 1 },
+			b: { n: 1 },
+		} as unknown as { a: { n: number }; b: { n: number } });
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const residual = chainsAtRoot(handle.declarations);
+		const resolved = resolveChildChains(handle, state, residual, "a", state.a);
+
+		expect(hasOtherRoutes(handle, state.a, state, "a")).toBe(true);
+		expect(resolved).toBeDefined();
+		expect(resolved!.otherRoutes).toBe(true);
+		expect(resolved!.chains).toEqual(nodeChainsOf(handle, state.a));
+	});
+
+	it("resolveChildChains falls back to the descended set for an ungrounded other-routes child", () => {
+		const state = createMutableState({ box: { n: 1 } }) as { box?: { n: number } };
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const child = state.box!;
+		const extra = { held: child };
+
+		addInEdge(handle, child, extra, "held");
+		delete state.box;
+
+		const residual = chainsAtRoot(handle.declarations);
+		const descended = descendChains(residual, "box").chains;
+		const resolved = resolveChildChains(handle, state, residual, "box", child);
+
+		expect(nodeChainsOf(handle, child)).toBeUndefined();
+		expect(hasOtherRoutes(handle, child, state, "box")).toBe(true);
+		expect(resolved).toBeDefined();
+		expect(resolved!.otherRoutes).toBe(true);
+		expect(resolved!.chains).toEqual(descended);
+	});
+
+	it("resolveChildChains on a snapshot node matches the live counterpart", () => {
+		const state = createMutableState({
+			a: { n: 1 },
+			b: { n: 1 },
+		} as unknown as { a: { n: number }; b: { n: number } });
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const residual = chainsAtRoot(handle.declarations);
+		const live = resolveChildChains(handle, state, residual, "a", state.a);
+		const snap = snapshot(handle.proxy.root) as { a: { n: number }; b: { n: number } };
+		const fromSnap = resolveChildChains(handle, snap, residual, "a", snap.a);
+
+		expect(hasOtherRoutes(handle, state.a, state, "a")).toBe(true);
+		expect(live).toBeDefined();
+		expect(live!.otherRoutes).toBe(true);
+		expect(live!.chains).toEqual(nodeChainsOf(handle, state.a));
+		expect(fromSnap).toEqual(live);
 	});
 });

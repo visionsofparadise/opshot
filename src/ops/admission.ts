@@ -6,8 +6,8 @@ import {
 	hasOtherRoutes,
 	isChainsIgnored,
 	isChainsUnsafe,
-	isIgnoredFrontier,
 	nodeChainsOf,
+	resolveChildChains,
 	slotStatusOf,
 	type ChainSet,
 } from "../edges";
@@ -57,22 +57,23 @@ export const admitStep = (
 		return { visit: "continue", ignored: isChainsIgnored(childChains), liveChild, chains: childChains };
 	}
 
-	if (
-		isObjectLike(liveChild) &&
-		isObjectLike(liveParent) &&
-		key !== undefined &&
-		hasOtherRoutes(handle, liveChild, liveParent, key)
-	) {
-		const childChains = childChainsOf(residual, key);
-		const ignored = isChainsIgnored(childChains) || isIgnoredFrontier(handle, liveParent, key);
-		const chains = nodeChainsOf(handle, liveChild) ?? childChains;
+	if (key === undefined) {
+		return { visit: "continue", ignored: isChainsIgnored(residual), liveChild: liveParent, chains: residual };
+	}
 
-		if (dirty === undefined) return { visit: "continue", ignored, liveChild, chains };
+	const resolved = resolveChildChains(handle, liveParent, residual, key, liveChild);
+	const ignored = resolved === undefined;
+	const chains = resolved?.chains ?? childChainsOf(residual, key);
 
-		if (ignored) return { visit: "skip", ignored, liveChild, chains };
+	if (dirty === undefined) return { visit: "continue", ignored, liveChild, chains };
+
+	if (ignored) return { visit: "skip", ignored, liveChild, chains };
+
+	if (resolved.otherRoutes) {
+		if (!isObjectLike(liveParent) || !isObjectLike(liveChild)) throw new MissingDiffParentError();
 
 		const slot = slotStatusOf(handle, liveParent, key);
-		let unsafe = slot.occupied ? slot.unsafe : isChainsUnsafe(childChains);
+		let unsafe = slot.occupied ? slot.unsafe : isChainsUnsafe(resolved.descended);
 		const status = edgeStatusOf(handle, liveChild);
 
 		if (status.occupied) unsafe = status.unsafe;
@@ -85,19 +86,10 @@ export const admitStep = (
 		};
 	}
 
-	const descended =
-		key === undefined ? { ignored: false, unsafe: false, chains: residual } : descendChains(residual, key);
-	const chains = descended.chains;
-	const ignored = descended.ignored || isChainsIgnored(chains);
-
-	if (dirty === undefined) return { visit: "continue", ignored, liveChild, chains };
-
-	if (ignored) return { visit: "skip", ignored, liveChild, chains };
-
-	if (!isObjectLike(liveParent) || key === undefined) throw new MissingDiffParentError();
+	if (!isObjectLike(liveParent)) throw new MissingDiffParentError();
 
 	return {
-		visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, isChainsUnsafe(chains), false),
+		visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, isChainsUnsafe(resolved.descended), false),
 		ignored,
 		liveChild,
 		chains,

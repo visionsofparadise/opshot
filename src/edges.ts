@@ -1,9 +1,11 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { declarationChild, type DeclarationTrie } from "./declarations";
 import { registerHandle, type Handle } from "./handle";
+import { getRegisteredTarget } from "./identity";
 import { queueDeparture } from "./intern";
+import { isObjectLike } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
-import { segmentFor, walkDataEntries } from "./utils/dataEntries";
+import { segmentFor, walkDataEntries, type DataEntry } from "./utils/dataEntries";
 import { admissionLane } from "./valtio/classify";
 
 const { proxyStateMap } = unstable_getInternalStates();
@@ -442,13 +444,51 @@ export function slotStatusOf(handle: Handle, parent: object, key: string | numbe
 	};
 }
 
+export const isTrackedEdge = (entry: DataEntry): boolean => entry.writable && admissionLane(entry.value) === "tracked";
+
+export interface ChildChains {
+	readonly chains: ChainSet;
+	readonly descended: ChainSet;
+	readonly otherRoutes: boolean;
+}
+
+const graphNodeOf = (value: object): object => rawOf(getRegisteredTarget(value) ?? value);
+
+export function resolveChildChains(
+	handle: Handle,
+	parent: unknown,
+	parentChains: ChainSet,
+	key: string | number,
+	child: unknown,
+): ChildChains | undefined {
+	const descended = descendChains(parentChains, key).chains;
+	const ignoredResidual = isChainsIgnored(parentChains) || isChainsIgnored(descended);
+
+	if (!isObjectLike(parent) || !isObjectLike(child)) {
+		if (ignoredResidual) return undefined;
+
+		return { chains: descended, descended, otherRoutes: false };
+	}
+
+	const graphParent = graphNodeOf(parent);
+	const graphChild = graphNodeOf(child);
+	const otherRoutes = hasOtherRoutes(handle, graphChild, graphParent, key);
+	const ignored = ignoredResidual || (otherRoutes && isIgnoredFrontier(handle, graphParent, key));
+
+	if (ignored) return undefined;
+
+	const chains = otherRoutes ? (nodeChainsOf(handle, graphChild) ?? descended) : descended;
+
+	return { chains, descended, otherRoutes };
+}
+
 const seedFrom = (
 	handle: Handle,
 	node: object,
 	chains: ReadonlyArray<DeclarationTrie | undefined>,
 	visits: Set<object>,
 ): void => {
-	if (chains.some((residual) => residual?.ignored === true)) return;
+	if (isChainsIgnored(chains)) return;
 
 	const raw = rawOf(node);
 
@@ -457,20 +497,17 @@ const seedFrom = (
 	visits.add(raw);
 
 	for (const entry of walkDataEntries(raw)) {
-		if (!entry.writable) continue;
+		if (!isTrackedEdge(entry)) continue;
 
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
-		if (admissionLane(entry.value) === "untracked") continue;
-
 		const key = segmentFor(raw, entry.key);
-		const slot = slotStatusOf(handle, raw, key);
-		const descended = descendChains(chains, key);
+		const resolved = resolveChildChains(handle, raw, chains, key, entry.value);
 
-		if (slot.ignored || descended.ignored) continue;
+		if (resolved === undefined) continue;
 
 		addInEdge(handle, entry.value, raw, key);
-		seedFrom(handle, entry.value, slot.occupied ? slot.chains : descended.chains, visits);
+		seedFrom(handle, entry.value, resolved.chains, visits);
 	}
 };
 
