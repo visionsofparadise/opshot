@@ -1371,7 +1371,10 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const delivered = heard[0] ?? [];
 
 		expect(shapeOps(delivered)).toEqual([
-			{ do: { verb: "assign", path: ["first"], value: { n: 1 } }, undo: { verb: "delete", path: ["first"] } },
+			{
+				do: { verb: "assign", path: ["first"], value: { n: 1 }, ids: [1] },
+				undo: { verb: "delete", path: ["first"] },
+			},
 			{ do: { verb: "assign", path: ["wrapper"], value: {} }, undo: { verb: "delete", path: ["wrapper"] } },
 			{
 				do: { verb: "link", path: ["wrapper", "alias"], ref: internId(state, state.first!) },
@@ -1421,6 +1424,262 @@ describe("diffObjects: decomposition and ref selection", () => {
 		expect(state.bag.left.child.self).toBe(state.bag.left.child);
 	});
 
+	it("assigning a container at a declared-ignored child vends no intern id there", () => {
+		const state = createMutableState({
+			bag: {
+				wrap: ignore({ secret: { n: 1 } }),
+				sibling: { n: 1 },
+			},
+		});
+		const handle = requireHandle(state, "opshot: test requires a state");
+
+		transact(state, () => {
+			state.bag = {
+				wrap: { secret: { n: 2 } },
+				sibling: { n: 2 },
+			};
+		});
+
+		expect(internedIdOf(handle, state.bag.wrap)).toBeUndefined();
+		expect(internedIdOf(handle, state.bag.wrap.secret)).toBeUndefined();
+		expect(internedIdOf(handle, state.bag.sibling)).toBeDefined();
+	});
+
+	it("an op whose path lands at a declared-ignored slot vends nothing through applyOperations", () => {
+		const state = createMutableState({ wrap: ignore({ secret: { n: 1 } }), tick: 0 });
+		const handle = requireHandle(state, "opshot: test requires a state");
+
+		applyOperations(
+			state,
+			[{ do: createAssignMutation(["wrap"], { secret: { n: 2 } }), undo: createDeleteMutation(["wrap"]) }],
+			"do",
+		);
+
+		expect(internedIdOf(handle, state.wrap.secret)).toBeUndefined();
+	});
+
+	it("does not decompose when the only interned-occupied node sits under a declared-ignored child", () => {
+		const state = createMutableState({
+			bag: {
+				wrap: ignore({ secret: { n: 1 } }),
+				extra: 1,
+			},
+			keep: { n: 1 },
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.bag = { wrap: { secret: state.keep }, extra: 2 };
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["bag"] });
+		expect(delivered.some((pair) => pair.do.verb === "link")).toBe(false);
+	});
+
+	it("does not decompose when the interned-occupied child is under an aliased parent that declares the key ignored", () => {
+		const state = createMutableState({
+			a: { x: { n: 1 } },
+			b: { x: ignore({ n: 1 }) },
+			keep: { n: 1 },
+		} as unknown as {
+			a: { x: { n: number } | { n: number; extra?: number } };
+			b: { x: { n: number } };
+			keep: { n: number };
+		});
+		const heard = record(state);
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		transact(state, () => {
+			const payload = { x: state.keep, extra: 2 };
+
+			state.a = payload;
+			state.b = payload;
+		});
+
+		const delivered = heard[1] ?? [];
+
+		expect(delivered.some((pair) => pair.do.verb === "assign" && pair.do.path[0] === "a")).toBe(true);
+		expect(delivered.filter((pair) => pair.do.path[0] === "a" && pair.do.path.length > 1)).toHaveLength(0);
+		expect(delivered.some((pair) => pair.do.verb === "link" && pair.do.path[1] === "x")).toBe(false);
+	});
+
+	it("a frozen interned occupant ships by value with no link", () => {
+		const state = createMutableState({ box: { inner: { n: 1 } } as { inner: object; extra?: number } });
+		const inner = state.box.inner;
+		const heard = record(state);
+
+		Object.freeze(inner);
+
+		transact(state, () => {
+			state.box = { inner, extra: 2 };
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["box"] });
+		expect(delivered.some((pair) => pair.do.verb === "link")).toBe(false);
+	});
+
+	it("assigning a container behind a non-writable object property vends nothing for that child", () => {
+		const locked = { n: 1 };
+		const payload: { locked?: { n: number }; sibling: { n: number } } = { sibling: { n: 2 } };
+
+		Object.defineProperty(payload, "locked", { value: locked, writable: false, enumerable: true });
+
+		const state = createMutableState({ slot: { n: 0 } as object }, { strict: false });
+		const handle = requireHandle(state, "opshot: test requires a state");
+
+		transact(state, () => {
+			state.slot = payload;
+		});
+
+		expect(internedIdOf(handle, locked)).toBeUndefined();
+		expect(internedIdOf(handle, (state.slot as { sibling: { n: number } }).sibling)).toBeDefined();
+	});
+
+	it("a round trip of an aliased ignore nested in a payload keeps matching intern numbering", () => {
+		const origin = createMutableState({
+			a: { y: { n: 1 } },
+			b: { y: ignore({ n: 1 }) },
+			payload: undefined as { nest: { y: { n: number } } } | undefined,
+		} as unknown as {
+			a: { y: { n: number } };
+			b: { y: { n: number } };
+			payload?: { nest: { y: { n: number } } };
+		});
+		const heard = record(origin);
+
+		transact(origin, () => {
+			origin.a = origin.b;
+		});
+
+		transact(origin, () => {
+			origin.payload = { nest: origin.a };
+		});
+
+		const replica = createMutableState({
+			a: { y: { n: 1 } },
+			b: { y: ignore({ n: 1 }) },
+			payload: undefined as { nest: { y: { n: number } } } | undefined,
+		} as unknown as {
+			a: { y: { n: number } };
+			b: { y: { n: number } };
+			payload?: { nest: { y: { n: number } } };
+		});
+
+		for (const window of heard) applyOperations(replica, projectTransport(window), "do");
+
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+
+		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
+	});
+
+	it("a same-window aliased parent with a fresh ignored child keeps matching intern numbering", () => {
+		const origin = createMutableState({
+			a: { x: { n: 1 } },
+			b: { x: ignore({ n: 1 }) },
+		} as unknown as { a: { x: { n: number }; extra?: number }; b: { x: { n: number }; extra?: number } });
+		const heard = record(origin);
+
+		transact(origin, () => {
+			const payload = { x: { n: 2 }, extra: 2 };
+
+			origin.a = payload;
+			origin.b = payload;
+		});
+
+		const replica = createMutableState({
+			a: { x: { n: 1 } },
+			b: { x: ignore({ n: 1 }) },
+		} as unknown as { a: { x: { n: number }; extra?: number }; b: { x: { n: number }; extra?: number } });
+
+		applyOperations(replica, projectTransport(heard[0] ?? []), "do");
+
+		const originHandle = requireHandle(origin, "opshot: test requires a state");
+		const replicaHandle = requireHandle(replica, "opshot: test requires a state");
+
+		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
+		expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
+		expect(internedIdOf(originHandle, origin.a.x)).toBeUndefined();
+		expect(internedIdOf(replicaHandle, replica.a.x)).toBeUndefined();
+	});
+
+	it("a node aliased under an ignored edge keeps the id its tracked route earns", () => {
+		const shared = { n: 1 };
+		const state = createMutableState({
+			keep: shared,
+			bag: { wrap: ignore({ secret: shared }), sibling: { n: 2 } },
+		});
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const trackedId = internedIdOf(handle, state.keep);
+
+		expect(trackedId).toBeDefined();
+
+		transact(state, () => {
+			state.bag = { wrap: { secret: state.keep }, sibling: { n: 3 } };
+		});
+
+		expect(internedIdOf(handle, state.keep)).toBe(trackedId);
+	});
+
+	it("an interned-occupied node under an ordinary tracked child still decomposes and links", () => {
+		const state = createMutableState<{ box: { inner: { n: number }; extra?: number } }>({
+			box: { inner: { n: 1 } },
+		});
+		const inner = state.box.inner;
+		const heard = record(state);
+
+		transact(state, () => {
+			state.box = { inner, extra: 2 };
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["box"], value: {} });
+		expect(delivered.find((pair) => pair.do.verb === "link" && pair.do.path[1] === "inner")?.do).toMatchObject({
+			verb: "link",
+			path: ["box", "inner"],
+			ref: internId(state, inner),
+		});
+	});
+
+	it("rollback of an assign that aliases through a declared-ignored second route restores the graph", () => {
+		const state = createMutableState({
+			a: { y: { n: 1 } },
+			b: { y: ignore({ n: 1 }) },
+			slot: { n: 0 } as object,
+		} as unknown as { a: { y: { n: number } }; b: { y: { n: number } }; slot: object });
+		const handle = requireHandle(state, "opshot: test requires a state");
+
+		transact(state, () => {
+			state.b = state.a;
+		});
+
+		const held = state.slot;
+		const beforeIds = internSequenceOf(state);
+		const beforeNext = handle.nextInternId;
+
+		expect(() => {
+			transact(state, () => {
+				state.slot = { nest: state.a };
+				throw new Error("abort");
+			});
+		}).toThrow("abort");
+
+		expect(state.slot).toBe(held);
+		expect(internSequenceOf(state)).toEqual(beforeIds);
+		expect(handle.nextInternId).toBe(beforeNext);
+	});
+
 	it("a decomposed sparse-array addition skips holes and restores them on undo", () => {
 		const shared = { n: 1 };
 		const state = createMutableState<{ keep: { n: number }; list?: Array<{ n: number } | undefined> }>({
@@ -1449,7 +1708,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 				undo: { verb: "delete", path: ["list", 0] },
 			},
 			{
-				do: { verb: "assign", path: ["list", 3], value: { n: 2 } },
+				do: { verb: "assign", path: ["list", 3], value: { n: 2 }, ids: [3] },
 				undo: { verb: "delete", path: ["list", 3] },
 			},
 		]);

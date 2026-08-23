@@ -406,7 +406,7 @@ describe("scenarios", () => {
 				undo: { verb: "assign", path: ["items", "length"], value: 0 },
 			},
 			{
-				do: { verb: "assign", path: ["items", 0], value: { id: "x", gain: 1 } },
+				do: { verb: "assign", path: ["items", 0], value: { id: "x", gain: 1 }, ids: [2] },
 				undo: { verb: "delete", path: ["items", 0] },
 			},
 		]);

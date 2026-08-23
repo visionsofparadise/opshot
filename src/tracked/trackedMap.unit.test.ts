@@ -295,7 +295,7 @@ describe("TrackedMap", () => {
 				undo: { verb: "assign", path: ["map", "slots", "length"], value: 3 },
 			},
 			{
-				do: { verb: "assign", path: ["map", "slots", 3], value: ["d", 4] },
+				do: { verb: "assign", path: ["map", "slots", 3], value: ["d", 4], ids: [7] },
 				undo: { verb: "delete", path: ["map", "slots", 3] },
 			},
 			{
@@ -309,7 +309,7 @@ describe("TrackedMap", () => {
 		]);
 		expect(shaped[1]).toEqual([
 			{
-				do: { verb: "assign", path: ["map", "slots", 0], value: ["a", 10] },
+				do: { verb: "assign", path: ["map", "slots", 0], value: ["a", 10], ids: [8] },
 				undo: { verb: "assign", path: ["map", "slots", 0], value: ["a", 1], ids: [3] },
 			},
 		]);

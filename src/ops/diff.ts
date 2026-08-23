@@ -1,4 +1,4 @@
-import { chainsAtRoot, type ChainSet } from "../edges";
+import { chainsAtRoot, isTrackedEdge, resolveChildChains, type ChainSet } from "../edges";
 import { isSameIdentity } from "../identity";
 import { internedIdOf, internSubtree, stageVend } from "../intern";
 import { createCaptureTables, type CaptureTables } from "../occupancy";
@@ -7,7 +7,7 @@ import { admissionLane } from "../valtio/classify";
 import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath, type StepVerdict } from "./admission";
 import { walkContainer, type Ancestors } from "./ancestorPairs";
 import { isPlainArray, isPlainObject } from "./cloneValue";
-import { internedOccupied, occupancyNodeOf } from "./internedOccupancy";
+import { internedOccupied, liveOf, occupancyNodeOf } from "./internedOccupancy";
 import { additionPair, changePair, linkOperation, linkUndo, removalPair } from "./mintPairs";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
@@ -134,22 +134,14 @@ const mintDecomposedChange = (
 const surveyAssignedSubtree = (
 	handle: Handle,
 	capture: CaptureTables,
-	path: OperationPath,
 	node: object,
 	residual: ChainSet,
-	liveNode: unknown,
 	stopAtInternedOccupied: boolean,
-	dirty: DirtyIndex | undefined,
 ): { readonly reachesInternedOccupied: boolean } => {
 	const visits = new Set<object>();
 	const pending = new Array<object>();
 
-	const visit = (
-		current: object,
-		currentPath: OperationPath,
-		currentResidual: ChainSet,
-		currentLive: unknown,
-	): boolean => {
+	const visit = (current: object, currentResidual: ChainSet): boolean => {
 		const raw = occupancyNodeOf(current);
 
 		if (visits.has(raw)) return false;
@@ -162,26 +154,23 @@ const surveyAssignedSubtree = (
 			if (current !== node) pending.push(current);
 		} else stageVend(handle, capture, current);
 
-		for (const entry of walkDataEntries(current)) {
+		const source = liveOf(current);
+
+		for (const entry of walkDataEntries(source)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
 
+			if (!isTrackedEdge(entry)) continue;
+
+			const key = segmentFor(source, entry.key);
+			const resolved = resolveChildChains(handle, source, currentResidual, key, entry.value);
+
+			if (resolved === undefined) continue;
+
 			const child = entry.value;
-			const key = segmentFor(current, entry.key);
-			const childPath = appendOperationPath(currentPath, key);
 
 			if (stopAtInternedOccupied && internedOccupied(handle, child, capture)) return true;
 
-			let childResidual = currentResidual;
-			let childLive: unknown = undefined;
-
-			if (isObjectLike(currentLive)) {
-				const childVerdict = admitStep(handle, dirty, childPath, currentLive, currentResidual);
-
-				childResidual = childVerdict.chains;
-				childLive = childVerdict.liveChild;
-			}
-
-			if (visit(child, childPath, childResidual, childLive)) return true;
+			if (visit(child, resolved.chains)) return true;
 		}
 
 		return false;
@@ -189,13 +178,35 @@ const surveyAssignedSubtree = (
 
 	if (stopAtInternedOccupied) stageVend(handle, capture, node);
 
-	const reachesInternedOccupied = visit(node, path, residual, liveNode);
+	const reachesInternedOccupied = visit(node, residual);
 
 	if (stopAtInternedOccupied && !reachesInternedOccupied) {
 		for (const pendingNode of pending) stageVend(handle, capture, pendingNode);
 	}
 
 	return { reachesInternedOccupied };
+};
+
+const internIdsOfSubtree = (handle: Handle, node: object, capture: CaptureTables): Array<number> | undefined => {
+	const seen = new Set<number>();
+	const ids = new Array<number>();
+
+	const walk = (current: object): void => {
+		const id = internedIdOf(handle, current, capture);
+
+		if (id === undefined || seen.has(id)) return;
+
+		seen.add(id);
+		ids.push(id);
+
+		for (const entry of walkDataEntries(liveOf(current))) {
+			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value);
+		}
+	};
+
+	walk(node);
+
+	return ids.length === 0 ? undefined : ids;
 };
 
 const mintAssignment = (
@@ -225,26 +236,14 @@ const mintAssignment = (
 				return;
 			}
 
-			surveyAssignedSubtree(
-				handle,
-				context.capture,
-				path,
-				after,
-				verdict.chains,
-				verdict.liveChild,
-				false,
-				context.dirty,
-			);
+			surveyAssignedSubtree(handle, context.capture, after, verdict.chains, false);
 		} else if (admissionLane(after) !== "untracked" && (isPlainObject(after) || isPlainArray(after))) {
 			const { reachesInternedOccupied } = surveyAssignedSubtree(
 				handle,
 				context.capture,
-				path,
 				after,
 				verdict.chains,
-				verdict.liveChild,
 				true,
-				context.dirty,
 			);
 
 			if (reachesInternedOccupied) {
@@ -260,12 +259,24 @@ const mintAssignment = (
 			}
 		} else {
 			admitDescendants(handle, path, new Set(), verdict.chains, verdict.liveChild);
-			internSubtree(handle, after, undefined, context.capture);
+			internSubtree(
+				handle,
+				after,
+				verdict.chains,
+				(parent, parentChains, key, entry) =>
+					isTrackedEdge(entry)
+						? resolveChildChains(handle, parent, parentChains, key, entry.value)?.chains
+						: undefined,
+				context.capture,
+			);
 		}
 	} else if (isObjectLike(after)) admitDescendants(context.handle, path, new Set(), verdict.chains, verdict.liveChild);
 
-	if (beforePresent) commitOperation(context, changePair(path, before, after, handle, context.capture));
-	else commitOperation(context, additionPair(path, after));
+	const ids =
+		isObjectLike(after) && handle !== undefined ? internIdsOfSubtree(handle, after, context.capture) : undefined;
+
+	if (beforePresent) commitOperation(context, changePair(path, before, after, handle, context.capture, ids));
+	else commitOperation(context, additionPair(path, after, ids));
 };
 
 const pushAddition = (

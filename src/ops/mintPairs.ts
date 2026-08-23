@@ -6,8 +6,8 @@ import type { Handle } from "../handle";
 import type { CaptureTables } from "../occupancy";
 import type { OperationPath } from "./path";
 
-export const additionPair = (path: OperationPath, after: unknown): Operation => ({
-	do: createAssignMutation(path, after),
+export const additionPair = (path: OperationPath, after: unknown, ids?: ReadonlyArray<number>): Operation => ({
+	do: createAssignMutation(path, after, after, ids),
 	undo: createDeleteMutation(path),
 });
 
@@ -52,7 +52,8 @@ export const changePair = (
 	after: unknown,
 	handle: Handle | undefined,
 	capture?: CaptureTables,
+	ids?: ReadonlyArray<number>,
 ): Operation => ({
-	do: createAssignMutation(path, after),
+	do: createAssignMutation(path, after, after, ids),
 	undo: linkUndo(path, before, true, handle, capture),
 });

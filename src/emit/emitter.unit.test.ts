@@ -428,7 +428,7 @@ describe("reconcileUntracked", () => {
 		expect(heard.map(shapeOps)).toEqual([
 			[
 				{
-					do: { verb: "assign", path: ["items", 2], value: { n: 2 } },
+					do: { verb: "assign", path: ["items", 2], value: { n: 2 }, ids: [3] },
 					undo: { verb: "delete", path: ["items", 2] },
 				},
 			],

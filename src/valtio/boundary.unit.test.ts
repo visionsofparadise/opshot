@@ -338,7 +338,7 @@ describe("boundary: ignore", () => {
 
 		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
 			{
-				do: { verb: "assign", path: ["tracked"], value: { n: 1 } },
+				do: { verb: "assign", path: ["tracked"], value: { n: 1 }, ids: [1] },
 				undo: { verb: "delete", path: ["tracked"] },
 			},
 		]);

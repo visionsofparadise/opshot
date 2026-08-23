@@ -444,7 +444,12 @@ export function slotStatusOf(handle: Handle, parent: object, key: string | numbe
 	};
 }
 
-export const isTrackedEdge = (entry: DataEntry): boolean => entry.writable && admissionLane(entry.value) === "tracked";
+export const isTrackedEdge = (entry: DataEntry): boolean => {
+	const value = entry.value;
+	const target = isObjectLike(value) ? (getRegisteredTarget(value) ?? value) : value;
+
+	return entry.writable && admissionLane(target) === "tracked";
+};
 
 export interface ChildChains {
 	readonly chains: ChainSet;

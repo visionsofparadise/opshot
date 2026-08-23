@@ -109,7 +109,7 @@ describe("TrackedSet", () => {
 				undo: { verb: "assign", path: ["set", "slots", "length"], value: 2 },
 			},
 			{
-				do: { verb: "assign", path: ["set", "slots", 2], value: ["c"] },
+				do: { verb: "assign", path: ["set", "slots", 2], value: ["c"], ids: [6] },
 				undo: { verb: "delete", path: ["set", "slots", 2] },
 			},
 			{
