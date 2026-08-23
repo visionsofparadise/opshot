@@ -182,6 +182,22 @@ describe("admission", () => {
 		);
 	});
 
+	it("distinguishes a node with no grounded occupancy from one whose chains are all tainted", () => {
+		const state = createMutableState({
+			box: { n: 1 },
+			tainted: unsafeTrack({ n: 1 }),
+		} as unknown as { box?: { n: number }; tainted: { n: number } });
+		const handle = requireHandle(state, "opshot: test requires a state");
+		const box = state.box!;
+
+		expect(nodeChainsOf(handle, state.tainted)).toEqual([]);
+
+		delete state.box;
+
+		expect(edgeStatusOf(handle, box).occupied).toBe(false);
+		expect(nodeChainsOf(handle, box)).toBeUndefined();
+	});
+
 	it("matches climb unsafe and visit on an aliased node with a tainted second route", () => {
 		const state = createMutableState({
 			a: { x: { n: 1 } },

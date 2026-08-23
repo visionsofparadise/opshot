@@ -398,8 +398,11 @@ export const isChainsUnsafe = (chains: ChainSet): boolean => chains.length === 0
 export const chainsAtRoot = (declarations: DeclarationTrie | undefined): ChainSet =>
 	declarations?.unsafe === true ? [] : [declarations];
 
-export function nodeChainsOf(handle: Handle, node: object): ChainSet {
+export function nodeChainsOf(handle: Handle, node: object): ChainSet | undefined {
 	const nodeChains = chainsAtNode(handle, node, new Map(), new Set());
+
+	if (!nodeChains.occupied) return undefined;
+
 	const chains = new Array<DeclarationTrie | undefined>();
 
 	for (const entry of nodeChains.entries) {

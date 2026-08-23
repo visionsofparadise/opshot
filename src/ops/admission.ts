@@ -65,7 +65,7 @@ export const admitStep = (
 	) {
 		const childChains = childChainsOf(residual, key);
 		const ignored = isChainsIgnored(childChains) || isIgnoredFrontier(handle, liveParent, key);
-		const chains = nodeChainsOf(handle, liveChild);
+		const chains = nodeChainsOf(handle, liveChild) ?? childChains;
 
 		if (dirty === undefined) return { visit: "continue", ignored, liveChild, chains };
 
@@ -78,7 +78,7 @@ export const admitStep = (
 		if (status.occupied) unsafe = status.unsafe;
 
 		return {
-			visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, unsafe),
+			visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, unsafe, false),
 			ignored,
 			liveChild,
 			chains,
@@ -141,7 +141,7 @@ export const admitDescendants = (
 			const slot = slotStatusOf(handle, liveNode, key);
 
 			ignored = slot.ignored || descended.ignored;
-			childChains = nodeChainsOf(handle, entry.value);
+			childChains = nodeChainsOf(handle, entry.value) ?? descended.chains;
 			childUnsafe = slot.occupied ? slot.unsafe : nodeUnsafe || descended.unsafe;
 			ignoredFrontier = undefined;
 		} else {
