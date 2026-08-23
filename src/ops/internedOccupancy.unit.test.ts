@@ -3,7 +3,7 @@ import { edgeStatusOf } from "../edges";
 import { requireHandle } from "../handle";
 import { internedIdOf, stageVend } from "../intern";
 import { createCaptureTables } from "../occupancy";
-import { interiorReachesInternedOccupied, internedOccupied, liveOf, occupancyNodeOf } from "./internedOccupancy";
+import { internedOccupied, liveOf, occupancyNodeOf } from "./internedOccupancy";
 
 describe("internedOccupancy", () => {
 	it("hits a directly interned-occupied node", () => {
@@ -20,8 +20,7 @@ describe("internedOccupancy", () => {
 		const state = createMutableState({ box: { inner: { n: 1 } } });
 		const handle = requireHandle(state, "opshot: test requires a state");
 
-		expect(interiorReachesInternedOccupied(handle, state.box)).toBe(true);
-		expect(interiorReachesInternedOccupied(handle, state.box.inner)).toBe(false);
+		expect(internedOccupied(handle, state.box.inner)).toBe(true);
 	});
 
 	it("terminates on a cyclic subtree", () => {
@@ -30,13 +29,13 @@ describe("internedOccupancy", () => {
 
 		state.box.self = state.box;
 
-		expect(interiorReachesInternedOccupied(handle, state.box)).toBe(true);
+		expect(internedOccupied(handle, state.box)).toBe(true);
 
 		const detached: { self?: object } = {};
 
 		detached.self = detached;
 
-		expect(interiorReachesInternedOccupied(handle, detached)).toBe(false);
+		expect(internedOccupied(handle, detached)).toBe(false);
 	});
 
 	it("misses an interned-but-unoccupied node", () => {
@@ -65,6 +64,5 @@ describe("internedOccupancy", () => {
 		expect(internedIdOf(handle, outsider)).toBeUndefined();
 		expect(edgeStatusOf(handle, outsider).occupied).toBe(false);
 		expect(internedOccupied(handle, outsider, capture)).toBe(false);
-		expect(interiorReachesInternedOccupied(handle, { child: outsider }, capture)).toBe(false);
 	});
 });
