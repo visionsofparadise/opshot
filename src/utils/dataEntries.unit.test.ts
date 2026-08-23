@@ -74,21 +74,11 @@ describe("segmentFor", () => {
 });
 
 describe("dataEntryValuesOf", () => {
-	it("includes array indexes and named keys when not filtering", () => {
+	it("includes array indexes and named keys", () => {
 		const list = Object.assign([10, 20], { named: 3 });
 
-		expect([...dataEntryValuesOf(list, false).keys()]).toEqual(["0", "1", "named"]);
-		expect(dataEntryValuesOf(list, false).get("0")).toBe(10);
-		expect(dataEntryValuesOf(list, false).get("named")).toBe(3);
-	});
-
-	it("filters canonical array indexes when ignoreArrayIndexes is true", () => {
-		const list = Object.assign([10, 20], { named: 3 });
-
-		expect([...dataEntryValuesOf(list, true).entries()]).toEqual([["named", 3]]);
-	});
-
-	it("keeps named object keys when filtering array indexes", () => {
-		expect([...dataEntryValuesOf({ a: 1, b: 2 }, true).keys()]).toEqual(["a", "b"]);
+		expect([...dataEntryValuesOf(list).keys()]).toEqual(["0", "1", "named"]);
+		expect(dataEntryValuesOf(list).get("0")).toBe(10);
+		expect(dataEntryValuesOf(list).get("named")).toBe(3);
 	});
 });

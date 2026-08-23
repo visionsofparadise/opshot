@@ -11,7 +11,7 @@ import { internedOccupied, occupancyNodeOf } from "./internedOccupancy";
 import { additionPair, changePair, linkOperation, linkUndo, removalPair } from "./mintPairs";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./path";
-import { isObjectLike } from "./predicates";
+import { isCanonicalArrayIndexString, isObjectLike } from "./predicates";
 import type { DirtyIndex, Handle } from "../handle";
 
 type RootKind = "plainObject" | "plainArray";
@@ -50,6 +50,22 @@ const commitLink = (
 
 const emptyContainerOf = (value: object): object => (isPlainArray(value) ? [] : {});
 
+const namedArrayEntriesOf = (value: Array<unknown>): Map<string, unknown> => {
+	const named = new Map<string, unknown>();
+
+	for (const key of Object.keys(value)) {
+		if (key === "__proto__" || isCanonicalArrayIndexString(key)) continue;
+
+		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+
+		if (!descriptor || !("value" in descriptor)) continue;
+
+		named.set(key, descriptor.value);
+	}
+
+	return named;
+};
+
 const mintDecomposedContents = (
 	context: DiffContext,
 	path: OperationPath,
@@ -75,7 +91,12 @@ const mintDecomposedContents = (
 			pushAddition(context, nextPath, after[index], childVerdict, liveNode);
 		}
 
-		diffObjectProperties(context, [], after, path, true, residual, liveNode);
+		for (const [key, value] of namedArrayEntriesOf(after)) {
+			const nextPath = appendOperationPath(path, key);
+			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+
+			pushAddition(context, nextPath, value, childVerdict, liveNode);
+		}
 	} else {
 		for (const entry of walkDataEntries(after)) {
 			const nextPath = appendOperationPath(path, entry.key);
@@ -313,17 +334,16 @@ const pushChange = (
 const sharesStorageIdentity = (before: unknown, after: unknown): boolean =>
 	isObjectLike(before) && isObjectLike(after) && isSameIdentity(before, after);
 
-const diffObjectProperties = (
+const diffCollectedProperties = (
 	context: DiffContext,
-	before: Record<string, unknown> | Array<unknown>,
-	after: Record<string, unknown> | Array<unknown>,
+	before: object,
+	after: object,
 	path: OperationPath,
-	ignoreArrayIndexes: boolean,
 	residual: ChainSet,
 	liveNode: unknown,
+	beforeEntries: Map<string, unknown>,
+	afterEntries: Map<string, unknown>,
 ): void => {
-	const beforeEntries = dataEntryValuesOf(before, ignoreArrayIndexes);
-	const afterEntries = dataEntryValuesOf(after, ignoreArrayIndexes);
 	const keys = new Set<string>([...beforeEntries.keys(), ...afterEntries.keys()]);
 
 	for (const key of keys) {
@@ -343,6 +363,26 @@ const diffObjectProperties = (
 			pushAddition(context, nextPath, afterEntries.get(key), verdict, liveNode);
 		}
 	}
+};
+
+const diffObjectProperties = (
+	context: DiffContext,
+	before: Record<string, unknown>,
+	after: Record<string, unknown>,
+	path: OperationPath,
+	residual: ChainSet,
+	liveNode: unknown,
+): void => {
+	diffCollectedProperties(
+		context,
+		before,
+		after,
+		path,
+		residual,
+		liveNode,
+		dataEntryValuesOf(before),
+		dataEntryValuesOf(after),
+	);
 };
 
 const diffArray = (
@@ -404,7 +444,16 @@ const diffArray = (
 		pushChange(context, lengthPath, before.length, after.length, lengthVerdict, liveNode);
 	}
 
-	diffObjectProperties(context, before, after, path, true, residual, liveNode);
+	diffCollectedProperties(
+		context,
+		before,
+		after,
+		path,
+		residual,
+		liveNode,
+		namedArrayEntriesOf(before),
+		namedArrayEntriesOf(after),
+	);
 };
 
 const diffValue = (
@@ -453,7 +502,7 @@ const diffValue = (
 
 	if (isPlainObject(before) && isPlainObject(after)) {
 		walkContainer(context.ancestors, before, after, () =>
-			diffObjectProperties(context, before, after, path, false, chains, liveChild),
+			diffObjectProperties(context, before, after, path, chains, liveChild),
 		);
 
 		return;
