@@ -16,15 +16,6 @@ const { proxyStateMap, proxyCache } = unstable_getInternalStates();
 
 const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
-interface SetFrame {
-	readonly target: object;
-	readonly prop: string | symbol;
-}
-
-const setFrameStack = new Array<SetFrame>();
-
-const currentSetParentOf = (): object | undefined => setFrameStack[setFrameStack.length - 1]?.target;
-
 const handleOwning = (target: object): Handle | undefined => {
 	const handles = handlesOf(target);
 	const raw = rawTargetOf(target);
@@ -44,73 +35,65 @@ interface AssignmentStatus {
 	readonly ignored: boolean;
 	readonly unsafe: boolean;
 	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
-	readonly originIndex: number;
 }
 
-let assignmentStatuses: Array<AssignmentStatus> | undefined;
+interface SetFrame {
+	readonly target: object;
+	readonly prop: string | symbol;
+	readonly statuses: ReadonlyArray<AssignmentStatus> | undefined;
+}
 
-const computeOutermostAssignment = (
-	target: object,
-	prop: string | symbol,
-	originIndex: number,
-): Array<AssignmentStatus> | undefined => {
-	if (typeof prop !== "string") return undefined;
+const setFrameStack = new Array<SetFrame>();
 
-	const handles = handlesOf(target);
+const currentSetParentOf = (): object | undefined => setFrameStack[setFrameStack.length - 1]?.target;
 
-	if (handles.length === 0) return undefined;
+const currentStatuses = (): ReadonlyArray<AssignmentStatus> | undefined =>
+	setFrameStack[setFrameStack.length - 1]?.statuses;
 
-	return handles.map((handle) => {
-		const slot = slotStatusOf(handle, target, segmentForProp(target, prop));
+const heldStatusesOf = (target: object, prop: string): ReadonlyArray<AssignmentStatus> | undefined => {
+	const key = segmentForProp(target, prop);
+	const statuses = new Array<AssignmentStatus>();
+
+	for (const handle of handlesOf(target)) {
+		const slot = slotStatusOf(handle, target, key);
+
+		if (!slot.occupied) continue;
+
+		statuses.push({ handle, ignored: slot.ignored, unsafe: slot.unsafe, chains: slot.chains });
+	}
+
+	return statuses.length === 0 ? undefined : statuses;
+};
+
+const inheritedStatusesOf = (target: object, prop: string): ReadonlyArray<AssignmentStatus> | undefined => {
+	const parent = setFrameStack[setFrameStack.length - 1];
+
+	if (parent?.statuses === undefined) return undefined;
+
+	const key = segmentForProp(target, prop);
+
+	return parent.statuses.map((status) => {
+		const descended = descendChains(status.chains, key);
 
 		return {
-			handle,
-			ignored: slot.ignored,
-			unsafe: slot.unsafe,
-			chains: slot.chains,
-			originIndex,
+			handle: status.handle,
+			ignored: status.ignored || descended.ignored,
+			unsafe: status.unsafe || descended.unsafe,
+			chains: descended.chains,
 		};
 	});
 };
 
-const statusOfCurrentAssignment = (): Array<AssignmentStatus> | undefined => {
-	if (assignmentStatuses === undefined) return undefined;
+const statusesForFrame = (
+	target: object,
+	prop: string | symbol,
+	initializing: boolean,
+): ReadonlyArray<AssignmentStatus> | undefined => {
+	if (typeof prop !== "string") return undefined;
 
-	const originIndex = assignmentStatuses[0]?.originIndex;
+	if (!initializing) return heldStatusesOf(target, prop);
 
-	if (originIndex === undefined || setFrameStack.length <= originIndex + 1) return assignmentStatuses;
-
-	for (let index = originIndex + 1; index < setFrameStack.length; index++) {
-		const frame = setFrameStack[index];
-
-		if (frame === undefined || typeof frame.prop !== "string") return assignmentStatuses;
-	}
-
-	return assignmentStatuses.map((assignment) => {
-		let chains = assignment.chains;
-		let unsafe = assignment.unsafe;
-		let ignored = assignment.ignored;
-
-		for (let index = assignment.originIndex + 1; index < setFrameStack.length; index++) {
-			const frame = setFrameStack[index];
-
-			if (frame === undefined || typeof frame.prop !== "string") return assignment;
-
-			const descended = descendChains(chains, segmentForProp(frame.target, frame.prop));
-
-			ignored = ignored || descended.ignored;
-			unsafe = unsafe || descended.unsafe;
-			chains = descended.chains;
-		}
-
-		return {
-			handle: assignment.handle,
-			chains,
-			unsafe,
-			ignored,
-			originIndex: assignment.originIndex,
-		};
-	});
+	return inheritedStatusesOf(target, prop) ?? heldStatusesOf(target, prop);
 };
 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>, unsafe = false): AdmissionLane => {
@@ -225,7 +208,7 @@ export const assertSafeDataPaths = (
 const certifyCurrentAssignment = (target: object, prop: string | symbol, resolved: object): void => {
 	if (typeof prop !== "string") return;
 
-	const assignments = statusOfCurrentAssignment();
+	const assignments = currentStatuses();
 
 	if (assignments === undefined) return;
 
@@ -258,6 +241,20 @@ const certifyCurrentAssignment = (target: object, prop: string | symbol, resolve
 				assignment.unsafe,
 			);
 	}
+};
+
+const writesThroughAccessor = (target: object, property: string | symbol): boolean => {
+	let holder: object | null = target;
+
+	while (holder !== null) {
+		const descriptor = Reflect.getOwnPropertyDescriptor(holder, property);
+
+		if (descriptor !== undefined) return !("value" in descriptor);
+
+		holder = Reflect.getPrototypeOf(holder);
+	}
+
+	return false;
 };
 
 const refusesWrite = (target: object, property: string | symbol, value: unknown): boolean => {
@@ -351,7 +348,7 @@ class MissingMutationTrapError extends Error {
 }
 
 const canProxyCurrentAssignment = (value: unknown): boolean => {
-	const assignments = statusOfCurrentAssignment();
+	const assignments = currentStatuses();
 
 	if (assignments === undefined) return canProxy(value, currentSetParentOf());
 
@@ -478,11 +475,9 @@ export function installBoundary(): void {
 					const resolved: unknown = peelSnapshotsAndReadProxies(assigned);
 					const truncated = truncatedOccupantsOf(target, prop, resolved);
 					const previous: unknown = typeof prop === "string" ? Reflect.get(target, prop) : undefined;
-					const originIndex = setFrameStack.length;
+					const initializing = isInitializing();
 
-					assignmentStatuses ??= computeOutermostAssignment(target, prop, originIndex);
-
-					setFrameStack.push({ target, prop });
+					setFrameStack.push({ target, prop, statuses: statusesForFrame(target, prop, initializing) });
 
 					try {
 						if (typeof resolved === "object" && resolved !== null) {
@@ -490,7 +485,8 @@ export function installBoundary(): void {
 
 							if (refusesWrite(target, prop, resolved)) return false;
 
-							certifyCurrentAssignment(target, prop, resolved);
+							if (!initializing && !writesThroughAccessor(target, prop))
+								certifyCurrentAssignment(target, prop, resolved);
 
 							const alreadyTracked = proxyStateMap.has(resolved) || proxyCache.has(resolved);
 							const instrumented =
@@ -498,28 +494,23 @@ export function installBoundary(): void {
 
 							const result = defaultSet(target, prop, instrumented, receiver);
 
-							if (result && !isInitializing()) commitSetInEdges(target, prop, previous, instrumented, truncated);
+							if (result && !initializing) commitSetInEdges(target, prop, previous, instrumented, truncated);
 
 							return result;
 						}
 
 						if (refusesWrite(target, prop, resolved)) return false;
 
-						if (typeof resolved === "function") certifyCurrentAssignment(target, prop, resolved);
+						if (!initializing && typeof resolved === "function" && !writesThroughAccessor(target, prop))
+							certifyCurrentAssignment(target, prop, resolved);
 
 						const result = defaultSet(target, prop, resolved, receiver);
 
-						if (result && !isInitializing()) commitSetInEdges(target, prop, previous, resolved, truncated);
+						if (result && !initializing) commitSetInEdges(target, prop, previous, resolved, truncated);
 
 						return result;
 					} finally {
 						setFrameStack.pop();
-
-						if (
-							assignmentStatuses !== undefined &&
-							setFrameStack.length <= (assignmentStatuses[0]?.originIndex ?? 0)
-						)
-							assignmentStatuses = undefined;
 					}
 				},
 				deleteProperty(target, prop) {

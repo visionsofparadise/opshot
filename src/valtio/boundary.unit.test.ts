@@ -10,6 +10,7 @@ import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
 import { TrackedMap } from "../tracked/trackedMap";
 import { transact } from "../transact/transact";
+import { unsafeTrack } from "../unsafeTrack";
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
 	const emissions = new Array<{ state: T; ops: Array<Operation> }>();
@@ -658,5 +659,182 @@ describe("boundary: trap admission", () => {
 			state.lookup.set("bad", new Map());
 		}).toThrow("cannot be tracked");
 		expect(state.lookup.has("bad")).toBe(false);
+	});
+});
+
+describe("boundary: trap admission across states", () => {
+	it("a write nested inside a non-strict state's frame is judged by the strict state it writes into", async () => {
+		const doc = createMutableState({ annotations: null as unknown, tick: 0 }, { strict: true });
+		const emissions = recordEmissions(doc);
+
+		class Panel {
+			set selection(value: unknown) {
+				doc.annotations = value;
+			}
+		}
+
+		const ui = createMutableState({ panel: new Panel() }, { strict: false });
+
+		expect(() => {
+			ui.panel.selection = new Map();
+		}).toThrow("Map at /annotations cannot be tracked");
+		expect(doc.annotations).toBeNull();
+
+		doc.tick = 1;
+
+		await Promise.resolve();
+
+		expect(emissions.map((emission) => shapeOps(emission.ops))).toEqual([
+			[{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } }],
+		]);
+	});
+
+	it("a write nested inside a strict state's frame is judged by the non-strict state it writes into", () => {
+		const loose = createMutableState({ sink: null as unknown }, { strict: false });
+
+		class Relay {
+			set forward(value: unknown) {
+				loose.sink = value;
+			}
+		}
+
+		const strict = createMutableState({ relay: new Relay() }, { strict: true });
+
+		strict.relay.forward = new Map([["k", 1]]);
+
+		expect(loose.sink).toBeInstanceOf(Map);
+	});
+
+	it("the unsafeTrack exemption does not cross into a clean strict state", () => {
+		const target = createMutableState({ clean: null as unknown }, { strict: true });
+
+		class Cross {
+			set gate(value: unknown) {
+				target.clean = value;
+			}
+		}
+
+		const source = createMutableState({ zone: unsafeTrack({ cross: new Cross() }) }, { strict: true });
+
+		expect(() => {
+			source.zone.cross.gate = new Map();
+		}).toThrow("Map at /clean cannot be tracked");
+		expect(target.clean).toBeNull();
+	});
+
+	it("a strict state stops judging a node it no longer holds", async () => {
+		const state = createMutableState<{ a?: { keep: number; bad?: unknown } }>({ a: { keep: 1 } });
+
+		recordEmissions(state);
+
+		const held = state.a;
+
+		if (held === undefined) throw new Error("expected a held node");
+
+		delete state.a;
+
+		await Promise.resolve();
+
+		held.bad = new Map();
+
+		expect(held.bad).toBeInstanceOf(Map);
+	});
+
+	it("a node held only by a non-strict state admits dangerous material after a strict state releases it", async () => {
+		const strict = createMutableState<{ a?: { keep: number; bad?: unknown } }>({ a: { keep: 1 } });
+
+		recordEmissions(strict);
+
+		const held = strict.a;
+
+		if (held === undefined) throw new Error("expected a held node");
+
+		delete strict.a;
+
+		await Promise.resolve();
+
+		const loose = createMutableState<{ n: unknown }>({ n: null }, { strict: false });
+
+		loose.n = held;
+
+		await Promise.resolve();
+
+		held.bad = new Map();
+
+		expect(held.bad).toBeInstanceOf(Map);
+	});
+
+	it("detaching a node from an unsafe zone leaves it no stricter than it was", async () => {
+		const zone: { holder?: { n: number; ok?: unknown; later?: unknown } } = { holder: { n: 1 } };
+		const state = createMutableState({ zone: unsafeTrack(zone) });
+
+		recordEmissions(state);
+
+		const holder = state.zone.holder;
+
+		if (holder === undefined) throw new Error("expected a holder");
+
+		holder.ok = new Map();
+
+		await Promise.resolve();
+
+		delete state.zone.holder;
+
+		await Promise.resolve();
+
+		holder.later = new Map();
+
+		expect(holder.later).toBeInstanceOf(Map);
+	});
+
+	it("a write through a prototype accessor is a ride-along the trap leaves to the setter", () => {
+		const landed = new Array<unknown>();
+
+		class Sink {
+			set gate(value: unknown) {
+				landed.push(value);
+			}
+		}
+
+		const state = createMutableState({ sink: new Sink() }, { strict: true });
+
+		state.sink.gate = new Map([["k", 1]]);
+
+		expect(landed).toHaveLength(1);
+		expect(Object.hasOwn(state.sink, "gate")).toBe(false);
+	});
+
+	it("a refused compound array mutator keeps the prefix it already landed and emits it", async () => {
+		const state = createMutableState({ list: [1, 2, 3] as Array<unknown> });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			state.list.splice(1, 0, new Map());
+		}).toThrow("cannot be tracked");
+
+		await Promise.resolve();
+
+		expect(state.list).toEqual([1, 2, 2, 3]);
+		expect(emissions.flatMap((emission) => emission.ops.map((operation) => operation.do.path.join("/")))).toEqual([
+			"list/2",
+			"list/length",
+			"list/3",
+		]);
+	});
+
+	it("the same compound mutator inside transact restores whole", async () => {
+		const state = createMutableState({ list: [1, 2, 3] as Array<unknown> });
+		const emissions = recordEmissions(state);
+
+		expect(() => {
+			transact(state, () => {
+				state.list.splice(1, 0, new Map());
+			});
+		}).toThrow("cannot be tracked");
+
+		await Promise.resolve();
+
+		expect(state.list).toEqual([1, 2, 3]);
+		expect(emissions).toHaveLength(0);
 	});
 });
