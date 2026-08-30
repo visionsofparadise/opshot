@@ -116,10 +116,16 @@ class AssignHalf extends OperationHalf {
 	readonly value: unknown;
 	readonly ids?: ReadonlyArray<number>;
 
-	constructor(path: OperationPath, value: unknown, original: unknown = value, ids?: ReadonlyArray<number>) {
+	constructor(
+		path: OperationPath,
+		value: unknown,
+		original: unknown = value,
+		ids?: ReadonlyArray<number>,
+		handle?: Handle,
+	) {
 		super(path);
 		valueOriginals.set(this, original);
-		this.value = cloneValue(value, new WeakMap(), this.path);
+		this.value = cloneValue(value, new WeakMap(), this.path, handle);
 
 		if (ids !== undefined) this.ids = ids;
 	}
@@ -176,7 +182,8 @@ export const createAssignMutation = (
 	value: unknown,
 	original: unknown = value,
 	ids?: ReadonlyArray<number>,
-): AssignMutation => new AssignHalf(path, value, original, ids);
+	handle?: Handle,
+): AssignMutation => new AssignHalf(path, value, original, ids, handle);
 
 export const createDeleteMutation = (path: OperationPath): DeleteMutation => new DeleteHalf(path);
 

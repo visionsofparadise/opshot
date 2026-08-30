@@ -5,14 +5,24 @@ import { isObjectLike } from "./predicates";
 import type { Handle } from "../handle";
 import type { OperationPath } from "./path";
 
-export const additionPair = (path: OperationPath, after: unknown, ids?: ReadonlyArray<number>): Operation => ({
-	do: createAssignMutation(path, after, after, ids),
+export const additionPair = (
+	path: OperationPath,
+	after: unknown,
+	ids?: ReadonlyArray<number>,
+	handle?: Handle,
+): Operation => ({
+	do: createAssignMutation(path, after, after, ids, handle),
 	undo: createDeleteMutation(path),
 });
 
-export const removalPair = (path: OperationPath, before: unknown, ids?: ReadonlyArray<number>): Operation => ({
+export const removalPair = (
+	path: OperationPath,
+	before: unknown,
+	ids?: ReadonlyArray<number>,
+	handle?: Handle,
+): Operation => ({
 	do: createDeleteMutation(path),
-	undo: createAssignMutation(path, before, before, ids),
+	undo: createAssignMutation(path, before, before, ids, handle),
 });
 
 export const linkUndo = (
@@ -29,7 +39,7 @@ export const linkUndo = (
 		if (id !== undefined) return createLinkMutation(path, id);
 	}
 
-	return createAssignMutation(path, before);
+	return createAssignMutation(path, before, before, undefined, handle);
 };
 
 export const linkOperation = (
@@ -50,6 +60,6 @@ export const changePair = (
 	handle: Handle | undefined,
 	ids?: ReadonlyArray<number>,
 ): Operation => ({
-	do: createAssignMutation(path, after, after, ids),
+	do: createAssignMutation(path, after, after, ids, handle),
 	undo: linkUndo(path, before, true, handle),
 });

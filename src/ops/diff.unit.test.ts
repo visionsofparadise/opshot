@@ -11,6 +11,7 @@ import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
+import { unsafeTrack } from "../unsafeTrack";
 import { batch } from "../batch";
 import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
@@ -2062,5 +2063,267 @@ describe("diffObjects: identity occupancy", () => {
 		expect((destOp?.do as AssignMutation).ids).toBeDefined();
 		expect((destOp?.do as AssignMutation).ids).not.toContain(srcId);
 		expect(internId(state, state.dest as object)).not.toBe(srcId);
+	});
+});
+
+describe("tracked-only payloads", () => {
+	it("an assign payload omits an edge to an ignored object", () => {
+		const state = createMutableState({} as { a?: { x: number; hid?: { secret: number } } });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = { x: 1, hid: ignore({ secret: 1 }) };
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(ops[0]?.do).toMatchObject({ verb: "assign", path: ["a"] });
+		expect(readValue(ops[0]?.do ?? { verb: "delete", path: [] })).toEqual({ x: 1 });
+		expect(JSON.stringify(readValue(ops[0]?.do ?? { verb: "delete", path: [] }))).not.toContain("hid");
+	});
+
+	it("an assign payload omits an edge to a frozen object", () => {
+		const state = createMutableState({} as { a?: { x: number; cfg?: { n: number } } });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = { x: 1, cfg: Object.freeze({ n: 1 }) };
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(readValue(ops[0]?.do ?? { verb: "delete", path: [] })).toEqual({ x: 1 });
+	});
+
+	it("an assign payload omits a dangerous edge value", () => {
+		const state = createMutableState({} as { a?: { x: number; m?: Map<string, string> } }, { strict: false });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = { x: 1, m: new Map([["k", "v"]]) };
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect(readValue(ops[0]?.do ?? { verb: "delete", path: [] })).toEqual({ x: 1 });
+
+		const parsed = JSON.parse(JSON.stringify(ops)) as Array<Operation>;
+
+		expect(JSON.parse(JSON.stringify(parsed))).toEqual(parsed);
+		expect((parsed[0]?.do as AssignMutation).value).toEqual({ x: 1 });
+	});
+
+	it("an assign payload omits ride-alongs", () => {
+		const payload: Record<PropertyKey, unknown> = { x: 1 };
+
+		payload[Symbol("ride")] = { hidden: 1 };
+		Object.defineProperty(payload, "hid", { value: { n: 1 }, enumerable: false, writable: true, configurable: true });
+		Object.defineProperty(payload, "acc", {
+			get: () => ({ n: 1 }),
+			enumerable: true,
+			configurable: true,
+		});
+
+		const state = createMutableState({} as { a?: Record<PropertyKey, unknown> });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = payload;
+		});
+
+		const value = readValue((heard[0] ?? [])[0]?.do ?? { verb: "delete", path: [] }) as object;
+
+		expect(Reflect.ownKeys(value)).toEqual(["x"]);
+	});
+
+	it("a replacement's undo half omits untracked edges", () => {
+		const state = createMutableState({} as { a?: { x: number; hid?: { secret: number }; cfg?: { n: number } } });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = { x: 1, hid: ignore({ secret: 1 }), cfg: Object.freeze({ n: 1 }) };
+		});
+
+		batch(() => {
+			state.a = { x: 2 };
+		});
+
+		const replacement = (heard[1] ?? [])[0];
+
+		expect(replacement?.do).toMatchObject({ verb: "assign", path: ["a"] });
+		expect(readValue(replacement?.undo ?? { verb: "delete", path: [] })).toEqual({ x: 1 });
+	});
+
+	it("an ignored array element strips to a hole", () => {
+		const state = createMutableState({} as { list?: Array<unknown>; tail?: Array<unknown> });
+		const heard = record(state);
+
+		batch(() => {
+			state.list = [ignore({ n: 1 }), 2];
+			state.tail = [2, ignore({ n: 1 })];
+		});
+
+		const delivered = heard[0] ?? [];
+		const listValue = readValue(
+			delivered.find((pair) => pair.do.path[0] === "list")?.do ?? { verb: "delete", path: [] },
+		);
+		const tailValue = readValue(
+			delivered.find((pair) => pair.do.path[0] === "tail")?.do ?? { verb: "delete", path: [] },
+		);
+
+		expect(Object.hasOwn(listValue as object, 0)).toBe(false);
+		expect((listValue as Array<unknown>)[1]).toBe(2);
+		expect((listValue as Array<unknown>).length).toBe(2);
+		expect((tailValue as Array<unknown>)[0]).toBe(2);
+		expect(Object.hasOwn(tailValue as object, 1)).toBe(false);
+		expect((tailValue as Array<unknown>).length).toBe(2);
+	});
+
+	it("a frozen occupant entering a slot emits nothing", () => {
+		const state = createMutableState({} as { cfg?: { n: number } });
+		const heard = record(state);
+
+		batch(() => {
+			state.cfg = Object.freeze({ n: 1 });
+		});
+
+		expect(heard).toEqual([]);
+	});
+
+	it("a replacement over a never-recorded occupant emits an addition", () => {
+		const state = createMutableState({} as { a?: { secret: number } | { fresh: number } });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = ignore({ secret: 1 });
+		});
+
+		expect(heard).toEqual([]);
+
+		batch(() => {
+			state.a = { fresh: 1 };
+		});
+
+		const ops = heard[0] ?? [];
+		const op = ops[0];
+
+		expect(ops).toHaveLength(1);
+		expect(op?.undo.verb).toBe("delete");
+		expect(
+			JSON.stringify([
+				readValue(op?.do ?? { verb: "delete", path: [] }),
+				readValue(op?.undo ?? { verb: "delete", path: [] }),
+			]),
+		).not.toContain("secret");
+	});
+
+	it("a deletion of a never-recorded occupant emits nothing", () => {
+		const state = createMutableState({} as { hid?: { secret: number } });
+		const heard = record(state);
+
+		batch(() => {
+			state.hid = ignore({ secret: 2 });
+		});
+
+		expect(heard).toEqual([]);
+
+		batch(() => {
+			delete state.hid;
+		});
+
+		expect(heard).toEqual([]);
+	});
+
+	it("a replacement of a never-recorded occupant by a primitive emits an addition", () => {
+		const state = createMutableState({} as { a?: { secret: number } | number });
+		const heard = record(state);
+
+		batch(() => {
+			state.a = ignore({ secret: 1 });
+		});
+
+		expect(heard).toEqual([]);
+
+		batch(() => {
+			state.a = 5;
+		});
+
+		const ops = heard[0] ?? [];
+		const op = ops[0];
+
+		expect(ops).toHaveLength(1);
+		expect(op?.undo.verb).toBe("delete");
+		expect(
+			JSON.stringify([
+				readValue(op?.do ?? { verb: "delete", path: [] }),
+				readValue(op?.undo ?? { verb: "delete", path: [] }),
+			]),
+		).not.toContain("secret");
+	});
+
+	it("a held-ignored node keeps emitting through its kept edges", () => {
+		const state = createMutableState({ doc: { title: "t" } });
+		const heard = record(state);
+
+		ignore(state.doc);
+
+		batch(() => {
+			state.doc.title = "t2";
+		});
+
+		expect(heard[0]).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["doc", "title"], value: "t2" });
+	});
+
+	it("a TrackedMap's tracked entries ride the payload", () => {
+		const state = createMutableState({} as { m?: TrackedMap<string, number> });
+		const heard = record(state);
+
+		batch(() => {
+			state.m = new TrackedMap([["k", 1]]);
+		});
+
+		const value = readValue((heard[0] ?? [])[0]?.do ?? { verb: "delete", path: [] }) as object;
+
+		for (const key of ["slots", "index", "count"] as const) {
+			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+
+			expect(descriptor).toBeDefined();
+			expect(descriptor !== undefined && "value" in descriptor).toBe(true);
+		}
+	});
+
+	it("an ever-tracked occupant frozen through the proxy embeds a record-faithful undo on replacement", () => {
+		const state = createMutableState({ a: { n: 1 } as { n: number } | { fresh: number } });
+		const heard = record(state);
+
+		batch(() => {
+			Object.freeze(state.a);
+		});
+
+		heard.length = 0;
+
+		batch(() => {
+			state.a = { fresh: 1 };
+		});
+
+		expect(readValue((heard[0] ?? [])[0]?.undo ?? { verb: "delete", path: [] })).toEqual({ n: 1 });
+	});
+
+	it("an unsafeTrack'd occupant keeps emitting and riding", () => {
+		const state = createMutableState({} as { m?: Map<unknown, unknown> });
+		const heard = record(state);
+
+		batch(() => {
+			state.m = unsafeTrack(new Map());
+		});
+
+		const ops = heard[0] ?? [];
+
+		expect(ops).toHaveLength(1);
+		expect((ops[0]?.do as AssignMutation).ids).toBeDefined();
 	});
 });

@@ -7,7 +7,7 @@ import { internedOccupied } from "./internedOccupancy";
 import { batch } from "../batch";
 import { unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
-import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath } from "./admission";
+import { admitDescendants, admitStep, markChangedPath } from "./admission";
 import { createOperationPath } from "./path";
 import { isObjectLike } from "./predicates";
 
@@ -62,8 +62,6 @@ describe("admission", () => {
 
 		expect(verdict.visit).toBe("skip");
 		expect(verdict.ignored).toBe(false);
-		expect(emitsSkippedOccupancy(frozen)).toBe(true);
-		expect(emitsSkippedOccupancy(new Map())).toBe(false);
 	});
 
 	it("folds the retired admit and ignore pair into one verdict", () => {
@@ -122,7 +120,6 @@ describe("admission", () => {
 		expect(verdict.visit).toBe("continue");
 		expect(verdict.ignored).toBe(false);
 		expect(verdict.liveChild).toBe(state);
-		expect(emitsSkippedOccupancy(state)).toBe(false);
 	});
 
 	it("marks the dirty index along a changed path", () => {

@@ -1,10 +1,9 @@
-import { isTrackedEdge } from "../edges";
+import { isTrackedEdge, isUntrackedEdge } from "../edges";
 import { isSameIdentity } from "../identity";
-import { isIgnored } from "../ignore";
 import { internedIdOf, internNode, internSubtree } from "../intern";
-import { dataEntryValuesOf, walkDataEntries } from "../utils/dataEntries";
+import { dataEntryValuesOf, segmentFor, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
-import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath, type StepVerdict } from "./admission";
+import { admitDescendants, admitStep, markChangedPath, type StepVerdict } from "./admission";
 import { walkContainer, type Ancestors } from "./ancestorPairs";
 import { isPlainArray, isPlainObject } from "./cloneValue";
 import { internedOccupied, liveOf, occupancyNodeOf } from "./internedOccupancy";
@@ -64,7 +63,7 @@ const occupancyUndo = (
 	const ids =
 		isObjectLike(before) && context.handle !== undefined ? internIdsOfSubtree(context.handle, before) : undefined;
 
-	return createAssignMutation(path, before, before, ids);
+	return createAssignMutation(path, before, before, ids, context.handle);
 };
 
 class IncompatibleObjectRootsError extends Error {
@@ -155,7 +154,7 @@ const mintDecomposed = (
 	const ids = containerId === undefined ? undefined : [containerId];
 
 	commitOperation(context, {
-		do: createAssignMutation(path, emptyContainerOf(after), after, ids),
+		do: createAssignMutation(path, emptyContainerOf(after), after, ids, context.handle),
 		undo,
 	});
 	announceIds(context, ids);
@@ -260,7 +259,7 @@ const internIdsOfSubtree = (handle: Handle, node: object): Array<number> | undef
 		for (const entry of walkDataEntries(current)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
 
-			if (isIgnored(entry.value)) continue;
+			if (isUntrackedEdge(handle, current, segmentFor(current, entry.key), entry.value)) continue;
 
 			walk(entry.value);
 		}
@@ -323,12 +322,20 @@ const mintAssignment = (
 
 	if (beforePresent) {
 		commitOperation(context, {
-			do: createAssignMutation(path, after, after, ids),
+			do: createAssignMutation(path, after, after, ids, handle),
 			undo: occupancyUndo(context, path, before, true),
 		});
-	} else commitOperation(context, additionPair(path, after, ids));
+	} else commitOperation(context, additionPair(path, after, ids, handle));
 
 	announceIds(context, ids);
+};
+
+const isRecordedBefore = (context: DiffContext, before: unknown): boolean => {
+	if (!isObjectLike(before)) return true;
+
+	if (context.handle === undefined) return true;
+
+	return internedIdOf(context.handle, before) !== undefined;
 };
 
 const pushAddition = (
@@ -340,9 +347,7 @@ const pushAddition = (
 ): void => {
 	const { visit, ignored } = verdict;
 
-	if (visit === "skip") {
-		if (ignored || !emitsSkippedOccupancy(after)) return;
-	} else if (ignored) return;
+	if (visit === "skip" || ignored) return;
 
 	markChangedPath(context.handle, context.dirty, path, liveParent);
 
@@ -357,6 +362,8 @@ const pushRemoval = (
 	liveParent: unknown,
 ): void => {
 	if (verdict.ignored) return;
+
+	if (isObjectLike(before) && !isRecordedBefore(context, before)) return;
 
 	markChangedPath(context.handle, context.dirty, path, liveParent);
 
@@ -374,12 +381,12 @@ const pushRemoval = (
 			return;
 		}
 
-		commitOperation(context, removalPair(path, before, internIdsOfSubtree(handle, before)));
+		commitOperation(context, removalPair(path, before, internIdsOfSubtree(handle, before), handle));
 
 		return;
 	}
 
-	commitOperation(context, removalPair(path, before));
+	commitOperation(context, removalPair(path, before, undefined, context.handle));
 };
 
 const pushChange = (
@@ -391,6 +398,12 @@ const pushChange = (
 	liveParent: unknown,
 ): void => {
 	markChangedPath(context.handle, context.dirty, path, liveParent);
+
+	if (isObjectLike(before) && !isRecordedBefore(context, before)) {
+		mintAssignment(context, path, before, after, false, verdict);
+
+		return;
+	}
 
 	mintAssignment(context, path, before, after, true, verdict);
 };
@@ -529,15 +542,7 @@ const diffValue = (
 	const verdict = admitStep(context.handle, context.dirty, path, liveParent);
 	const { visit, ignored, liveChild } = verdict;
 
-	if (visit === "skip" || ignored) {
-		if (sameStorage) return;
-
-		if (ignored || !emitsSkippedOccupancy(after)) return;
-
-		pushChange(context, path, before, after, verdict, liveParent);
-
-		return;
-	}
+	if (visit === "skip" || ignored) return;
 
 	if (replacing) {
 		pushChange(context, path, before, after, verdict, liveParent);

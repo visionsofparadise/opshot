@@ -247,11 +247,11 @@ describe("applyOperations", () => {
 		expect(state.item?.n).toBe(2);
 	});
 
-	it("undo of a replace restores a frozen Map by identity", () => {
+	it("undo of a replace over a never-recorded frozen Map deletes the slot", () => {
 		const frozenMap = Object.freeze(new Map<string, number>([["k", 1]]));
 		const state = createMutableState({
 			lookup: frozenMap,
-		} as unknown as { lookup: Map<string, number> | { n: number } });
+		} as unknown as { lookup: Map<string, number> | { n: number } | undefined });
 		const heard = record(state);
 
 		batch(() => {
@@ -260,7 +260,7 @@ describe("applyOperations", () => {
 
 		applyOperations(state, heard[0] ?? [], "undo");
 
-		expect(state.lookup).toBe(frozenMap);
+		expect(state.lookup).toBeUndefined();
 	});
 
 	it("undo then redo of stamped operations restores identity", () => {
@@ -1008,8 +1008,8 @@ describe("applyOperations: link halves", () => {
 		applyOperations(origin, heard[0] ?? [], "undo");
 		applyOperations(replica, transported, "undo");
 
-		expect(replica).toEqual(origin);
 		expect(origin.box).toEqual({ a: { n: 1 }, odd: { o: 1 }, b: { n: 2 } });
+		expect(replica.box).toEqual({ a: { n: 1 }, b: { n: 2 } });
 		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
 		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
 		expect(internId(replica, replica.box!)).toBe(admitted[0]);
@@ -1068,5 +1068,142 @@ describe("applyOperations: link halves", () => {
 		expect(namedNodes.map((node) => internId(replica, node))).toEqual(named);
 		expect(replicaHandle.byId.size).toBeGreaterThanOrEqual(bound);
 		expect(replicaHandle.nextInternId).toBeGreaterThanOrEqual(minted);
+	});
+});
+
+describe("construct-lane reconstruction", () => {
+	it("a clone reconstructs tracked nodes only", () => {
+		const source = createMutableState({} as { a?: { x: number; hid?: { secret: number } } });
+		const heard = record(source);
+
+		batch(() => {
+			source.a = { x: 1, hid: ignore({ secret: 1 }) };
+		});
+
+		const clone = createMutableState({} as { a?: { x: number } });
+
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+
+		expect(clone.a).toEqual({ x: 1 });
+	});
+
+	it("reconstruction preserves id alignment past an ignored region", () => {
+		const source = createMutableState(
+			{} as {
+				a?: { x: number; hid?: { deep: { secret: number } } };
+				b?: { y: number };
+				alias?: { y: number };
+			},
+		);
+		const heard = record(source);
+
+		batch(() => {
+			source.a = { x: 1, hid: ignore({ deep: { secret: 1 } }) };
+		});
+
+		batch(() => {
+			source.b = { y: 2 };
+		});
+
+		batch(() => {
+			source.alias = source.b;
+		});
+
+		const clone = createMutableState(
+			{} as {
+				a?: { x: number; hid?: { deep: { secret: number } } };
+				b?: { y: number };
+				alias?: { y: number };
+			},
+		);
+
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[1] ?? [])) as Array<Operation>, "do");
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[2] ?? [])) as Array<Operation>, "do");
+
+		expect(clone.b).toEqual({ y: 2 });
+		expect(clone.alias).toBe(clone.b);
+		expect(clone.a).toEqual({ x: 1 });
+	});
+
+	it("reconstruction preserves id alignment past a frozen region", () => {
+		const source = createMutableState(
+			{} as {
+				a?: { x: number; cfg?: { deep: { n: number } } };
+				b?: { y: number };
+				alias?: { y: number };
+			},
+		);
+		const heard = record(source);
+
+		batch(() => {
+			source.a = { x: 1, cfg: Object.freeze({ deep: { n: 1 } }) };
+		});
+
+		batch(() => {
+			source.b = { y: 2 };
+		});
+
+		batch(() => {
+			source.alias = source.b;
+		});
+
+		const clone = createMutableState(
+			{} as {
+				a?: { x: number; cfg?: { deep: { n: number } } };
+				b?: { y: number };
+				alias?: { y: number };
+			},
+		);
+
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[1] ?? [])) as Array<Operation>, "do");
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[2] ?? [])) as Array<Operation>, "do");
+
+		expect(clone.b).toEqual({ y: 2 });
+		expect(clone.alias).toBe(clone.b);
+		expect(clone.a).toEqual({ x: 1 });
+	});
+
+	it("a removal's undo restores a recorded ignored region by identity on the origin", () => {
+		const original = { secret: 1 };
+		const state = createMutableState<{ a?: { x: number; hid: { secret: number } } }>({
+			a: { x: 1, hid: ignore(original) },
+		});
+		const heard = record(state);
+
+		batch(() => {
+			delete state.a;
+		});
+
+		applyOperations(state, heard[0] ?? [], "undo");
+
+		const restored = state.a;
+
+		if (restored === undefined) throw new Error("missing restored a");
+
+		expect(isSameIdentity(restored.hid, original)).toBe(true);
+	});
+
+	it("held-ignored content reconstructs on a clone", () => {
+		const source = createMutableState({} as { doc?: { title: string } });
+		const heard = record(source);
+
+		batch(() => {
+			source.doc = { title: "t" };
+		});
+
+		ignore(source.doc as { title: string });
+
+		batch(() => {
+			(source.doc as { title: string }).title = "t2";
+		});
+
+		const clone = createMutableState({} as { doc?: { title: string } });
+
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[0] ?? [])) as Array<Operation>, "do");
+		applyOperations(clone, JSON.parse(JSON.stringify(heard[1] ?? [])) as Array<Operation>, "do");
+
+		expect(clone.doc).toEqual({ title: "t2" });
 	});
 });

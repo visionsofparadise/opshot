@@ -3,7 +3,6 @@ import { isIgnored } from "../ignore";
 import { bindVisitedOccupancy, markDirtyPath, type OccupancyVisit } from "../occupancy";
 import { isUnsafeMarked } from "../unsafeTrack";
 import { segmentFor, walkDataEntries } from "../utils/dataEntries";
-import { admissionLane } from "../valtio/classify";
 import { rawTargetOf } from "../valtio/rawTarget";
 import { internedOccupied } from "./internedOccupancy";
 import { appendOperationPath, type OperationPath } from "./path";
@@ -116,6 +115,3 @@ export const markChangedPath = (
 
 	markDirtyPath(dirty, handle, path, liveParent);
 };
-
-export const emitsSkippedOccupancy = (value: unknown): boolean =>
-	isObjectLike(value) && admissionLane(value) === "untracked";

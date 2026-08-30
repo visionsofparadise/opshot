@@ -1,6 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "./identity";
-import { isIgnored } from "./ignore";
 import { peelReadProxy } from "./peelReadProxy";
 import { isUnsafeMarked } from "./unsafeTrack";
 import { walkDataEntries, type DataEntry } from "./utils/dataEntries";
@@ -10,7 +9,7 @@ import type { Handle } from "./handle";
 
 const { proxyCache } = unstable_getInternalStates();
 
-const occupancyNodeOf = (node: object): object => {
+export const occupancyNodeOf = (node: object): object => {
 	const peeled = peelReadProxy(node);
 	const object = typeof peeled === "object" && peeled !== null ? peeled : node;
 
@@ -144,8 +143,6 @@ const walkSlots = (
 
 		for (const entry of walkDataEntries(carriedCurrent)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
-
-			if (isIgnored(entry.value)) continue;
 
 			const child: unknown = Reflect.get(current, entry.key);
 

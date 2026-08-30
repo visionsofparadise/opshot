@@ -2,7 +2,7 @@ import { cloneValue } from "./cloneValue";
 import { createOperationPath } from "./path";
 
 describe("cloneValue", () => {
-	it("copies a getter as an accessor without invoking it", () => {
+	it("omits an enumerable accessor without invoking it", () => {
 		let invoked = 0;
 		const getCurrent = (): number => {
 			invoked += 1;
@@ -16,20 +16,18 @@ describe("cloneValue", () => {
 		});
 
 		const cloned = cloneValue(value, new WeakMap(), createOperationPath([]));
-		const descriptor = Reflect.getOwnPropertyDescriptor(cloned as object, "current");
 
 		expect(invoked).toBe(0);
-		expect(descriptor?.get).toBe(getCurrent);
-		expect(descriptor && "value" in descriptor).toBe(false);
+		expect(Reflect.getOwnPropertyDescriptor(cloned as object, "current")).toBeUndefined();
+		expect(Reflect.ownKeys(cloned as object)).toEqual([]);
 	});
 
-	it("preserves frozenness on a cloned object", () => {
+	it("returns a frozen object by identity", () => {
 		const value = Object.freeze({ n: 1 });
 		const cloned = cloneValue(value, new WeakMap(), createOperationPath([]));
 
+		expect(cloned).toBe(value);
 		expect(Object.isFrozen(cloned)).toBe(true);
-		expect(cloned).toEqual({ n: 1 });
-		expect(cloned).not.toBe(value);
 	});
 
 	it("returns a frozen Map by identity", () => {

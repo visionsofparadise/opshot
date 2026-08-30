@@ -1,7 +1,7 @@
 import { registerHandle, type Handle } from "./handle";
 import { getRegisteredTarget } from "./identity";
 import { isIgnored } from "./ignore";
-import { internNode } from "./intern";
+import { internNode, occupancyNodeOf } from "./intern";
 import { isObjectLike } from "./ops/predicates";
 import { isUnsafeMarked } from "./unsafeTrack";
 import { segmentFor, walkDataEntries, type DataEntry } from "./utils/dataEntries";
@@ -111,6 +111,26 @@ export const isTrackedEdge = (entry: DataEntry): boolean => {
 	if (isObjectLike(target) && isIgnored(target)) return false;
 
 	return entry.writable && admissionLane(target) === "tracked";
+};
+
+export const isUntrackedEdge = (
+	handle: Handle | undefined,
+	parent: object,
+	key: string | number,
+	value: object,
+): boolean => {
+	const rawValue = occupancyNodeOf(value);
+	const rawParent = occupancyNodeOf(parent);
+
+	if (handle !== undefined) {
+		const held = handle.nodes
+			.get(rawValue)
+			?.edges.some((edge) => rawOf(edge.parent) === rawParent && edge.key === key);
+
+		if (held === true) return false;
+	}
+
+	return isIgnored(value) || admissionLane(rawValue) !== "tracked";
 };
 
 const seedFrom = (handle: Handle, node: object, visits: Set<object>): void => {

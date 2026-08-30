@@ -86,12 +86,16 @@ const restoreRecordedContent = (
 	}
 };
 
-const getValuePayload = (operation: AssignMutation, identity: "restore" | "construct"): ValuePayload => {
+const getValuePayload = (
+	operation: AssignMutation,
+	identity: "restore" | "construct",
+	handle: Handle,
+): ValuePayload => {
 	const original = identity === "restore" ? (getValueOriginal(operation) ?? operation.value) : operation.value;
 
 	return {
 		recorded: original,
-		fallback: isObjectLike(original) ? cloneValue(original, new WeakMap(), operation.path) : original,
+		fallback: isObjectLike(original) ? cloneValue(original, new WeakMap(), operation.path, handle) : original,
 	};
 };
 
@@ -257,7 +261,7 @@ const applyPlain = (
 		}
 	}
 
-	const payload = getValuePayload(operation, identity);
+	const payload = getValuePayload(operation, identity, handle);
 
 	restoreValue(
 		payload,
@@ -271,8 +275,8 @@ const applyPlain = (
 	if (!isObjectLike(attached)) return;
 
 	if (operation.ids !== undefined) {
-		if (isObjectLike(payload.recorded)) {
-			bindVendedIds(handle, attached, payload.recorded, operation.ids, parent, key);
+		if (isObjectLike(operation.value)) {
+			bindVendedIds(handle, attached, operation.value, operation.ids, parent, key);
 		}
 	} else {
 		internSubtree(handle, attached, (_parent, entry) => !isTrackedEdge(entry));

@@ -679,7 +679,7 @@ describe("ignore()", () => {
 		});
 
 		expect(state.box).toBeUndefined();
-		expect(heard[0]?.some((operation) => operation.do.path[0] === "box")).toBe(true);
+		expect(heard[0]?.some((operation) => operation.do.path[0] === "box")).toBe(false);
 	});
 
 	it("rollback", () => {

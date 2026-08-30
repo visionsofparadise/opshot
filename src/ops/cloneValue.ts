@@ -1,17 +1,13 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { isUntrackedEdge } from "../edges";
 import { getRegisteredTarget } from "../identity";
-import { carriedOwnKeysOf } from "../utils/dataEntries";
+import { segmentFor, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
+import { isObjectLike } from "./predicates";
+import type { Handle } from "../handle";
 import type { OperationPath } from "./path";
 
 const { proxyStateMap } = unstable_getInternalStates();
-
-class MissingOwnDescriptorError extends Error {
-	constructor() {
-		super("opshot: carried own key has no property descriptor");
-		this.name = "MissingOwnDescriptorError";
-	}
-}
 
 const isInstrumented = (value: object): boolean => proxyStateMap.has(value) || getRegisteredTarget(value) !== undefined;
 
@@ -23,22 +19,15 @@ export const isPlainObject = (value: unknown): value is Record<string, unknown> 
 	!Array.isArray(value) &&
 	(admissionLane(value) === "tracked" || isInstrumented(value));
 
-const isStructurallyCloneableFrozen = (value: object): boolean => {
-	if (!Object.isFrozen(value)) return false;
-
-	if (Array.isArray(value)) return true;
-
-	const prototype: unknown = Object.getPrototypeOf(value);
-
-	return prototype === Object.prototype || prototype === null;
-};
-
 const isCloneable = (value: unknown): value is Record<string, unknown> | Array<unknown> =>
-	typeof value === "object" &&
-	value !== null &&
-	(admissionLane(value) === "tracked" || isInstrumented(value) || isStructurallyCloneableFrozen(value));
+	typeof value === "object" && value !== null && (admissionLane(value) === "tracked" || isInstrumented(value));
 
-export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path: OperationPath): unknown => {
+export const cloneValue = (
+	value: unknown,
+	memo: WeakMap<object, unknown>,
+	path: OperationPath,
+	handle?: Handle,
+): unknown => {
 	if (!isCloneable(value)) return value;
 
 	const cached = memo.get(value);
@@ -51,22 +40,16 @@ export const cloneValue = (value: unknown, memo: WeakMap<object, unknown>, path:
 	Reflect.setPrototypeOf(clone, Reflect.getPrototypeOf(value));
 	memo.set(value, clone);
 
-	for (const key of carriedOwnKeysOf(value)) {
-		const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+	for (const entry of walkDataEntries(value)) {
+		const entryValue = entry.value;
 
-		if (descriptor === undefined) throw new MissingOwnDescriptorError();
+		if (isObjectLike(entryValue) && isUntrackedEdge(handle, value, segmentFor(value, entry.key), entryValue))
+			continue;
 
-		if ("value" in descriptor) {
-			Object.defineProperty(clone, key, {
-				...descriptor,
-				value: cloneValue(descriptor.value, memo, path),
-			});
-		} else {
-			Object.defineProperty(clone, key, descriptor);
-		}
+		Reflect.set(clone, entry.key, cloneValue(entryValue, memo, path, handle));
 	}
 
-	if (Object.isFrozen(value)) Object.freeze(clone);
+	if (array) Reflect.set(clone, "length", value.length);
 
 	return clone;
 };

@@ -457,15 +457,7 @@ describe("live-frozen occupants in lastSnapshot", () => {
 		});
 
 		expect(state.box).toBe(replacement);
-		expect(heard.map(shapeOps)).toEqual([
-			[
-				{
-					do: { verb: "assign", path: ["box"], value: replacement },
-					undo: { verb: "assign", path: ["box"], value: { n: 1 }, ids: [1] },
-				},
-				...tickAssign(0, 1),
-			],
-		]);
+		expect(heard.map(shapeOps)).toEqual([[...tickAssign(0, 1)]]);
 	});
 
 	it("copies array length including holes when re-pinning a frozen element", () => {
