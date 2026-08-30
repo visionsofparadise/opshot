@@ -1,18 +1,14 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
 import { hasInEdge } from "../edges";
 import { isIgnored } from "../ignore";
 import { bindVisitedOccupancy, markDirtyPath, type OccupancyVisit } from "../occupancy";
 import { isUnsafeMarked } from "../unsafeTrack";
 import { segmentFor, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
+import { rawTargetOf } from "../valtio/rawTarget";
 import { internedOccupied } from "./internedOccupancy";
 import { appendOperationPath, type OperationPath } from "./path";
 import { isObjectLike } from "./predicates";
 import type { DirtyIndex, Handle } from "../handle";
-
-const { proxyStateMap } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 class MissingDiffParentError extends Error {
 	constructor() {

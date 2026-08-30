@@ -13,11 +13,10 @@ import { isUnsafeMarked } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
 import { nonWritablePropertyError, rejectionError, snapshotDonationError } from "./boundaryErrors";
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
+import { rawTargetOf } from "./rawTarget";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
 const { proxyStateMap, proxyCache } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 const handleOwning = (target: object): Handle | undefined => {
 	const handles = handlesOf(target);

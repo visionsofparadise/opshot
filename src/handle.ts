@@ -1,15 +1,10 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
-import { peelReadProxy } from "./peelReadProxy";
+import { rawOf, rawTargetOf } from "./valtio/rawTarget";
 import type { BatchFrame } from "./batch";
 import type { NodeRecord } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
 import type { EmissionScheduler } from "./settings";
 
 const occupancies = new WeakMap<object, Set<WeakRef<Handle>>>();
-
-const { proxyStateMap } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 export interface DirtyIndex {
 	readonly edges: WeakMap<object, Set<string | symbol>>;
@@ -53,12 +48,6 @@ export function registerHandle(target: object, handle: Handle): void {
 
 	occupants.add(new WeakRef(handle));
 }
-
-const rawOf = (node: object): object => {
-	const peeled = peelReadProxy(node);
-
-	return rawTargetOf(typeof peeled === "object" && peeled !== null ? peeled : node);
-};
 
 export function handlesOf(node: object): Array<Handle> {
 	const target = rawOf(node);

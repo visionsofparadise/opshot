@@ -1,4 +1,3 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
 import { hasInEdge } from "./edges";
 import { getRegisteredTarget } from "./identity";
 import { isIgnored } from "./ignore";
@@ -8,11 +7,8 @@ import { isObjectLike } from "./ops/predicates";
 import { isUnsafeMarked } from "./unsafeTrack";
 import { segmentFor, walkDataEntries } from "./utils/dataEntries";
 import { admissionDecision, classifyValue } from "./valtio/classify";
+import { rawTargetOf } from "./valtio/rawTarget";
 import type { DirtyIndex, Handle } from "./handle";
-
-const { proxyStateMap } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 const liveOf = (value: object): object => getRegisteredTarget(value) ?? rawTargetOf(value);
 

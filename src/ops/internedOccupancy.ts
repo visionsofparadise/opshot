@@ -1,10 +1,6 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "../identity";
+import { rawTargetOf } from "../valtio/rawTarget";
 import type { Handle } from "../handle";
-
-const { proxyStateMap } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
 
 export const liveOf = (node: object): object => getRegisteredTarget(node) ?? node;
 

@@ -5,11 +5,10 @@ import { peelReadProxy } from "./peelReadProxy";
 import { isUnsafeMarked } from "./unsafeTrack";
 import { walkDataEntries, type DataEntry } from "./utils/dataEntries";
 import { admissionLane } from "./valtio/classify";
+import { rawTargetOf } from "./valtio/rawTarget";
 import type { Handle } from "./handle";
 
-const { proxyStateMap, proxyCache } = unstable_getInternalStates();
-
-const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? value;
+const { proxyCache } = unstable_getInternalStates();
 
 const occupancyNodeOf = (node: object): object => {
 	const peeled = peelReadProxy(node);
