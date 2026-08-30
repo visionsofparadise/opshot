@@ -1,4 +1,3 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
 import type { Operation } from "../ops/operation";
 
 /**
@@ -27,7 +26,3 @@ export type GroupDeliver = (state: object, ops: ReadonlyArray<Operation>, meta: 
 export type StateListeners = Map<Function, StateDeliver>;
 
 export type GroupListeners = Map<Function, GroupDeliver>;
-
-const { proxyStateMap } = unstable_getInternalStates();
-
-export const targetOf = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;

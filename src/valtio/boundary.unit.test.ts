@@ -5,6 +5,7 @@ import { createMutableState } from "../createMutableState";
 import { internedOccupied } from "../ops/internedOccupancy";
 import { applyOperations } from "../ops/applyOperations";
 import { handleOf } from "../handle";
+import { internedIdOf } from "../intern";
 import { ignore } from "../ignore";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -236,6 +237,32 @@ describe("boundary: freeze", () => {
 
 		expect(inner.n).toBe(2);
 		expect(emissions).toHaveLength(0);
+	});
+
+	it("freezing through the proxy retires the node's id", () => {
+		const state = createMutableState({ box: { inner: { n: 1 } } });
+		const handle = handleOf(state);
+
+		if (handle === undefined) throw new Error("expected a handle");
+
+		const box = state.box;
+		const inner = state.box.inner;
+		const boxId = internedIdOf(handle, box);
+		const innerId = internedIdOf(handle, inner);
+
+		expect(boxId).toBeDefined();
+		expect(innerId).toBeDefined();
+		expect(internedOccupied(handle, box)).toBe(true);
+		expect(internedOccupied(handle, inner)).toBe(true);
+
+		Object.freeze(state.box);
+
+		expect(internedOccupied(handle, box)).toBe(false);
+		expect(internedOccupied(handle, inner)).toBe(false);
+		expect(handle.byId.has(boxId!)).toBe(false);
+		expect(handle.byId.has(innerId!)).toBe(false);
+		expect(internedIdOf(handle, box)).toBe(boxId);
+		expect(internedIdOf(handle, inner)).toBe(innerId);
 	});
 });
 

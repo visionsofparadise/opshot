@@ -1,11 +1,7 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
-import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
-import { carriedOwnKeysOf } from "../utils/dataEntries";
-import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery, type PendingDelivery } from "./emitterDeliver";
-import { targetOf } from "./emitterRegistry";
 import type { DirtyIndex, Handle } from "../handle";
 import type { Operation } from "../ops/operation";
 
@@ -52,80 +48,6 @@ export function armWatch(handle: Handle): void {
 	);
 }
 
-const cloneSnapshotNode = (snap: object): object => {
-	const clone: object = Array.isArray(snap) ? [] : (Object.create(Reflect.getPrototypeOf(snap)) as object);
-
-	for (const key of carriedOwnKeysOf(snap)) {
-		const descriptor = Reflect.getOwnPropertyDescriptor(snap, key);
-
-		if (descriptor !== undefined) Object.defineProperty(clone, key, descriptor);
-	}
-
-	if (Array.isArray(snap)) (clone as Array<unknown>).length = snap.length;
-
-	registerSnapshotCopy(clone, getRegisteredTarget(snap) ?? targetOf(snap));
-
-	return clone;
-};
-
-const reconcileUntracked = (snap: object, live: object, seen: WeakSet<object>): object => {
-	if (seen.has(live)) return snap;
-
-	seen.add(live);
-
-	let result: object | undefined;
-
-	const written = (): object => {
-		result ??= cloneSnapshotNode(snap);
-
-		return result;
-	};
-
-	for (const key of carriedOwnKeysOf(live)) {
-		const liveValue: unknown = Reflect.get(live, key);
-
-		if (typeof liveValue !== "object" || liveValue === null) continue;
-
-		if (admissionLane(liveValue) === "untracked") {
-			if (Reflect.get(snap, key) === liveValue) continue;
-
-			const snapChild: unknown = Reflect.get(snap, key);
-
-			if (typeof snapChild !== "object" || snapChild === null) continue;
-
-			if (getRegisteredTarget(snapChild) !== targetOf(liveValue)) continue;
-
-			const descriptor = Reflect.getOwnPropertyDescriptor(live, key);
-
-			if (descriptor === undefined || descriptor.get !== undefined || descriptor.set !== undefined) continue;
-
-			Object.defineProperty(written(), key, {
-				value: liveValue,
-				enumerable: descriptor.enumerable,
-				configurable: true,
-			});
-
-			continue;
-		}
-
-		const snapChild: unknown = Reflect.get(snap, key);
-
-		if (typeof snapChild !== "object" || snapChild === null) continue;
-
-		const reconciled = reconcileUntracked(snapChild, liveValue, seen);
-
-		if (reconciled === snapChild) continue;
-
-		Object.defineProperty(written(), key, {
-			value: reconciled,
-			enumerable: true,
-			configurable: true,
-		});
-	}
-
-	return result ?? snap;
-};
-
 interface CaptureDiff {
 	readonly to: object;
 	readonly ops: Array<Operation>;
@@ -140,7 +62,7 @@ const captureDiffOf = (handle: Handle, from: object): CaptureDiff => {
 
 	return {
 		to,
-		ops: diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty),
+		ops: diffObjects(from, to, handle, dirty),
 		dirty,
 	};
 };

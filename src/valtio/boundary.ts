@@ -518,6 +518,16 @@ export function installBoundary(): void {
 					return Reflect.setPrototypeOf(target, proto);
 				},
 				preventExtensions(target) {
+					for (const handle of handlesOf(target)) {
+						const record = handle.nodes.get(rawTargetOf(target));
+
+						if (record === undefined) continue;
+
+						for (const edge of [...record.edges]) {
+							removeInEdge(handle, target, edge.parent, edge.key);
+						}
+					}
+
 					return Reflect.preventExtensions(target);
 				},
 			};

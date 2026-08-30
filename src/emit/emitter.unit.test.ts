@@ -2,6 +2,7 @@ import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { handleOf } from "../handle";
+import { ignore } from "../ignore";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
@@ -29,6 +30,79 @@ const manualScheduler = (): {
 		},
 	};
 };
+
+describe("freeze and untracked interiors", () => {
+	it("a tracked flushed node frozen through the proxy emits nothing for it, and a later write beside it emits only that write", async () => {
+		const state = createMutableState({ child: { n: 1 }, count: 0 });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		state.count = 1;
+		await Promise.resolve();
+		heard.length = 0;
+
+		const handle = handleOf(state);
+		const lastSnapshot = handle?.lastSnapshot as { child: object } | undefined;
+
+		expect(handle).toBeDefined();
+		expect(lastSnapshot?.child).not.toBe(state.child);
+
+		Object.freeze(state.child);
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+
+		state.count = 2;
+		await Promise.resolve();
+
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["count"], value: 2 }, undo: { verb: "assign", path: ["count"], value: 1 } }],
+		]);
+	});
+
+	it("mutation inside an ignore()-marked node's interior never emits", async () => {
+		const hid = { n: 1, inner: { x: 1 } };
+		const state = createMutableState({ hid: ignore(hid), tick: 0 });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		hid.n = 2;
+		hid.inner.x = 3;
+		state.hid.n = 4;
+		state.tick = 1;
+		await Promise.resolve();
+
+		expect(hid.n).toBe(4);
+		expect(hid.inner.x).toBe(3);
+		expect(heard.map(shapeOps)).toEqual([
+			[{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } }],
+		]);
+	});
+
+	it("a frozen node's slot reassigned to a fresh value emits the assignment", async () => {
+		const state = createMutableState({ box: { n: 1 } as { n: number } });
+		const heard = new Array<ReadonlyArray<Operation>>();
+
+		subscribe(state, (ops) => {
+			heard.push([...ops]);
+		});
+
+		Object.freeze(state.box);
+		state.box = { n: 2 };
+		await Promise.resolve();
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]).toHaveLength(1);
+		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["box"], value: { n: 2 } });
+		expect(heard[0]?.[0]?.undo).toMatchObject({ verb: "assign", path: ["box"], value: { n: 1 } });
+	});
+});
 
 describe("emitter", () => {
 	it("a live freeze then a tracked write emits only the tracked field", async () => {

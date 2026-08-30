@@ -407,17 +407,23 @@ const diffCollectedProperties = (
 	const keys = new Set<string>([...beforeEntries.keys(), ...afterEntries.keys()]);
 
 	for (const key of keys) {
-		const nextPath = appendOperationPath(path, key);
 		const beforePresent = beforeEntries.has(key);
 		const afterPresent = afterEntries.has(key);
 
 		if (beforePresent && afterPresent) {
-			diffValue(context, beforeEntries.get(key), afterEntries.get(key), nextPath, liveNode);
+			const beforeValue = beforeEntries.get(key);
+			const afterValue = afterEntries.get(key);
+
+			if (Object.is(beforeValue, afterValue)) continue;
+
+			diffValue(context, beforeValue, afterValue, appendOperationPath(path, key), liveNode);
 		} else if (beforePresent && !Object.hasOwn(after, key)) {
+			const nextPath = appendOperationPath(path, key);
 			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushRemoval(context, nextPath, beforeEntries.get(key), verdict, liveNode);
 		} else if (afterPresent && !Object.hasOwn(before, key)) {
+			const nextPath = appendOperationPath(path, key);
 			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, afterEntries.get(key), verdict, liveNode);
@@ -449,6 +455,8 @@ const diffArray = (
 		const afterPresent = Object.hasOwn(after, index);
 
 		if (!beforePresent && !afterPresent) continue;
+
+		if (beforePresent && afterPresent && Object.is(before[index], after[index])) continue;
 
 		const nextPath = appendOperationPath(path, index);
 
@@ -511,16 +519,15 @@ const diffValue = (
 	path: OperationPath,
 	liveParent: unknown,
 ): void => {
-	const replacing =
-		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
+	if (Object.is(before, after)) return;
 
+	const sameStorage = sharesStorageIdentity(before, after);
+	const replacing = path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sameStorage;
 	const verdict = admitStep(context.handle, context.dirty, path, liveParent);
 	const { visit, ignored, liveChild } = verdict;
 
 	if (visit === "skip" || ignored) {
-		if (Object.is(before, after)) return;
-
-		if (isObjectLike(before) && isObjectLike(after) && sharesStorageIdentity(before, after)) return;
+		if (sameStorage) return;
 
 		if (ignored || !emitsSkippedOccupancy(after)) return;
 
@@ -528,8 +535,6 @@ const diffValue = (
 
 		return;
 	}
-
-	if (Object.is(before, after)) return;
 
 	if (replacing) {
 		pushChange(context, path, before, after, verdict, liveParent);
