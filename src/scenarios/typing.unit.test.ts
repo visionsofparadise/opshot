@@ -1,7 +1,7 @@
 import { createMutableState } from "../createMutableState";
 import { ignore } from "../ignore";
 import { type Operation, type OperationPath } from "../index";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { unsafeTrack } from "../unsafeTrack";
 
 interface Doc {
@@ -27,7 +27,7 @@ describe("typing", () => {
 		expectTypeOf(state.count).toEqualTypeOf<number>();
 
 		state.count = 1;
-		transact(state, () => {
+		batch(() => {
 			state.view = "detail";
 		});
 	});

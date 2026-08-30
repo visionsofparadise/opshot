@@ -5,7 +5,7 @@ import { isState } from "./isState";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact/transact";
+import { batch } from "./batch";
 import { unsafeTrack } from "./unsafeTrack";
 
 interface Counter {
@@ -41,12 +41,11 @@ describe("createMutableState", () => {
 		expect(isState(state)).toBe(true);
 	});
 
-	it("emits once per transact with the caller's meta", () => {
+	it("emits once per batch with the caller's meta", () => {
 		const state = createCounter();
 		const emissions = recordEmissions(state);
 
-		transact(
-			state,
+		batch(
 			() => {
 				state.count = 1;
 			},
@@ -59,7 +58,7 @@ describe("createMutableState", () => {
 		]);
 		expect(emissions[0]?.meta).toEqual({ transactionKey: "drag", replay: true });
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 2;
 		});
 
@@ -71,11 +70,11 @@ describe("createMutableState", () => {
 		const state = createCounter();
 		const emissions = recordEmissions(state);
 
-		transact(state, () => undefined);
-		transact(state, () => {
+		batch(() => undefined);
+		batch(() => {
 			state.count = 0;
 		});
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 			state.count = 0;
 		});
@@ -83,22 +82,22 @@ describe("createMutableState", () => {
 		expect(emissions).toHaveLength(0);
 	});
 
-	it("restores tracked nodes when the transaction callback throws", () => {
+	it("keeps completed writes when the batch callback throws", () => {
 		const state = createCounter();
 		const emissions = recordEmissions(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.count = 1;
 				throw new Error("boom");
 			}),
 		).toThrow("boom");
 
-		expect(state.count).toBe(0);
-		expect(emissions).toHaveLength(0);
+		expect(state.count).toBe(1);
+		expect(emissions).toHaveLength(1);
 
 		state.increment();
-		expect(state.count).toBe(1);
+		expect(state.count).toBe(2);
 	});
 
 	it("stops calling a listener after its remover runs", () => {
@@ -135,7 +134,7 @@ describe("createMutableState", () => {
 		});
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.append("one");
 		});
 
@@ -179,7 +178,7 @@ describe("createMutableState", () => {
 		});
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -217,7 +216,7 @@ describe("createMutableState", () => {
 		expect(state.count).toBe(5);
 	});
 
-	it("emits exactly once for a transact, with no bare-flush echo", async () => {
+	it("emits exactly once for a batch, with no bare-flush echo", async () => {
 		const state = createMutableState({ count: 0 });
 		const heard = new Array<unknown>();
 
@@ -225,13 +224,9 @@ describe("createMutableState", () => {
 			heard.push(meta);
 		});
 
-		transact(
-			state,
-			() => {
-				state.count = 1;
-			},
-			{},
-		);
+		batch(() => {
+			state.count = 1;
+		}, {});
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]).toEqual({});
@@ -241,7 +236,7 @@ describe("createMutableState", () => {
 		expect(heard).toHaveLength(1);
 	});
 
-	it("orders a pending bare write before a subsequent transact in the same tick", async () => {
+	it("orders a pending bare write before a subsequent batch in the same tick", async () => {
 		const state = createMutableState({ count: 0, flag: false });
 		const heard = new Array<{ path: unknown; meta: unknown }>();
 
@@ -250,8 +245,7 @@ describe("createMutableState", () => {
 		});
 
 		state.count = 1;
-		transact(
-			state,
+		batch(
 			() => {
 				state.flag = true;
 			},
@@ -310,7 +304,7 @@ describe("createMutableState: root certification", () => {
 		const state = createMutableState(new Counter());
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -339,7 +333,7 @@ describe("createMutableState: root certification", () => {
 		const state = createMutableState(unsafeTrack(new Arrow()));
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -358,7 +352,7 @@ describe("createMutableState: declaration spine", () => {
 		});
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.outer = { inner: { leaf: { n: 2 } } };
 			state.tick = 1;
 		});
@@ -367,7 +361,7 @@ describe("createMutableState: declaration spine", () => {
 
 		const replacement = { n: 9 };
 
-		transact(state, () => {
+		batch(() => {
 			state.outer.inner.leaf = replacement;
 			state.tick = 2;
 		});

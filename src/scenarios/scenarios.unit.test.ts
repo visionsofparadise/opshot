@@ -1,5 +1,5 @@
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { createGroup, type Group } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { applyOperations } from "../ops/applyOperations";
@@ -124,7 +124,7 @@ const createGraph = (group: Group): Graph =>
 	});
 
 describe("scenarios", () => {
-	it("forwards every op of a transaction in order", () => {
+	it("forwards every op of a batch in order", () => {
 		const group = createGroup();
 		const grade = createGrade(group);
 		const received = new Array<{ meta: Record<string, unknown>; ops: Array<Operation> }>();
@@ -134,8 +134,7 @@ describe("scenarios", () => {
 		});
 
 		for (const exposure of [1, 2, 3]) {
-			transact(
-				grade,
+			batch(
 				() => {
 					grade.exposure = exposure;
 				},
@@ -173,21 +172,21 @@ describe("scenarios", () => {
 
 		expect(graph).toEqual(initialGraph);
 
-		transact(graph, () => {
+		batch(() => {
 			graph.nodes.push({ id: "reverb", parameters: { gain: 4 } });
 			graph.edges.push({ from: "output", to: "reverb" });
 		});
 
 		expect(graph).toEqual(pushedGraph);
 
-		transact(graph, () => {
+		batch(() => {
 			graph.nodes.splice(1, 1);
 			graph.edges.splice(0, 2);
 		});
 
 		expect(graph).toEqual(splicedGraph);
 
-		transact(graph, () => {
+		batch(() => {
 			const node = graph.nodes[0];
 
 			if (node) node.parameters.gain = 99;
@@ -226,11 +225,11 @@ describe("scenarios", () => {
 		const grade = createGrade(group);
 		const recorder = createRecorder(group);
 
-		transact(grade, () => {
+		batch(() => {
 			grade.exposure = 1;
 		});
 
-		transact(grade, () => {
+		batch(() => {
 			grade.exposure = 2;
 		});
 
@@ -264,7 +263,7 @@ describe("scenarios", () => {
 			persisted.push(meta as Record<string, unknown>);
 		});
 
-		transact(grade, () => {
+		batch(() => {
 			grade.exposure = 1;
 		});
 
@@ -312,7 +311,7 @@ describe("scenarios", () => {
 		expect(b.box.x).toBe(2);
 	});
 
-	it("completes the stream under entanglement: the sharer hears a write on the other state as a Write", async () => {
+	it("completes the stream under entanglement: the sharer hears a write on the other state as a batch write", async () => {
 		const shared = { x: 1 };
 		const a = createMutableState({ box: shared });
 		const b = createMutableState({ box: shared });
@@ -326,8 +325,7 @@ describe("scenarios", () => {
 			bHeard.push({ ops: [...ops], meta });
 		});
 
-		transact(
-			a,
+		batch(
 			() => {
 				a.box.x = 2;
 			},
@@ -344,14 +342,14 @@ describe("scenarios", () => {
 		expect(aHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
 			{ ops, meta: { transactionKey: "drag" } },
 		]);
-		expect(bHeard).toEqual([]);
+		expect(bHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
+			{ ops, meta: { transactionKey: "drag" } },
+		]);
 
 		await Promise.resolve();
 
 		expect(aHeard).toHaveLength(1);
-		expect(bHeard.map((entry) => ({ ops: shapeOps(entry.ops), meta: entry.meta }))).toEqual([
-			{ ops, meta: undefined },
-		]);
+		expect(bHeard).toHaveLength(1);
 		expect(b.box.x).toBe(2);
 	});
 
@@ -375,10 +373,10 @@ describe("scenarios", () => {
 
 		let moved: Item | undefined;
 
-		transact(a, () => {
+		batch(() => {
 			[moved] = a.items.splice(0, 1);
 		});
-		transact(b, () => {
+		batch(() => {
 			if (moved) b.items.push(moved);
 		});
 
@@ -416,7 +414,7 @@ describe("scenarios", () => {
 		expect(aHeard).toHaveLength(1);
 		expect(bHeard).toHaveLength(1);
 
-		transact(b, () => {
+		batch(() => {
 			const item = b.items[0];
 
 			if (item) item.gain = 2;

@@ -1,4 +1,4 @@
-import { transact } from "./transact/transact";
+import { batch } from "./batch";
 import { createMutableState } from "./createMutableState";
 import { handleOf } from "./handle";
 import { isSameIdentity } from "./identity";
@@ -11,7 +11,7 @@ describe("unsafeTrack occupancy", () => {
 		const state = createMutableState({ foo: unsafeTrack(first) });
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.foo = second;
 			});
 		}).toThrow("cannot be tracked");
@@ -27,7 +27,7 @@ describe("unsafeTrack occupancy", () => {
 
 		const next = new Map<string, number>([["k", 2]]);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.nested = next;
 		});
 
@@ -44,7 +44,7 @@ describe("unsafeTrack occupancy", () => {
 		const holder: { nested: object } = { nested: { n: 1 } };
 		const state = createMutableState({ a: unsafeTrack(holder), b: holder });
 
-		transact(state, () => {
+		batch(() => {
 			state.b.nested = new Map<string, number>();
 		});
 
@@ -55,11 +55,11 @@ describe("unsafeTrack occupancy", () => {
 		const holder: { nested: object } = { nested: unsafeTrack({ n: 1 }) };
 		const state = createMutableState({ a: holder, b: holder });
 
-		transact(state, () => {
+		batch(() => {
 			state.a.nested = unsafeTrack(new Map<string, number>([["a", 1]]));
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.b.nested = unsafeTrack(new Map<string, number>([["b", 2]]));
 		});
 
@@ -72,11 +72,11 @@ describe("unsafeTrack occupancy", () => {
 		const marked = unsafeTrack(holder);
 		const state = createMutableState({ a: marked, b: marked });
 
-		transact(state, () => {
+		batch(() => {
 			state.a.nested = new Map<string, number>([["a", 1]]);
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.b.nested = new Map<string, number>([["b", 2]]);
 		});
 
@@ -88,7 +88,7 @@ describe("unsafeTrack occupancy", () => {
 		const holder: { nested: object } = { nested: { n: 1 } };
 		const state = createMutableState({ a: unsafeTrack(holder), b: holder });
 
-		transact(state, () => {
+		batch(() => {
 			state.b.nested = new Map<string, number>();
 		});
 
@@ -100,7 +100,7 @@ describe("unsafeTrack occupancy", () => {
 		const map = new Map<string, number>();
 		const state = createMutableState<{ foo: unknown }>({ foo: null });
 
-		transact(state, () => {
+		batch(() => {
 			state.foo = unsafeTrack(map);
 		});
 
@@ -112,7 +112,7 @@ describe("unsafeTrack occupancy", () => {
 		const holder: { nested: object } = { nested: { n: 1 } };
 		const state = createMutableState({ a: unsafeTrack(holder) });
 
-		transact(state, () => {
+		batch(() => {
 			state.a.nested = new Map<string, number>([["k", 1]]);
 		});
 
@@ -123,7 +123,7 @@ describe("unsafeTrack occupancy", () => {
 		const holder: { nested: object } = { nested: { n: 1 } };
 		const state = createMutableState({ a: unsafeTrack(holder), b: holder });
 
-		transact(state, () => {
+		batch(() => {
 			state.a.nested = new Map<string, number>();
 		});
 
@@ -140,12 +140,12 @@ describe("unsafeTrack occupancy", () => {
 			{ strict: true },
 		);
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 		});
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.a.x = { y: new Map() };
 			});
 		}).toThrow("cannot be tracked");
@@ -165,7 +165,7 @@ describe("unsafeTrack occupancy", () => {
 		state.c.w.z = state.c;
 		state.c.w.k2 = state.c.k1;
 
-		transact(state, () => {
+		batch(() => {
 			state.c.k1.m = new Map();
 		});
 
@@ -184,7 +184,7 @@ describe("unsafeTrack occupancy", () => {
 
 		const next = new Map<string, number>([["k", 2]]);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.nested = next;
 		});
 
@@ -200,7 +200,7 @@ describe("unsafeTrack occupancy", () => {
 		const state = createMutableState({ parent });
 		const next = new Map<string, number>([["k", 1]]);
 
-		transact(state, () => {
+		batch(() => {
 			state.parent.child.held = next;
 		});
 
@@ -215,7 +215,7 @@ describe("unsafeTrack occupancy", () => {
 
 		const first = createMutableState({ box: holder });
 
-		transact(first, () => {
+		batch(() => {
 			first.box.nested = new Map<string, number>([["a", 1]]);
 		});
 

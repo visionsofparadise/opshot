@@ -1,12 +1,12 @@
 import { createGroup, getGroupListeners } from "../createGroup";
 import { createMutableState } from "../createMutableState";
 import { type Operation } from "../ops/operation";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { addGroupListener, addStateListener } from "./emitterListeners";
 import { shapeOps } from "../ops/operationShape";
 
 describe("emitterListeners", () => {
-	it("emits a transaction with meta", () => {
+	it("emits a batch with meta", () => {
 		const state = createMutableState({ count: 0 });
 		const heard = new Array<{ ops: ReadonlyArray<Operation>; meta: unknown }>();
 		const listener = (ops: ReadonlyArray<Operation>, meta: unknown): void => {
@@ -15,8 +15,7 @@ describe("emitterListeners", () => {
 
 		addStateListener(state, listener, listener);
 
-		transact(
-			state,
+		batch(
 			() => {
 				state.count = 1;
 			},
@@ -52,7 +51,7 @@ describe("emitterListeners", () => {
 		]);
 	});
 
-	it("orders bare → transact → bare across one tick", async () => {
+	it("orders bare → batch → bare across one tick", async () => {
 		const state = createMutableState({ count: 0, flag: false, trail: 0 });
 		const order = new Array<string>();
 		const listener = (ops: ReadonlyArray<Operation>, meta: unknown): void => {
@@ -64,8 +63,7 @@ describe("emitterListeners", () => {
 		addStateListener(state, listener, listener);
 
 		state.count = 1;
-		transact(
-			state,
+		batch(
 			() => {
 				state.flag = true;
 			},
@@ -88,14 +86,14 @@ describe("emitterListeners", () => {
 		};
 		const stopState = addStateListener(state, stateListener, stateListener);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 		stopState();
 		expect(() => {
 			stopState();
 		}).not.toThrow();
-		transact(state, () => {
+		batch(() => {
 			state.count = 2;
 		});
 
@@ -109,14 +107,14 @@ describe("emitterListeners", () => {
 		};
 		const stopGroup = addGroupListener(getGroupListeners(group), groupListener, groupListener);
 
-		transact(grouped, () => {
+		batch(() => {
 			grouped.count = 1;
 		});
 		stopGroup();
 		expect(() => {
 			stopGroup();
 		}).not.toThrow();
-		transact(grouped, () => {
+		batch(() => {
 			grouped.count = 2;
 		});
 
@@ -139,7 +137,7 @@ describe("emitterListeners", () => {
 
 		addStateListener(state, otherListener, otherDeliver);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -148,7 +146,7 @@ describe("emitterListeners", () => {
 		heard.length = 0;
 		first();
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 2;
 		});
 
@@ -159,7 +157,7 @@ describe("emitterListeners", () => {
 			second();
 		}).not.toThrow();
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 3;
 		});
 

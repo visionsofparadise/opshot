@@ -6,7 +6,7 @@ import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 
 type CyclicNode = { n: number; self?: CyclicNode };
 
@@ -69,7 +69,7 @@ describe("emitter", () => {
 		expect(state.node.n).toBe(2);
 	});
 
-	it("a refused transaction's mints do not desync a later alias on a replica", () => {
+	it("a refused batch's mints do not desync a later alias on a replica", () => {
 		const origin = createMutableState<{
 			tick: number;
 			node?: { n: number };
@@ -81,16 +81,16 @@ describe("emitter", () => {
 		subscribe(origin, (ops) => heard.push([...ops]));
 
 		expect(() => {
-			transact(origin, () => {
+			batch(() => {
 				origin.bag = { fresh: { n: 2 }, map: new Map() };
 			});
 		}).toThrow("Map at /bag/map cannot be tracked");
 
-		transact(origin, () => {
+		batch(() => {
 			origin.node = { n: 1 };
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			origin.alias = origin.node;
 		});
 
@@ -137,7 +137,7 @@ describe("emitOn window", () => {
 		expect(scheduler.pending).toHaveLength(0);
 	});
 
-	it("transact at entry settles pending bare writes; the scheduled callback then delivers nothing", async () => {
+	it("a batch write settles pending bare writes; the scheduled callback then delivers nothing", async () => {
 		const scheduler = manualScheduler();
 		const state = createMutableState({ count: 0 }, { emitOn: scheduler.emitOn });
 		const heard = new Array<{ ops: ReadonlyArray<Operation>; meta: unknown }>();
@@ -152,8 +152,7 @@ describe("emitOn window", () => {
 
 		expect(scheduler.pending).toHaveLength(1);
 
-		transact(
-			state,
+		batch(
 			() => {
 				state.count = 2;
 			},
@@ -350,7 +349,7 @@ describe("reconcileUntracked", () => {
 		expect(snapshot(state).shell.holder).not.toBe(state.shell.holder);
 		expect(lastSnapshot.shell.holder).not.toBe(state.shell.holder);
 
-		transact(state, () => {
+		batch(() => {
 			state.shell.mark = 1;
 		});
 
@@ -378,7 +377,7 @@ describe("reconcileUntracked", () => {
 		expect(lastSnapshot.box).not.toBe(state.box);
 		expect(lastSnapshot.box).not.toBe(replacement);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = replacement;
 			state.tick = 1;
 		});
@@ -419,7 +418,7 @@ describe("reconcileUntracked", () => {
 		expect(snapshot(state).items[0]).not.toBe(element);
 		expect(lastSnapshot.items[0]).not.toBe(element);
 
-		transact(state, () => {
+		batch(() => {
 			state.items[2] = { n: 2 };
 		});
 

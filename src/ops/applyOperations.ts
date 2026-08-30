@@ -1,8 +1,6 @@
-import { emitWrites } from "../emit/emitter";
+import { batch } from "../batch";
 import { resolveWriteProxy } from "../emit/resolveWriteProxy";
 import { requireHandle } from "../handle";
-import { isTransactionOpen } from "../transact/nest";
-import { runTransaction } from "../transact/transact";
 import { applyMutations, type ApplyDirection } from "./applyMutations";
 import { isMutation, stampOf, versionOf, type Operation } from "./operation";
 import type { OperationPath } from "./path";
@@ -101,15 +99,7 @@ function runOperations(
 		throw new Error('opshot: applyOperations applies a direction of "do" or "undo"');
 	}
 
-	if (isTransactionOpen()) {
-		throw new Error(
-			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
-		);
-	}
-
 	const handle = requireHandle(state, "opshot: applyOperations requires a state");
-
-	emitWrites(handle);
 
 	let ownedCount = 0;
 
@@ -141,18 +131,14 @@ function runOperations(
 	handle.replaying = true;
 
 	try {
-		runTransaction(
-			state,
-			() => {
-				applyMutations(resolveWriteProxy(state), operations, direction, owned ? "restore" : "construct", handle);
+		batch(() => {
+			applyMutations(resolveWriteProxy(state), operations, direction, owned ? "restore" : "construct", handle);
 
-				if (owned) {
-					handle.version =
-						direction === "do" ? handle.version + operations.length : handle.version - operations.length;
-				}
-			},
-			meta,
-		);
+			if (owned) {
+				handle.version =
+					direction === "do" ? handle.version + operations.length : handle.version - operations.length;
+			}
+		}, meta);
 	} finally {
 		handle.replaying = false;
 	}

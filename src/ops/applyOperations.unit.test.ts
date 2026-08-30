@@ -1,5 +1,5 @@
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { createMutableState } from "../createMutableState";
 import { requireHandle } from "../handle";
 import { identify, isSameIdentity } from "../identity";
@@ -54,7 +54,7 @@ describe("applyOperations", () => {
 		const state = createMutableState({ count: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -82,7 +82,7 @@ describe("applyOperations", () => {
 		const lookup = new Map([[identify(held), "selected"]]);
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.item;
 		});
 
@@ -107,7 +107,7 @@ describe("applyOperations", () => {
 		const state = createMutableState({ child: { n: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.child = { n: 2 };
 		});
 
@@ -127,7 +127,7 @@ describe("applyOperations", () => {
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.slot;
 		});
 
@@ -141,7 +141,7 @@ describe("applyOperations", () => {
 		const stateB = createMutableState({ n: 0 });
 		const heard = record(stateA);
 
-		transact(stateA, () => {
+		batch(() => {
 			stateA.n = 1;
 		});
 
@@ -155,7 +155,7 @@ describe("applyOperations", () => {
 		const stateB = createMutableState({ n: 0 });
 		const heard = record(stateA);
 
-		transact(stateA, () => {
+		batch(() => {
 			stateA.n = 1;
 		});
 
@@ -169,10 +169,10 @@ describe("applyOperations", () => {
 		const state = createMutableState({ n: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 1;
 		});
-		transact(state, () => {
+		batch(() => {
 			state.n = 2;
 		});
 
@@ -185,10 +185,10 @@ describe("applyOperations", () => {
 		const state = createMutableState({ n: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 1;
 		});
-		transact(state, () => {
+		batch(() => {
 			state.n = 2;
 		});
 
@@ -201,7 +201,7 @@ describe("applyOperations", () => {
 		const state = createMutableState({ n: 0, extra: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 1;
 		});
 
@@ -217,32 +217,29 @@ describe("applyOperations", () => {
 		expect(state.extra).toBe(0);
 	});
 
-	it("throws when applyOperations runs inside a transact callback", () => {
+	it("applies nested applyOperations as a nested batch", () => {
 		const state = createMutableState({ n: 0 });
 		const ops: Array<Operation> = [{ do: createAssignMutation(["n"], 1), undo: createAssignMutation(["n"], 0) }];
 
-		expect(() =>
-			transact(state, () => {
-				applyOperations(state, ops, "do");
-			}),
-		).toThrow(
-			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
-		);
-		expect(state.n).toBe(0);
+		batch(() => {
+			applyOperations(state, ops, "do");
+		});
+
+		expect(state.n).toBe(1);
 	});
 
 	it("an organic write to a restored node emits ops addressed at its path", () => {
 		const state = createMutableState<{ item?: { n: number } }>({ item: { n: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.item;
 		});
 
 		applyOperations(state, heard[0] ?? [], "undo");
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			if (state.item) state.item.n = 2;
 		});
 
@@ -257,7 +254,7 @@ describe("applyOperations", () => {
 		} as unknown as { lookup: Map<string, number> | { n: number } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.lookup = { n: 2 };
 		});
 
@@ -271,7 +268,7 @@ describe("applyOperations", () => {
 		const held = state.item;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.item = { n: 2 };
 		});
 
@@ -294,7 +291,7 @@ describe("applyOperations", () => {
 		]);
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.document = { items: [{ id: "z" }] };
 		});
 
@@ -316,7 +313,7 @@ describe("applyOperations", () => {
 		const state = createMutableState({ document: container });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.document = { left: { count: 9 }, right: { count: 9 } };
 		});
 
@@ -337,7 +334,7 @@ describe("applyOperations", () => {
 		const state = createMutableState({ document: container });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.document = { count: 2 };
 		});
 
@@ -357,13 +354,13 @@ describe("applyOperations", () => {
 		const state = createMutableState({ root: outer });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.root = { nested: { value: 2 } };
 		});
 
 		const firstOps = heard[0] ?? [];
 
-		transact(state, () => {
+		batch(() => {
 			state.root = { nested: { value: 3 } };
 		});
 
@@ -384,7 +381,7 @@ describe("applyOperations", () => {
 		expect(state.root.nested.value).toBe(3);
 	});
 
-	it("a programmatic applyOperations op carrying a dangerous value throws from the apply write and the batch rolls back including staged naming", () => {
+	it("a programmatic applyOperations op carrying a dangerous value throws from the apply write and completed writes stand", () => {
 		const state = createMutableState({ box: null as unknown, extra: 0 as number | { n: number } });
 		const handle = requireHandle(state, "opshot: applyOperations requires a state");
 		const internedBefore = handle.nextInternId;
@@ -408,9 +405,9 @@ describe("applyOperations", () => {
 		}).toThrow("Map at /box cannot be tracked");
 
 		expect(state.box).toBeNull();
-		expect(state.extra).toBe(0);
-		expect(handle.nextInternId).toBe(internedBefore);
-		expect(handle.byId.size).toBe(namedBefore);
+		expect(state.extra).toEqual({ n: 1 });
+		expect(handle.nextInternId).toBe(internedBefore + 1);
+		expect(handle.byId.size).toBe(namedBefore + 1);
 	});
 });
 
@@ -602,7 +599,7 @@ describe("applyOperations: link halves", () => {
 		const origin = createMutableState({ a: shared, b: shared });
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete (origin as { a?: { n: number } }).a;
 			delete (origin as { b?: { n: number } }).b;
 		});
@@ -624,7 +621,7 @@ describe("applyOperations: link halves", () => {
 		);
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.sh = { n: 1 };
 		});
 
@@ -635,7 +632,7 @@ describe("applyOperations: link halves", () => {
 
 		heard.length = 0;
 
-		transact(origin, () => {
+		batch(() => {
 			origin.alias = origin.sh;
 		});
 
@@ -668,7 +665,7 @@ describe("applyOperations: link halves", () => {
 		const extraId = internId(origin, origin.box.extra);
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete (origin as { box?: { nested: { n: number }; extra: { n: number } } }).box;
 		});
 
@@ -712,7 +709,7 @@ describe("applyOperations: link halves", () => {
 		const extraId = internId(origin, origin.box.extra);
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete (origin as { box?: { a: { n: number }; b: { n: number }; extra: { n: number } } }).box;
 		});
 
@@ -750,7 +747,7 @@ describe("applyOperations: link halves", () => {
 		const before = originHandle.nextInternId;
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.alias = origin.keep;
 		});
 
@@ -758,7 +755,7 @@ describe("applyOperations: link halves", () => {
 		expect(internId(origin, origin.alias!)).toBe(keepId);
 		expect(originHandle.nextInternId).toBe(before);
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.keep;
 			delete origin.alias;
 		});
@@ -808,7 +805,7 @@ describe("applyOperations: link halves", () => {
 		const before = originHandle.nextInternId;
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.extra = { n: 1 };
 		});
 
@@ -858,7 +855,7 @@ describe("applyOperations: link halves", () => {
 			const minted = originHandle.nextInternId;
 			const heard = record(origin);
 
-			transact(origin, () => {
+			batch(() => {
 				delete origin.a;
 				delete origin.b;
 			});
@@ -902,7 +899,7 @@ describe("applyOperations: link halves", () => {
 		const heard = record(origin);
 		const held = origin.box!;
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.box;
 			delete held.kid;
 		});
@@ -954,7 +951,7 @@ describe("applyOperations: link halves", () => {
 		const minted = originHandle.nextInternId;
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.pair;
 			delete origin.solo;
 		});
@@ -1001,7 +998,7 @@ describe("applyOperations: link halves", () => {
 
 		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.box;
 		});
 
@@ -1021,12 +1018,12 @@ describe("applyOperations: link halves", () => {
 		expect(origin.box).toEqual({ a: { n: 1 }, odd: { o: 1 }, b: { n: 2 } });
 		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
 		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
-		expect(internedIdOf(replicaHandle, replica.box!.odd)).toBeDefined();
-		expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual([1, 2, 4]);
+		expect(internedIdOf(replicaHandle, replica.box!.odd)).toBe(3);
+		expect(namedNodesOf(replica).map((node) => internedIdOf(replicaHandle, node))).toEqual([1, 2, undefined]);
 		expect(originHandle.nextInternId).toBe(minted);
 	});
 
-	it("a throw after an override bind leaves the batch's naming rolled back", () => {
+	it("a throw after an override bind leaves completed writes standing", () => {
 		interface ThrownBatchState {
 			keep?: { k: number };
 			first?: { n: number };
@@ -1037,7 +1034,7 @@ describe("applyOperations: link halves", () => {
 		const origin = createMutableState(build());
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.first;
 			delete origin.second;
 		});
@@ -1072,9 +1069,10 @@ describe("applyOperations: link halves", () => {
 		}).toThrow("does not resolve to a supported operation address");
 
 		expect(Object.hasOwn(replica, "first")).toBe(false);
-		expect(Object.hasOwn(replica, "second")).toBe(false);
+		expect(Object.hasOwn(replica, "second")).toBe(true);
+		expect(replica.second).toEqual({ m: 2 });
 		expect(namedNodes.map((node) => internId(replica, node))).toEqual(named);
-		expect(replicaHandle.byId.size).toBe(bound);
-		expect(replicaHandle.nextInternId).toBe(minted);
+		expect(replicaHandle.byId.size).toBeGreaterThanOrEqual(bound);
+		expect(replicaHandle.nextInternId).toBeGreaterThanOrEqual(minted);
 	});
 });

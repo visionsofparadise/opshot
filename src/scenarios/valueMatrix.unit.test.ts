@@ -8,7 +8,7 @@ import { isState } from "../isState";
 import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { unsafeTrack } from "../unsafeTrack";
 
 const record = <T extends object>(state: T): Array<Array<Operation>> => {
@@ -64,7 +64,7 @@ describe("JSON leaf", () => {
 	it("admit", () => {
 		const state = createMutableState<{ n?: number }>({});
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 42;
 		});
 
@@ -75,7 +75,7 @@ describe("JSON leaf", () => {
 		const state = createMutableState({ n: 42 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 43;
 		});
 
@@ -87,7 +87,7 @@ describe("JSON leaf", () => {
 		const state = createMutableState<{ n?: number }>({ n: 42 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.n;
 		});
 
@@ -99,7 +99,7 @@ describe("JSON leaf", () => {
 		const state = createMutableState({ n: 42 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 43;
 		});
 
@@ -112,7 +112,7 @@ describe("JSON leaf", () => {
 		const state = createMutableState({ n: 42 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 43;
 		});
 
@@ -127,7 +127,7 @@ describe("JSON leaf", () => {
 		const state = createMutableState({ n: 42 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 43;
 		});
 
@@ -143,15 +143,15 @@ describe("JSON leaf", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.n = 43;
 
 				throw new Error("abort");
 			}),
 		).toThrow("abort");
 
-		expect(state.n).toBe(42);
-		expect(heard).toEqual([]);
+		expect(state.n).toBe(43);
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -166,7 +166,7 @@ describe("tracked object", () => {
 	it("admit", () => {
 		const state = createMutableState<{ box?: { a: number } }>({});
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { a: 1 };
 		});
 
@@ -177,7 +177,7 @@ describe("tracked object", () => {
 		const state = createMutableState({ box: { a: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.a = 2;
 		});
 
@@ -190,7 +190,7 @@ describe("tracked object", () => {
 		const held = state.box;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { a: 9 };
 		});
 
@@ -203,7 +203,7 @@ describe("tracked object", () => {
 		const state = createMutableState<{ box?: { a: number } }>({ box: { a: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.box;
 		});
 
@@ -216,7 +216,7 @@ describe("tracked object", () => {
 		const state = createMutableState({ left: shared, right: shared });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.left.n = 5;
 		});
 
@@ -232,7 +232,7 @@ describe("tracked object", () => {
 		const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.self = state;
 		});
 
@@ -249,7 +249,7 @@ describe("tracked object", () => {
 		const held = state.from;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.to = state.from;
 			delete state.from;
 		});
@@ -263,7 +263,7 @@ describe("tracked object", () => {
 		const state = createMutableState({ box: { a: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.a = 2;
 		});
 
@@ -277,7 +277,7 @@ describe("tracked object", () => {
 		const held = state.box;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { a: 9 };
 		});
 
@@ -293,7 +293,7 @@ describe("tracked object", () => {
 		const state = createMutableState({ box: { a: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.a = 2;
 		});
 
@@ -310,15 +310,16 @@ describe("tracked object", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.box = { a: 9 };
 
 				throw new Error("abort");
 			}),
 		).toThrow("abort");
 
-		expect(isSameIdentity(state.box, held)).toBe(true);
-		expect(heard).toEqual([]);
+		expect(isSameIdentity(state.box, held)).toBe(false);
+		expect(state.box).toEqual({ a: 9 });
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -333,7 +334,7 @@ describe("tracked array", () => {
 	it("admit", () => {
 		const state = createMutableState<{ list?: Array<number> }>({});
 
-		transact(state, () => {
+		batch(() => {
 			state.list = [1, 2];
 		});
 
@@ -344,7 +345,7 @@ describe("tracked array", () => {
 		const state = createMutableState({ list: [1, 2] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list[0] = 9;
 		});
 
@@ -356,7 +357,7 @@ describe("tracked array", () => {
 		const state = createMutableState({ list: [1, 2] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list = [9];
 		});
 
@@ -368,7 +369,7 @@ describe("tracked array", () => {
 		const state = createMutableState<{ list?: Array<number> }>({ list: [1, 2] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.list;
 		});
 
@@ -381,7 +382,7 @@ describe("tracked array", () => {
 		const state = createMutableState({ left: shared, right: shared });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.left[0] = 9;
 		});
 
@@ -397,7 +398,7 @@ describe("tracked array", () => {
 		const state = createMutableState<{ list: Array<unknown> }>({ list: [] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list.push(state.list);
 		});
 
@@ -410,7 +411,7 @@ describe("tracked array", () => {
 		const held = state.from;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.to = state.from;
 			delete state.from;
 		});
@@ -424,7 +425,7 @@ describe("tracked array", () => {
 		const state = createMutableState({ list: [1, 2] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list[0] = 9;
 		});
 
@@ -438,7 +439,7 @@ describe("tracked array", () => {
 		const held = state.list;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list = [9];
 		});
 
@@ -453,7 +454,7 @@ describe("tracked array", () => {
 		const state = createMutableState({ list: [1, 2] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list[0] = 9;
 		});
 
@@ -470,15 +471,16 @@ describe("tracked array", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.list = [9];
 
 				throw new Error("abort");
 			}),
 		).toThrow("abort");
 
-		expect(isSameIdentity(state.list, held)).toBe(true);
-		expect(heard).toEqual([]);
+		expect(isSameIdentity(state.list, held)).toBe(false);
+		expect(state.list).toEqual([9]);
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -495,7 +497,7 @@ describe("ride-along", () => {
 		const marker = Symbol("ride");
 		const state = createMutableState<{ count: number; [marker]?: string }>({ count: 0 });
 
-		transact(state, () => {
+		batch(() => {
 			state[marker] = "admitted";
 		});
 
@@ -507,7 +509,7 @@ describe("ride-along", () => {
 		const state = createMutableState({ count: 0, [marker]: "initial" });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state[marker] = "written";
 		});
 
@@ -521,7 +523,7 @@ describe("ride-along", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state[marker] = "written";
 				state.count = 1;
 
@@ -529,9 +531,9 @@ describe("ride-along", () => {
 			}),
 		).toThrow("abort");
 
-		expect(state.count).toBe(0);
+		expect(state.count).toBe(1);
 		expect(state[marker]).toBe("written");
-		expect(heard).toEqual([]);
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -547,7 +549,7 @@ describe("frozen", () => {
 		const frozen = Object.freeze({ a: 1 });
 		const state = createMutableState<{ box?: { a: number } }>({});
 
-		transact(state, () => {
+		batch(() => {
 			state.box = frozen;
 		});
 
@@ -560,7 +562,7 @@ describe("frozen", () => {
 		const state = createMutableState({ frozen, tick: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.frozen.inner.n = 2;
 		});
 
@@ -575,7 +577,7 @@ describe("frozen", () => {
 
 		Object.freeze(state.box);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.inner.n = 2;
 			state.tick = 1;
 		});
@@ -590,7 +592,7 @@ describe("frozen", () => {
 		const state = createMutableState({ left: frozen, right: frozen, tick: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.left.inner.n = 2;
 			state.right.inner.n = 3;
 			state.tick = 1;
@@ -606,16 +608,16 @@ describe("frozen", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.tick = 1;
 
 				throw new Error("abort");
 			}),
 		).toThrow("abort");
 
-		expect(state.tick).toBe(0);
+		expect(state.tick).toBe(1);
 		expect(state.box).toBe(frozen);
-		expect(heard).toEqual([]);
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -631,7 +633,7 @@ describe("ignore()", () => {
 		const object = { a: 1 };
 		const state = createMutableState({ box: ignore({ a: 0 }) });
 
-		transact(state, () => {
+		batch(() => {
 			state.box = object;
 		});
 
@@ -643,7 +645,7 @@ describe("ignore()", () => {
 		const state = createMutableState({ box: ignore(object), tick: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.a = 2;
 		});
 
@@ -657,7 +659,7 @@ describe("ignore()", () => {
 		const state = createMutableState({ box: ignore(first), tick: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = second;
 			state.tick = 1;
 		});
@@ -671,7 +673,7 @@ describe("ignore()", () => {
 		const state = createMutableState({ box: ignore(object) as { a: number } | undefined, tick: 0 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.box;
 			state.tick = 1;
 		});
@@ -686,7 +688,7 @@ describe("ignore()", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.n = 1;
 				state.bag.x = 99;
 
@@ -694,9 +696,9 @@ describe("ignore()", () => {
 			}),
 		).toThrow("abort");
 
-		expect(state.n).toBe(0);
+		expect(state.n).toBe(1);
 		expect(bag.x).toBe(99);
-		expect(heard).toEqual([]);
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -709,7 +711,7 @@ describe("dangerous exotic", () => {
 		const state = createMutableState<{ box?: Map<string, number> }>({});
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = new Map();
 			});
 		}).toThrow();
@@ -737,7 +739,7 @@ describe("dangerous private", () => {
 		const state = createMutableState<{ box?: PrivateBox }>({});
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = new PrivateBox();
 			});
 		}).toThrow();
@@ -765,7 +767,7 @@ describe("dangerous own function on class", () => {
 		const state = createMutableState<{ box?: ArrowBox }>({});
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = new ArrowBox();
 			});
 		}).toThrow();
@@ -793,7 +795,7 @@ describe("dangerous non-writable object property", () => {
 		const state = createMutableState<{ box?: object }>({});
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = nonWritableObjectCarrier();
 			});
 		}).toThrow();
@@ -826,7 +828,7 @@ describe("unsafeTrack() of dangerous", () => {
 			box: unsafeTrack(new Map<string, number>()),
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.box = unsafeTrack(map);
 		});
 
@@ -839,7 +841,7 @@ describe("unsafeTrack() of dangerous", () => {
 		const state = createMutableState({ box: unsafeTrack(first) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = unsafeTrack(second);
 		});
 
@@ -854,7 +856,7 @@ describe("unsafeTrack() of dangerous", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.box;
 		});
 
@@ -869,15 +871,15 @@ describe("unsafeTrack() of dangerous", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.box = unsafeTrack(new Map([["b", 2]]));
 
 				throw new Error("abort");
 			}),
 		).toThrow("abort");
 
-		expect(isSameIdentity(state.box, held)).toBe(true);
-		expect(heard).toEqual([]);
+		expect(isSameIdentity(state.box, held)).toBe(false);
+		expect(heard).toHaveLength(1);
 	});
 });
 
@@ -893,7 +895,7 @@ describe("strict: false dangerous", () => {
 		const map = new Map<string, number>();
 		const state = createMutableState<{ box?: Map<string, number> }>({}, { strict: false });
 
-		transact(state, () => {
+		batch(() => {
 			state.box = map;
 		});
 
@@ -907,14 +909,14 @@ describe("strict: false dangerous", () => {
 		const heard = record(state);
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.box = new Map([["b", 2]]);
 
 				throw new Error("abort");
 			}),
 		).toThrow("abort");
 
-		expect(isSameIdentity(state.box, held)).toBe(true);
-		expect(heard).toEqual([]);
+		expect(isSameIdentity(state.box, held)).toBe(false);
+		expect(heard).toHaveLength(1);
 	});
 });

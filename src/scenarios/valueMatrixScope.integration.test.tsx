@@ -6,7 +6,7 @@ import { createElement, type FC } from "react";
 import { createMutableState } from "../createMutableState";
 import { scope } from "../react/scope";
 import { TrackedMap } from "../tracked/trackedMap";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 
 type NestedState = { label: number };
 
@@ -66,7 +66,7 @@ describe("scope reachability", () => {
 		const before = renders.count;
 
 		await act(async () => {
-			transact(nested, () => {
+			batch(() => {
 				nested.label = 1;
 			});
 		});
@@ -87,7 +87,7 @@ describe("scope reachability", () => {
 		const before = renders.count;
 
 		await act(async () => {
-			transact(key, () => {
+			batch(() => {
 				key.label = 1;
 			});
 		});

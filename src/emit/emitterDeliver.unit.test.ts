@@ -1,6 +1,6 @@
 import { createMutableState } from "../createMutableState";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 
 const capturingEmitOn = (): { emitOn: (flush: () => void) => void; thrown: () => unknown } => {
 	let thrown: unknown;
@@ -76,7 +76,7 @@ describe("emitterDeliver", () => {
 		subscribe(cause, () => {
 			order.push("first hears cause");
 
-			transact(effect, () => {
+			batch(() => {
 				effect.n += 1;
 			});
 		});
@@ -87,7 +87,7 @@ describe("emitterDeliver", () => {
 			order.push("second hears cause");
 		});
 
-		transact(cause, () => {
+		batch(() => {
 			cause.n += 1;
 		});
 

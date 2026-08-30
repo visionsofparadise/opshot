@@ -5,7 +5,7 @@ import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { addressOf } from "./address";
 import { TrackedSet } from "./trackedSet";
 
@@ -26,7 +26,7 @@ describe("TrackedSet", () => {
 		const state = createMutableState({ set: new TrackedSet([member]) });
 		const heard = record(state);
 
-		transact(state, () => state.set.delete(member));
+		batch(() => state.set.delete(member));
 		const ops = heard[0] ?? [];
 		applyOperations(state, ops, "undo");
 
@@ -48,7 +48,7 @@ describe("TrackedSet", () => {
 
 		expect(held).toBe(member);
 
-		transact(state, () => {
+		batch(() => {
 			const current = [...state.set][0];
 
 			if (typeof current !== "object" || current === null) throw new Error("missing member");
@@ -65,7 +65,7 @@ describe("TrackedSet", () => {
 		const state = createMutableState({ set: new TrackedSet(["a", "b"]) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.set.clear();
 			state.set.add("b");
 			state.set.add("a");
@@ -92,10 +92,10 @@ describe("TrackedSet", () => {
 		const added = addressOf("c");
 		const removed = addressOf("b");
 
-		transact(state, () => {
+		batch(() => {
 			state.set.add("c");
 		});
-		transact(state, () => {
+		batch(() => {
 			expect(state.set.delete("b")).toBe(true);
 			expect(state.set.delete("b")).toBe(false);
 		});
@@ -141,7 +141,7 @@ describe("TrackedSet", () => {
 		const state = createMutableState({ set: new TrackedSet(["a", "b"]) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.set.add("a");
 		});
 

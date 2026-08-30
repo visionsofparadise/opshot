@@ -185,7 +185,7 @@ const applyLink = (root: object, operation: LinkMutation, handle: Handle): void 
 
 	if (path.length === 0) throw linkError(path, ref, "does not resolve to a supported operation address");
 
-	const resolved = nodeOfInternedId(handle, ref, handle.transactionCapture);
+	const resolved = nodeOfInternedId(handle, ref, undefined);
 
 	if (resolved === undefined) throw linkError(path, ref, "does not resolve");
 
@@ -272,10 +272,10 @@ const applyPlain = (
 
 	if (operation.ids !== undefined) {
 		if (isObjectLike(payload.recorded)) {
-			bindVendedIds(handle, attached, payload.recorded, operation.ids, handle.transactionCapture, parent, key);
+			bindVendedIds(handle, attached, payload.recorded, operation.ids, undefined, parent, key);
 		}
 	} else {
-		internSubtree(handle, attached, (_parent, entry) => !isTrackedEdge(entry), handle.transactionCapture);
+		internSubtree(handle, attached, (_parent, entry) => !isTrackedEdge(entry), undefined);
 	}
 };
 

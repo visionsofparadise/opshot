@@ -1,7 +1,7 @@
 import { createMutableState } from "./createMutableState";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact/transact";
+import { batch } from "./batch";
 import { shapeOps } from "./ops/operationShape";
 
 describe("subscribe", () => {
@@ -12,11 +12,11 @@ describe("subscribe", () => {
 			heard.push([...ops]);
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 		stop();
-		transact(state, () => {
+		batch(() => {
 			state.count = 2;
 		});
 
@@ -68,7 +68,7 @@ describe("subscribe", () => {
 		]);
 	});
 
-	it("a transact with meta delivers that meta to a subscriber", () => {
+	it("a batch with meta delivers that meta to a subscriber", () => {
 		const meta = { actor: "default", role: "writer" };
 		const state = createMutableState({ count: 0 });
 		const heard = new Array<unknown>();
@@ -77,13 +77,9 @@ describe("subscribe", () => {
 			heard.push(delivered);
 		});
 
-		transact(
-			state,
-			() => {
-				state.count = 1;
-			},
-			meta,
-		);
+		batch(() => {
+			state.count = 1;
+		}, meta);
 
 		expect(heard).toEqual([meta]);
 	});

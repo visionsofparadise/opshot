@@ -4,7 +4,7 @@ import { edgeStatusOf, hasOtherRoutes, isTrackedEdge } from "../edges";
 import { requireHandle, type DirtyIndex } from "../handle";
 import { ignore } from "../ignore";
 import { internedOccupied } from "./internedOccupancy";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { unsafeTrack } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
 import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath } from "./admission";
@@ -170,7 +170,7 @@ describe("admission", () => {
 			b: unsafeTrack({ x: { n: 1 } }),
 		} as unknown as { a: { x: { n: number } }; b: { x: { n: number } } });
 
-		transact(state, () => {
+		batch(() => {
 			state.a = state.b;
 		});
 
@@ -191,7 +191,7 @@ describe("admission", () => {
 			b: { y: ignore({ n: 1 }) },
 		} as unknown as { a: { y: { n: number } }; b: { y: { n: number } } });
 
-		transact(state, () => {
+		batch(() => {
 			state.a = state.b;
 		});
 
@@ -213,7 +213,7 @@ describe("admission", () => {
 			box: { n: 1 } as { n: number; self?: { n: number } },
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.box.self = state.box;
 		});
 
@@ -249,7 +249,7 @@ describe("admission", () => {
 			b: { x: ignore({ n: 1 }) },
 		} as unknown as { a: { x: { n: number } }; b: { x: { n: number } } });
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 		});
 

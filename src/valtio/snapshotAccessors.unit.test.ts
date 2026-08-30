@@ -2,7 +2,7 @@ import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
 import { getRegisteredTarget, isSameIdentity } from "../identity";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
 
 const { proxyStateMap, snapCache } = unstable_getInternalStates();
@@ -38,7 +38,7 @@ describe("snapshotAccessors: freeze occupancy", () => {
 		expect(first.fahrenheit).toBe(32);
 		expect(Object.getOwnPropertyDescriptor(first, "fahrenheit")?.get).toBeTypeOf("function");
 
-		transact(state, () => {
+		batch(() => {
 			state.celsius = 20;
 		});
 

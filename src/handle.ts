@@ -1,8 +1,8 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { peelReadProxy } from "./peelReadProxy";
+import type { BatchFrame } from "./batch";
 import type { NodeRecord } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
-import type { CaptureTables } from "./occupancy";
 import type { EmissionScheduler } from "./settings";
 
 const occupancies = new WeakMap<object, Set<WeakRef<Handle>>>();
@@ -35,7 +35,7 @@ export interface Handle {
 	stamp: object;
 	version: number;
 	replaying: boolean;
-	transactionCapture?: CaptureTables;
+	pendingOwner: BatchFrame | undefined;
 }
 
 export function registerHandle(target: object, handle: Handle): void {

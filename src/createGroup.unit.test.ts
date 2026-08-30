@@ -2,7 +2,7 @@ import { createGroup, type Group } from "./createGroup";
 import { isSameIdentity } from "./identity";
 import { type Operation } from "./ops/operation";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact/transact";
+import { batch } from "./batch";
 import { shapeOps } from "./ops/operationShape";
 
 interface Counter {
@@ -21,15 +21,14 @@ describe("createGroup", () => {
 		const first = group.createMutableState<Counter>({ count: 0 });
 		const second = group.createMutableState<Counter>({ count: 0 });
 
-		transact(
-			first,
+		batch(
 			() => {
 				first.count = 1;
 			},
 			{ transactionKey: "drag" },
 		);
 
-		transact(second, () => {
+		batch(() => {
 			second.count = 2;
 		});
 
@@ -55,7 +54,7 @@ describe("createGroup", () => {
 
 		const state = group.createMutableState<Counter>({ count: 0 });
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -72,7 +71,7 @@ describe("createGroup", () => {
 		const state = group.createMutableState<Counter>({ count: 0 });
 
 		remove();
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -91,7 +90,7 @@ describe("createGroup", () => {
 
 		const state = leaf.createMutableState<Counter>({ count: 0 });
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 

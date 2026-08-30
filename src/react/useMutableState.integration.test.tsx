@@ -5,7 +5,7 @@ import { useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
@@ -168,7 +168,7 @@ describe("useMutableState", () => {
 		expect(renders).toBe(2);
 	});
 
-	it("does not rerender when a transact of a read field rolls back", async () => {
+	it("rerenders when a throwing batch writes a read field", async () => {
 		let renders = 0;
 		let stateRef: { count: number } | undefined;
 
@@ -190,7 +190,7 @@ describe("useMutableState", () => {
 			if (state === undefined) throw new Error("missing state");
 
 			try {
-				transact(state, () => {
+				batch(() => {
 					state.count = 1;
 
 					throw new Error("rollback");
@@ -200,8 +200,8 @@ describe("useMutableState", () => {
 			}
 		});
 
-		expect(renders).toBe(1);
-		expect(screen.getByTestId("count").textContent).toBe("0");
+		expect(renders).toBe(2);
+		expect(screen.getByTestId("count").textContent).toBe("1");
 	});
 
 	it("a non-reading owner stays at one render across three scoped child increments", async () => {

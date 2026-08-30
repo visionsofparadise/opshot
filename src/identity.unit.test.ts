@@ -2,7 +2,7 @@ import { createProxy } from "proxy-compare";
 
 import { createMutableState } from "./createMutableState";
 import { identify, isSameIdentity } from "./index";
-import { transact } from "./transact/transact";
+import { batch } from "./batch";
 
 describe("identity", () => {
 	it("keeps a tracked node's identity across raw, proxy, snapshot, and tracking-wrapper reads", () => {
@@ -10,7 +10,7 @@ describe("identity", () => {
 		const state = createMutableState({ item: raw });
 		let mutableProxy: { value: number } | undefined;
 
-		transact(state, () => {
+		batch(() => {
 			mutableProxy = state.item;
 		});
 

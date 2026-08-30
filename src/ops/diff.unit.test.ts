@@ -11,7 +11,7 @@ import { subscribe } from "../subscribe";
 import { TrackedDate } from "../tracked/trackedDate";
 import { TrackedMap } from "../tracked/trackedMap";
 import { TrackedSet } from "../tracked/trackedSet";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { applyOperations } from "./applyOperations";
 import { diffObjects } from "./diff";
 import {
@@ -151,7 +151,7 @@ describe("diffObjects: atomic flat paths", () => {
 		const state = createMutableState({ retained: { count: 1 }, replaced: { count: 1 } });
 		const before = snapshot(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.retained.count = 2;
 			state.replaced = { count: 2 };
 		});
@@ -167,7 +167,7 @@ describe("diffObjects: atomic flat paths", () => {
 		const heard = record(state);
 		const before = state.value;
 
-		transact(state, () => {
+		batch(() => {
 			state.value = { count: 1 };
 		});
 
@@ -256,7 +256,7 @@ describe("diffObjects: atomic flat paths", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.list.length = 4;
 			state.list[3] = 9;
 			state.map.get(key)!.count = 2;
@@ -374,7 +374,7 @@ describe("diffObjects: cyclic values", () => {
 		const state = createMutableState<{ n: number; self?: object }>({ n: 1 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.self = state;
 		});
 
@@ -399,7 +399,7 @@ describe("diffObjects: cyclic values", () => {
 		const state = createMutableState<{ child: { n: number; back?: object } }>({ child: { n: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.child.back = state;
 		});
 
@@ -426,7 +426,7 @@ describe("diffObjects: cyclic values", () => {
 			const { state, form, assertFormed } = formation.start();
 			const heard = record(state);
 
-			transact(state, form);
+			batch(form);
 
 			expect(heard).toHaveLength(1);
 			expect(heard[0]?.[0]?.do).toMatchObject(formation.expectedDo(state));
@@ -445,16 +445,16 @@ describe("diffObjects: cyclic values", () => {
 		},
 	);
 
-	it("repairs a cycle with a delete whose undo link restores the cycle by identity", () => {
+	it("repairs a cycle with a delete whose undo link restores the cycle by identity", async () => {
 		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
 		state.box.self = state.box;
 
-		transact(state, () => undefined);
+		await Promise.resolve();
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.box.self;
 		});
 
@@ -477,7 +477,7 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.box.self).toBeUndefined();
 	});
 
-	it("rolls back a throwing callback over a cyclic baseline and restores the cycle", () => {
+	it("keeps completed writes when a throwing callback mutates a cyclic baseline", () => {
 		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
 		state.box.self = state.box;
@@ -485,17 +485,17 @@ describe("diffObjects: cyclic values", () => {
 		const callbackError = new Error("callback failed");
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.box.n = 99;
 
 				throw callbackError;
 			}),
 		).toThrow(callbackError);
-		expect(state.box.n).toBe(1);
+		expect(state.box.n).toBe(99);
 		expect(state.box.self).toBe(state.box);
 	});
 
-	it("rolls back a throwing cycle-repairing transaction and restores the cycle", () => {
+	it("keeps a cycle deletion when the callback throws", () => {
 		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 
 		state.box.self = state.box;
@@ -503,29 +503,29 @@ describe("diffObjects: cyclic values", () => {
 		const callbackError = new Error("callback failed");
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				delete state.box.self;
 
 				throw callbackError;
 			}),
 		).toThrow(callbackError);
-		expect(state.box.self).toBe(state.box);
+		expect(state.box.self).toBeUndefined();
 	});
 
-	it("rolls back a cycle formed then thrown and emits nothing", () => {
+	it("emits a cycle formed then thrown", () => {
 		const state = createMutableState<{ box: { n: number; self?: object } }>({ box: { n: 1 } });
 		const heard = record(state);
 		const callbackError = new Error("callback failed");
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.box.self = state.box;
 
 				throw callbackError;
 			}),
 		).toThrow(callbackError);
-		expect(state.box.self).toBeUndefined();
-		expect(heard).toHaveLength(0);
+		expect(state.box.self).toBe(state.box);
+		expect(heard).toHaveLength(1);
 	});
 
 	it("mints one op per route for a k=2 aliased interior change", () => {
@@ -536,7 +536,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.a.b.n = 5;
 		});
 
@@ -556,7 +556,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.b2 = state.a.b;
 		});
 
@@ -582,7 +582,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.b;
 		});
 
@@ -604,7 +604,7 @@ describe("diffObjects: cyclic values", () => {
 		const symbolKey = Symbol("ride");
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const carrier: { [key: symbol]: object } = {};
 
 			carrier[symbolKey] = state.held;
@@ -616,16 +616,16 @@ describe("diffObjects: cyclic values", () => {
 		expect(state.carrier?.[symbolKey]).toBe(state.held);
 	});
 
-	it("accepts identity-rewiring of bisimilar self-cycles as a closed identity discontinuity", () => {
+	it("accepts identity-rewiring of bisimilar self-cycles as a closed identity discontinuity", async () => {
 		const state = createMutableState<{ a: { self?: object } }>({ a: {} });
 
 		state.a.self = state.a;
 
-		transact(state, () => undefined);
+		await Promise.resolve();
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const copy: { self?: object } = {};
 
 			copy.self = copy;
@@ -648,7 +648,7 @@ describe("diffObjects: cyclic values", () => {
 		const state = createMutableState<{ n: number; diamond?: object }>({ n: 1 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.diamond = buildAliasedDiamond(64);
 		});
 
@@ -671,7 +671,7 @@ describe("diffObjects: cyclic values", () => {
 	it("restores identity on undo of a last-route delete of a cyclic node", () => {
 		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
-		transact(state, () => {
+		batch(() => {
 			const node: { m: number; self?: object } = { m: 1 };
 
 			node.self = node;
@@ -681,7 +681,7 @@ describe("diffObjects: cyclic values", () => {
 		const held = state.node;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.node;
 		});
 
@@ -693,7 +693,7 @@ describe("diffObjects: cyclic values", () => {
 	it("restores sharing on undo of a last-route delete of an aliased diamond", () => {
 		const state = createMutableState<{ n: number; node?: { left: { n: number }; right: { n: number } } }>({ n: 1 });
 
-		transact(state, () => {
+		batch(() => {
 			const shared = { n: 1 };
 
 			state.node = { left: shared, right: shared };
@@ -701,7 +701,7 @@ describe("diffObjects: cyclic values", () => {
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.node;
 		});
 
@@ -718,7 +718,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.a;
 			delete state.b;
 		});
@@ -737,7 +737,7 @@ describe("diffObjects: cyclic values", () => {
 		const held = state.src;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.dest = shared;
 			delete state.src;
 		});
@@ -754,7 +754,7 @@ describe("diffObjects: cyclic values", () => {
 		const state = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: shared });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 		});
 
@@ -774,7 +774,7 @@ describe("diffObjects: cyclic values", () => {
 		}>({ a: { n: 1 }, extra: 1 });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 			delete state.extra;
 			const cycle: { self?: object } = {};
@@ -805,7 +805,7 @@ describe("diffObjects: cyclic values", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.alias = state.b;
 		});
 
@@ -829,7 +829,7 @@ describe("diffObjects: cyclic values", () => {
 		}>({ shared });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.carrier = { x: 1, y: state.shared, z: 2 };
 		});
 
@@ -855,7 +855,7 @@ describe("diffObjects: cyclic values", () => {
 		}>({ shared, from: { inner: shared, tag: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.to = state.from;
 			delete state.from;
 		});
@@ -881,7 +881,7 @@ describe("diffObjects: link batch construction", () => {
 		const state = createMutableState<{ late?: { n: number }; early?: { n: number } }>({});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.late = { n: 1 };
 			state.early = state.late;
 		});
@@ -904,7 +904,7 @@ describe("diffObjects: link batch construction", () => {
 		const state = createMutableState<{ a?: { n: number }; b?: { n: number } }>({ a: { n: 1 } });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const node = state.a;
 
 			delete state.a;
@@ -919,13 +919,13 @@ describe("diffObjects: link batch construction", () => {
 		expect(state).not.toHaveProperty("b");
 	});
 
-	it("restores the baseline when a transaction forming a move throws", () => {
+	it("keeps a move when the callback throws", () => {
 		const state = createMutableState<{ from?: { deep: { n: number } }; to?: { deep: { n: number } } }>({
 			from: { deep: { n: 1 } },
 		});
 
 		expect(() =>
-			transact(state, () => {
+			batch(() => {
 				state.to = state.from;
 
 				delete state.from;
@@ -934,15 +934,15 @@ describe("diffObjects: link batch construction", () => {
 			}),
 		).toThrow("boom");
 
-		expect(state.from).toEqual({ deep: { n: 1 } });
-		expect(state).not.toHaveProperty("to");
+		expect(state.to).toEqual({ deep: { n: 1 } });
+		expect(state).not.toHaveProperty("from");
 	});
 
 	it("mints a numeric ref segment through an array index and resolves it on a replica", () => {
 		const state = createMutableState<{ list: Array<{ n: number }>; slot?: { n: number } }>({ list: [{ n: 1 }] });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.slot = state.list[0];
 		});
 
@@ -961,7 +961,7 @@ describe("diffObjects: link batch construction", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { keep: "KEEP", inner: { alias: state.hub } };
 		});
 
@@ -978,7 +978,7 @@ describe("diffObjects: link batch construction", () => {
 		expect((replica.box.inner as { alias: unknown }).alias).toBe(replica.hub);
 	});
 
-	it("undo restores a surviving external route when its container occupancy is removed", () => {
+	it("undo restores a surviving external route when its container occupancy is removed", async () => {
 		const start = (): { keep: { n: number }; bag: Record<string, unknown> } => ({
 			keep: { n: 1 },
 			bag: { x: 1, y: 2 },
@@ -988,11 +988,11 @@ describe("diffObjects: link batch construction", () => {
 
 		state.bag.slot = state.keep;
 
-		transact(state, () => undefined);
+		await Promise.resolve();
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.bag.slot;
 			delete state.bag.x;
 			delete state.bag.y;
@@ -1011,7 +1011,7 @@ describe("diffObjects: link batch construction", () => {
 		expect(replica.bag.slot).toBe(replica.keep);
 	});
 
-	it("undo restores a surviving external route when its container occupancy is overwritten", () => {
+	it("undo restores a surviving external route when its container occupancy is overwritten", async () => {
 		const start = (): { keep: { n: number }; bag: Record<string, unknown> } => ({
 			keep: { n: 1 },
 			bag: { x: 1, y: 2 },
@@ -1021,11 +1021,11 @@ describe("diffObjects: link batch construction", () => {
 
 		state.bag.slot = state.keep;
 
-		transact(state, () => undefined);
+		await Promise.resolve();
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.bag.slot = { n: 99 };
 			delete state.bag.x;
 			delete state.bag.y;
@@ -1046,7 +1046,7 @@ describe("diffObjects: link batch construction", () => {
 		expect(replica.bag.slot).toBe(replica.keep);
 	});
 
-	it("links a node that stayed occupied through an identity-marked replacement of a previously ignored wrapper", () => {
+	it("links a node that stayed occupied through an identity-marked replacement of a previously ignored wrapper", async () => {
 		const origin = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
 			wrapped: ignore({ held: { n: 0 } }),
@@ -1058,9 +1058,9 @@ describe("diffObjects: link batch construction", () => {
 		origin.wrapped = { held: node };
 		delete origin.hold;
 
-		transact(origin, () => undefined);
+		await Promise.resolve();
 
-		transact(origin, () => {
+		batch(() => {
 			origin.slot = node;
 		});
 
@@ -1087,7 +1087,7 @@ describe("diffObjects: link batch construction", () => {
 
 		expect(internedIdOf(handle, inner)).toBeDefined();
 
-		transact(state, () => {
+		batch(() => {
 			delete (state as { box?: { inner: { n: number } } }).box;
 		});
 
@@ -1104,7 +1104,7 @@ describe("diffObjects: link batch construction", () => {
 
 		expect(id).toBeDefined();
 
-		transact(state, () => {
+		batch(() => {
 			delete (state as { box?: { nested: { n: number } } }).box;
 		});
 
@@ -1118,7 +1118,7 @@ describe("diffObjects: link batch construction", () => {
 		const box = state.box;
 		const id = internedIdOf(handle, box);
 
-		transact(state, () => {
+		batch(() => {
 			delete (state as { box?: { n: number } }).box;
 			state.box = box;
 		});
@@ -1131,13 +1131,13 @@ describe("diffObjects: link batch construction", () => {
 		const node = origin.box!;
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.box;
 		});
 
 		node.n = 99;
 
-		transact(origin, () => {
+		batch(() => {
 			origin.box = node;
 		});
 
@@ -1158,11 +1158,11 @@ describe("diffObjects: link batch construction", () => {
 		const inner = held.x;
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			inner.back = held;
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.a;
 		});
 
@@ -1172,7 +1172,7 @@ describe("diffObjects: link batch construction", () => {
 
 		held.x.n = 99;
 
-		transact(origin, () => {
+		batch(() => {
 			origin.a = held;
 		});
 
@@ -1193,11 +1193,11 @@ describe("diffObjects: link batch construction", () => {
 		const handle = requireHandle(state, "opshot: test requires a state");
 		const node = state.cyc!;
 
-		transact(state, () => {
+		batch(() => {
 			node.self = node;
 		});
 
-		transact(state, () => {
+		batch(() => {
 			delete state.cyc;
 		});
 
@@ -1250,7 +1250,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 	it("a last-route delete of a cyclic node carries the value and restores the cycle on undo", () => {
 		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
-		transact(state, () => {
+		batch(() => {
 			const node: { m: number; self?: object } = { m: 1 };
 
 			node.self = node;
@@ -1260,7 +1260,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const held = state.node;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.node;
 		});
 
@@ -1278,7 +1278,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 	it("a last-route delete of an aliased array carries the value so undo restores its sharing", () => {
 		const state = createMutableState<{ n: number; node?: Array<{ n: number }> }>({ n: 1 });
 
-		transact(state, () => {
+		batch(() => {
 			const shared = { n: 1 };
 
 			state.node = [shared, shared];
@@ -1286,7 +1286,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			delete state.node;
 		});
 
@@ -1303,7 +1303,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 	it("replacing a self-referential container assigns the new cycle and restores the old on undo", () => {
 		const state = createMutableState<{ n: number; node?: { m: number; self?: object } }>({ n: 1 });
 
-		transact(state, () => {
+		batch(() => {
 			const node: { m: number; self?: object } = { m: 1 };
 
 			node.self = node;
@@ -1312,7 +1312,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const next: { m: number; self?: object } = { m: 2 };
 
 			next.self = next;
@@ -1337,7 +1337,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const inner = state.box.inner;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { inner, extra: 2 };
 		});
 
@@ -1361,7 +1361,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		}>({});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const node = { n: 1 };
 
 			state.first = node;
@@ -1409,7 +1409,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		expect(internedIdOf(handle!, state.bag.left.child)).toBeDefined();
 		expect(handle!.nodes.get(rawTargetOf(state.bag.left.child))?.edges.length).toBe(3);
 
-		transact(state, () => {
+		batch(() => {
 			state.tick = 1;
 		});
 
@@ -1433,7 +1433,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 		const handle = requireHandle(state, "opshot: test requires a state");
 
-		transact(state, () => {
+		batch(() => {
 			state.bag = {
 				wrap: { secret: { n: 2 } },
 				sibling: { n: 2 },
@@ -1468,7 +1468,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.bag = { wrap: { secret: state.keep }, extra: 2 };
 		});
 
@@ -1490,11 +1490,11 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 		});
 
-		transact(state, () => {
+		batch(() => {
 			const payload = { x: state.keep, extra: 2 };
 
 			state.a = payload;
@@ -1514,7 +1514,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		Object.freeze(inner);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { inner, extra: 2 };
 		});
 
@@ -1534,7 +1534,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const state = createMutableState({ slot: { n: 0 } as object }, { strict: false });
 		const handle = requireHandle(state, "opshot: test requires a state");
 
-		transact(state, () => {
+		batch(() => {
 			state.slot = payload;
 		});
 
@@ -1554,11 +1554,11 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.a = origin.b;
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			origin.payload = { nest: origin.a };
 		});
 
@@ -1588,7 +1588,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		} as unknown as { a: { x: { n: number }; extra?: number }; b: { x: { n: number }; extra?: number } });
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			const payload = { x: { n: 2 }, extra: 2 };
 
 			origin.a = payload;
@@ -1622,7 +1622,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		expect(trackedId).toBeDefined();
 
-		transact(state, () => {
+		batch(() => {
 			state.bag = { wrap: { secret: state.keep }, sibling: { n: 3 } };
 		});
 
@@ -1636,7 +1636,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const inner = state.box.inner;
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { inner, extra: 2 };
 		});
 
@@ -1650,32 +1650,26 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 	});
 
-	it("rollback of an assign that aliases through a declared-ignored second route restores the graph", () => {
+	it("keeps an assign that aliases through a previously ignored second route when the callback throws", () => {
 		const state = createMutableState({
 			a: { y: { n: 1 } },
 			b: { y: ignore({ n: 1 }) },
 			slot: { n: 0 } as object,
 		} as unknown as { a: { y: { n: number } }; b: { y: { n: number } }; slot: object });
-		const handle = requireHandle(state, "opshot: test requires a state");
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 		});
 
-		const held = state.slot;
-		const beforeIds = internSequenceOf(state);
-		const beforeNext = handle.nextInternId;
-
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.slot = { nest: state.a };
 				throw new Error("abort");
 			});
 		}).toThrow("abort");
 
-		expect(state.slot).toBe(held);
-		expect(internSequenceOf(state)).toEqual(beforeIds);
-		expect(handle.nextInternId).toBe(beforeNext);
+		expect(state.slot).toEqual({ nest: state.a });
+		expect((state.slot as { nest: object }).nest).toBe(state.a);
 	});
 
 	it("a decomposed sparse-array addition skips holes and restores them on undo", () => {
@@ -1685,7 +1679,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const list = new Array<{ n: number } | undefined>(4);
 
 			list[0] = state.keep;
@@ -1754,7 +1748,7 @@ describe("diffObjects: intern identity", () => {
 		});
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			const fresh = { inner: { a: 1 }, extra: 2 };
 
 			origin.fresh = fresh;
@@ -1801,7 +1795,7 @@ describe("diffObjects: intern identity", () => {
 		const origin = createMutableState<{ a: { n: number }; b?: { n: number } }>({ a: shared, b: shared });
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			delete origin.b;
 		});
 
@@ -1835,7 +1829,7 @@ describe("diffObjects: intern identity", () => {
 			const origin = start();
 			const heard = record(origin);
 
-			transact(origin, () => {
+			batch(() => {
 				write(origin);
 			});
 
@@ -1911,13 +1905,13 @@ describe("diffObjects: intern identity", () => {
 		});
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.slot = origin.shared;
 		});
 
 		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "link", path: ["slot"] });
 
-		transact(origin, () => {
+		batch(() => {
 			origin.alias = origin.shared;
 		});
 
@@ -1944,15 +1938,15 @@ describe("diffObjects: intern identity", () => {
 		});
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.a = frozen;
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			origin.b = frozen;
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			origin.sh = { n: 1 };
 			origin.alias = origin.sh;
 		});
@@ -1983,15 +1977,15 @@ describe("diffObjects: intern identity", () => {
 		});
 		const heard = record(origin);
 
-		transact(origin, () => {
+		batch(() => {
 			origin.a = frozen;
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			origin.b = frozen;
 		});
 
-		transact(origin, () => {
+		batch(() => {
 			origin.sh = { n: 1 };
 			origin.alias = origin.sh;
 		});

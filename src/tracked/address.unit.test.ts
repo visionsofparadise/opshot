@@ -1,4 +1,4 @@
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
@@ -24,7 +24,7 @@ describe("addressOf", () => {
 		const snapA = snapshot(proxied) as { item: { label: string }; sibling: number };
 		const addressSnapA = addressOf(snapA.item);
 
-		transact(state, () => {
+		batch(() => {
 			state.sibling = 1;
 		});
 

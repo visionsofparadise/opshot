@@ -88,6 +88,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		stamp: {},
 		version: 0,
 		replaying: false,
+		pendingOwner: undefined,
 	};
 
 	registerHandle(base, handle);

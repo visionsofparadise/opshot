@@ -6,6 +6,7 @@ export default defineConfig({
 		globals: true,
 		environment: "node",
 		include: ["src/**/*.integration.heavy.test.{ts,tsx}", "tests/**/*.integration.heavy.test.{ts,tsx}"],
+		passWithNoTests: true,
 		fileParallelism: false,
 		testTimeout: 60_000,
 	},

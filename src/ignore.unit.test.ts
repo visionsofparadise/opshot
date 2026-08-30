@@ -5,7 +5,7 @@ import { unsafeTrack } from "./unsafeTrack";
 import { type Operation } from "./ops/operation";
 import { shapeOps } from "./ops/operationShape";
 import { subscribe } from "./subscribe";
-import { transact } from "./transact/transact";
+import { batch } from "./batch";
 
 describe("ignore", () => {
 	it("keeps an ignored value's interior writable and shares the same reference", () => {
@@ -24,7 +24,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.n = 9;
 			state.tick = 1;
 		});
@@ -44,7 +44,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.foo = second;
 			state.tick = 1;
 		});
@@ -54,7 +54,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.foo.n = 5;
 			state.tick = 2;
 		});
@@ -75,7 +75,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.a.nested = { n: 9 };
 			state.tick = 1;
 		});
@@ -86,7 +86,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.b.nested = { n: 8 };
 			state.tick = 2;
 		});
@@ -103,7 +103,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.a.nested = { n: 3 };
 			state.tick = 1;
 		});
@@ -114,7 +114,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.b.nested = { n: 9 };
 			state.tick = 2;
 		});
@@ -131,7 +131,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.box.nested.n = 2;
 			state.tick = 1;
 		});
@@ -146,7 +146,7 @@ describe("ignore", () => {
 		const obj = { n: 1 };
 		const state = createMutableState<{ foo: unknown }>({ foo: null });
 
-		transact(state, () => {
+		batch(() => {
 			state.foo = ignore(obj);
 		});
 
@@ -160,7 +160,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.box = { nested: { n: 2 } };
 			state.tick = 1;
 		});
@@ -169,7 +169,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.box.nested = replacement;
 			state.tick = 2;
 		});
@@ -190,7 +190,7 @@ describe("ignore", () => {
 
 		subscribe(state, (ops) => heard.push([...ops]));
 
-		transact(state, () => {
+		batch(() => {
 			state.a = state.b;
 		});
 
@@ -198,7 +198,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.b.slot = next;
 			state.tick = 1;
 		});
@@ -219,13 +219,13 @@ describe("ignore", () => {
 			b: { x: { hide?: { s: number }; other?: { t: number } } };
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.b = state.a;
 		});
 
 		const replacement = { s: 2 };
 
-		transact(state, () => {
+		batch(() => {
 			state.a.x = { hide: replacement };
 		});
 
@@ -274,12 +274,12 @@ describe("ignore", () => {
 		subscribe(first, (ops) => heardFirst.push([...ops]));
 		subscribe(second, (ops) => heardSecond.push([...ops]));
 
-		transact(first, () => {
+		batch(() => {
 			first.box.n = 2;
 			first.tick = 1;
 		});
 
-		transact(second, () => {
+		batch(() => {
 			second.box.n = 3;
 			second.tick = 1;
 		});
@@ -306,7 +306,7 @@ describe("ignore", () => {
 
 		ignore(node, false);
 
-		transact(state, () => {
+		batch(() => {
 			state.shown = node;
 			state.tick = 1;
 		});
@@ -316,7 +316,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.hid.n = 8;
 			state.tick = 2;
 		});
@@ -327,7 +327,7 @@ describe("ignore", () => {
 
 		heard.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.shown.n = 9;
 		});
 
@@ -348,7 +348,7 @@ describe("ignore", () => {
 
 		ignore(node);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.n = 2;
 			state.tick = 1;
 		});

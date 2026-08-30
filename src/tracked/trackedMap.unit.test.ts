@@ -1,5 +1,5 @@
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { createMutableState } from "../createMutableState";
 import { identify, isSameIdentity } from "../identity";
 import { applyOperations } from "../ops/applyOperations";
@@ -71,7 +71,7 @@ describe("TrackedMap", () => {
 		const selection = new Map([[identify(key), "selected"]]);
 		const heard = record(state);
 
-		transact(state, () => state.map.clear());
+		batch(() => state.map.clear());
 		const ops = heard[0] ?? [];
 		applyOperations(state, ops, "undo");
 
@@ -86,7 +86,7 @@ describe("TrackedMap", () => {
 		const state = createMutableState({ map: new TrackedMap([["a", { items: ["x"], when: new TrackedDate(0) }]]) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			const value = state.map.get("a");
 
 			if (!value) throw new Error("missing value");
@@ -107,13 +107,13 @@ describe("TrackedMap", () => {
 		const state = createMutableState({ map: new TrackedMap<string, number>([["a", 1]]) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.map.set("a", 1);
 		});
 
 		expect(heard).toHaveLength(0);
 
-		transact(state, () => {
+		batch(() => {
 			state.map.set("a", 2);
 		});
 
@@ -131,7 +131,7 @@ describe("TrackedMap", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.map.delete("b");
 		});
 
@@ -143,7 +143,7 @@ describe("TrackedMap", () => {
 			count: 3,
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.map.delete("d");
 		});
 
@@ -237,7 +237,7 @@ describe("TrackedMap", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.map.clear();
 			state.map.set("b", 20);
 			state.map.set("a", 10);
@@ -275,13 +275,13 @@ describe("TrackedMap", () => {
 		});
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.map.set("d", 4);
 		});
-		transact(state, () => {
+		batch(() => {
 			state.map.set("a", 10);
 		});
-		transact(state, () => {
+		batch(() => {
 			expect(state.map.delete("b")).toBe(true);
 			expect(state.map.delete("b")).toBe(false);
 		});

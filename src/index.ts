@@ -14,7 +14,7 @@ export { TrackedMap } from "./tracked/trackedMap";
 export { TrackedSet } from "./tracked/trackedSet";
 export { type GroupListener, type StateListener } from "./emit/emitterRegistry";
 export { subscribe } from "./subscribe";
-export { transact } from "./transact/transact";
+export { batch } from "./batch";
 export { scope } from "./react/scope";
 export { useGroup } from "./react/useGroup";
 export { useMutableState } from "./react/useMutableState";

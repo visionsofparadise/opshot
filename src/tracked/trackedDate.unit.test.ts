@@ -2,7 +2,7 @@ import { createProxy, isChanged } from "proxy-compare";
 import { snapshot } from "valtio/vanilla";
 
 import { subscribe } from "../subscribe";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { createMutableState } from "../createMutableState";
 import { applyOperations } from "../ops/applyOperations";
 import { createAssignMutation, type Operation } from "../ops/operation";
@@ -28,7 +28,7 @@ describe("TrackedDate", () => {
 
 		expect(renderState.when.getTime()).toBe(0);
 
-		transact(state, () => {
+		batch(() => {
 			state.when.setTime(1);
 		});
 
@@ -43,7 +43,7 @@ describe("TrackedDate", () => {
 		const state = createMutableState({ when: new TrackedDate(0) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.when.setTime(1);
 		});
 
@@ -62,7 +62,7 @@ describe("TrackedDate", () => {
 		const state = createMutableState({ when: new TrackedDate(0) });
 		const heard = record(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.when.setTime(1);
 		});
 

@@ -10,7 +10,7 @@ import { type Operation } from "../ops/operation";
 import { shapeOps } from "../ops/operationShape";
 import { subscribe } from "../subscribe";
 import { TrackedMap } from "../tracked/trackedMap";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { unsafeTrack } from "../unsafeTrack";
 
 const recordEmissions = <T extends object>(state: T): Array<{ state: T; ops: Array<Operation> }> => {
@@ -30,7 +30,7 @@ const expectRefusedWrite = <T extends object>(
 	const emissions = recordEmissions(state);
 
 	expect(() => {
-		transact(state, () => {
+		batch(() => {
 			write(state);
 		});
 	}).toThrow(TypeError);
@@ -56,11 +56,11 @@ describe("boundary: tracked", () => {
 		const state = createMutableState({ document: { title: "a", tags: ["x", "y"] } });
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.document.title = "b";
 		});
 
-		transact(state, () => {
+		batch(() => {
 			state.document.tags[1] = "z";
 		});
 
@@ -88,7 +88,7 @@ describe("boundary: tracked", () => {
 		const state = createMutableState({ emitter: new Emitter() });
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.emitter.count = 1;
 		});
 
@@ -112,16 +112,16 @@ describe("boundary: tracked", () => {
 		const state = createMutableState<{ items: Array<Item> }>({ items: [target] });
 		let popped: Item | undefined;
 
-		transact(state, () => {
+		batch(() => {
 			popped = state.items.pop();
 		});
-		transact(state, () => {
+		batch(() => {
 			if (popped) state.items.push(popped);
 		});
 
 		expect(state.items).toEqual([{ value: 1 }]);
 
-		transact(state, () => {
+		batch(() => {
 			const item = state.items[0];
 
 			if (item) item.value = 9;
@@ -142,7 +142,7 @@ describe("boundary: ride-alongs", () => {
 
 		expect(Object.keys(state.held)).toContain("__proto__");
 
-		transact(state, () => {
+		batch(() => {
 			state.held.tick = 1;
 		});
 
@@ -164,7 +164,7 @@ describe("boundary: ride-alongs", () => {
 
 		expect(state[marker]).toBe("initial");
 
-		transact(state, () => {
+		batch(() => {
 			state[marker] = "written";
 		});
 
@@ -185,14 +185,14 @@ describe("boundary: ride-alongs", () => {
 		const state = createMutableState<Counted>(literal);
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.hidden = 5;
 		});
 
 		expect(emissions).toHaveLength(0);
 		expect(state.hidden).toBe(5);
 
-		transact(state, () => {
+		batch(() => {
 			state.count = 1;
 		});
 
@@ -211,7 +211,7 @@ describe("boundary: freeze", () => {
 
 		expect(state.box).toBe(frozen);
 
-		transact(state, () => {
+		batch(() => {
 			state.tick = 1;
 		});
 
@@ -230,7 +230,7 @@ describe("boundary: freeze", () => {
 
 		expect(state.frozen).toBe(frozen);
 
-		transact(state, () => {
+		batch(() => {
 			state.frozen.inner.n = 2;
 		});
 
@@ -244,7 +244,7 @@ describe("boundary: dangerous", () => {
 		const state = createMutableState<{ box: unknown }>({ box: null });
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = { inner: { lookup: new Map<string, number>() } };
 			});
 		}).toThrow("opshot: Map at /box/inner/lookup cannot be tracked");
@@ -293,7 +293,7 @@ describe("boundary: ignore", () => {
 
 		expect(state.lookup).toBe(lookup);
 
-		transact(state, () => {
+		batch(() => {
 			state.lookup.set("hits", 1);
 		});
 
@@ -307,7 +307,7 @@ describe("boundary: ignore", () => {
 		const kept = new Map([["k", 2]]);
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = kept;
 				state.tick = 1;
 			});
@@ -330,7 +330,7 @@ describe("boundary: ignore", () => {
 		}) as { ignored: typeof ignored; tracked?: { n: number } };
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.tracked = ignored.child;
 		});
 
@@ -344,7 +344,7 @@ describe("boundary: ignore", () => {
 
 		emissions.length = 0;
 
-		transact(state, () => {
+		batch(() => {
 			state.tracked!.n = 5;
 		});
 
@@ -372,7 +372,7 @@ describe("boundary: strict false", () => {
 		const state = createMutableState({ arrow: new Arrow() }, { strict: false });
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.arrow.count = 3;
 		});
 
@@ -391,7 +391,7 @@ describe("boundary: strict false", () => {
 		const state = createMutableState({ element }, { strict: false });
 		const emissions = recordEmissions(state);
 
-		transact(state, () => {
+		batch(() => {
 			state.element.node = "changed";
 		});
 
@@ -405,7 +405,7 @@ describe("boundary: strict false", () => {
 		const strict = createMutableState<{ box: Map<string, number> | null }>({ box: null });
 
 		expect(() => {
-			transact(strict, () => {
+			batch(() => {
 				strict.box = loose.lookup;
 			});
 		}).toThrow("Map at /box cannot be tracked");
@@ -498,7 +498,7 @@ describe("boundary: snapshot donation", () => {
 		const wrapped = createProxy(donated as object, new WeakMap(), new WeakMap(), new WeakMap());
 
 		const donate = (value: unknown): void => {
-			transact(destination, () => {
+			batch(() => {
 				destination.box = value;
 			});
 		};
@@ -512,12 +512,12 @@ describe("boundary: snapshot donation", () => {
 });
 
 describe("boundary: meta-mutation", () => {
-	it("completes Object.setPrototypeOf on a tracked node with no op", () => {
+	it("completes Object.setPrototypeOf on a tracked node with no op", async () => {
 		const state = createMutableState({ count: 0 });
 		const emissions = recordEmissions(state);
 
 		Object.setPrototypeOf(state, null);
-		transact(state, () => undefined);
+		await Promise.resolve();
 
 		expect(Object.getPrototypeOf(state)).toBeNull();
 		expect(emissions).toHaveLength(0);
@@ -528,7 +528,7 @@ describe("boundary: in-edges", () => {
 	it("climbs a cyclic graph without hanging and classifies occupied nodes", () => {
 		const state = createMutableState({ box: { n: 1 } as { n: number; self?: { n: number } } });
 
-		transact(state, () => {
+		batch(() => {
 			state.box.self = state.box;
 		});
 
@@ -540,7 +540,7 @@ describe("boundary: in-edges", () => {
 
 		expect(status.occupied).toBe(true);
 
-		transact(state, () => {
+		batch(() => {
 			state.box.n = 2;
 		});
 
@@ -560,7 +560,7 @@ describe("boundary: in-edges", () => {
 
 		expect(edgeStatusOf(handle, occupant).occupied).toBe(true);
 
-		transact(state, () => {
+		batch(() => {
 			state.list.length = 0;
 		});
 
@@ -882,19 +882,23 @@ describe("boundary: trap admission across states", () => {
 		]);
 	});
 
-	it("the same compound mutator inside transact restores whole", async () => {
+	it("the same compound mutator inside batch keeps the prefix it already landed and emits it", async () => {
 		const state = createMutableState({ list: [1, 2, 3] as Array<unknown> });
 		const emissions = recordEmissions(state);
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.list.splice(1, 0, new Map());
 			});
 		}).toThrow("cannot be tracked");
 
 		await Promise.resolve();
 
-		expect(state.list).toEqual([1, 2, 3]);
-		expect(emissions).toHaveLength(0);
+		expect(state.list).toEqual([1, 2, 2, 3]);
+		expect(emissions.flatMap((emission) => emission.ops.map((operation) => operation.do.path.join("/")))).toEqual([
+			"list/2",
+			"list/length",
+			"list/3",
+		]);
 	});
 });

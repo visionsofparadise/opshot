@@ -158,7 +158,7 @@ const captureRange = (handle: Handle, meta: unknown): CapturedRange => {
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
-	const capture = handle.transactionCapture ?? createCaptureTables();
+	const capture = createCaptureTables();
 	const committed = captureDiffOf(handle, from, capture);
 	const ops = committed.ops;
 
@@ -192,11 +192,7 @@ const emitRange = (handle: Handle, meta: unknown): void => {
 	drainDeliveries();
 };
 
-export function captureWrites(handle: Handle): CapturedRange {
-	return captureRange(handle, undefined);
-}
-
-export function captureTransactionWrites(handle: Handle, meta: unknown): CapturedRange {
+export function captureBatchWrites(handle: Handle, meta: unknown): CapturedRange {
 	return captureRange(handle, meta);
 }
 

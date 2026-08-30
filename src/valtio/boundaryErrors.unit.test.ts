@@ -1,4 +1,4 @@
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { createMutableState } from "../createMutableState";
 
 describe("boundaryErrors: rejection vocabulary", () => {
@@ -8,7 +8,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		);
 	});
 
-	it("throws from transact on a dangerous assign, leaving the state unchanged", () => {
+	it("throws from batch on a dangerous assign, leaving the state unchanged", () => {
 		interface Box {
 			box: unknown;
 		}
@@ -16,7 +16,7 @@ describe("boundaryErrors: rejection vocabulary", () => {
 		const state = createMutableState<Box>({ box: null });
 
 		expect(() => {
-			transact(state, () => {
+			batch(() => {
 				state.box = new Map<string, number>();
 			});
 		}).toThrow("opshot: Map at /box cannot be tracked");

@@ -1,5 +1,6 @@
 import { getUntracked } from "proxy-compare";
 import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
+import { commitBatchWrite, currentBatchFrame, prepareBatchWrite } from "../batch";
 import { addInEdge, edgeStatusOf, removeInEdge, seedInEdgesUnder } from "../edges";
 import { handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget } from "../identity";
@@ -381,6 +382,41 @@ const commitDeleteInEdges = (target: object, prop: string | symbol, previous: un
 	for (const handle of handlesOf(target)) removeInEdge(handle, previous, target, key);
 };
 
+interface BatchWriteSession {
+	readonly handles: ReadonlyArray<Handle>;
+	readonly restorers: ReadonlyArray<() => void>;
+	claimed: boolean;
+}
+
+const beginBatchWrites = (target: object, initializing: boolean): BatchWriteSession | undefined => {
+	if (initializing || currentBatchFrame() === undefined) return undefined;
+
+	const handles = handlesOf(target);
+	const restorers: Array<() => void> = [];
+
+	for (const handle of handles) {
+		const restore = prepareBatchWrite(handle);
+
+		if (restore !== undefined) restorers.push(restore);
+	}
+
+	return { handles, restorers, claimed: false };
+};
+
+const succeedBatchWrites = (session: BatchWriteSession | undefined): void => {
+	if (session === undefined) return;
+
+	for (const handle of session.handles) commitBatchWrite(handle);
+
+	session.claimed = true;
+};
+
+const abandonBatchWrites = (session: BatchWriteSession | undefined): void => {
+	if (session === undefined || session.claimed) return;
+
+	for (const restore of session.restorers) restore();
+};
+
 let installed = false;
 
 export function installBoundary(): void {
@@ -410,6 +446,7 @@ export function installBoundary(): void {
 					const truncated = truncatedOccupantsOf(target, prop, resolved);
 					const previous: unknown = typeof prop === "string" ? Reflect.get(target, prop) : undefined;
 					const initializing = isInitializing();
+					const session = beginBatchWrites(target, initializing);
 
 					setFrameStack.push({ target, prop });
 
@@ -428,7 +465,10 @@ export function installBoundary(): void {
 
 							const result = defaultSet(target, prop, instrumented, receiver);
 
-							if (result && !initializing) commitSetInEdges(target, prop, previous, instrumented, truncated);
+							if (result && !initializing) {
+								commitSetInEdges(target, prop, previous, instrumented, truncated);
+								succeedBatchWrites(session);
+							}
 
 							return result;
 						}
@@ -440,20 +480,34 @@ export function installBoundary(): void {
 
 						const result = defaultSet(target, prop, resolved, receiver);
 
-						if (result && !initializing) commitSetInEdges(target, prop, previous, resolved, truncated);
+						if (result && !initializing) {
+							commitSetInEdges(target, prop, previous, resolved, truncated);
+							succeedBatchWrites(session);
+						}
 
 						return result;
 					} finally {
+						abandonBatchWrites(session);
 						setFrameStack.pop();
 					}
 				},
 				deleteProperty(target, prop) {
+					const initializing = isInitializing();
+					const session = beginBatchWrites(target, initializing);
 					const previous: unknown = typeof prop === "string" ? Reflect.get(target, prop) : undefined;
-					const result = defaultDelete(target, prop);
 
-					if (result && !isInitializing()) commitDeleteInEdges(target, prop, previous);
+					try {
+						const result = defaultDelete(target, prop);
 
-					return result;
+						if (result && !initializing) {
+							commitDeleteInEdges(target, prop, previous);
+							succeedBatchWrites(session);
+						}
+
+						return result;
+					} finally {
+						abandonBatchWrites(session);
+					}
 				},
 				defineProperty(target, prop, descriptor) {
 					return Reflect.defineProperty(target, prop, descriptor);

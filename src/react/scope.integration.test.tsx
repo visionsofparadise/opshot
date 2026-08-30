@@ -15,7 +15,7 @@ import {
 
 import { createMutableState } from "../createMutableState";
 import { handleOf } from "../handle";
-import { transact } from "../transact/transact";
+import { batch } from "../batch";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
@@ -95,7 +95,7 @@ describe("scope", () => {
 		expect(renders).toBe(2);
 	});
 
-	it("does not rerender when a transact of a read field rolls back", async () => {
+	it("rerenders when a throwing batch writes a read field", async () => {
 		const state = createMutableState({ count: 0 });
 		let renders = 0;
 
@@ -110,7 +110,7 @@ describe("scope", () => {
 
 		await act(async () => {
 			try {
-				transact(state, () => {
+				batch(() => {
 					state.count = 1;
 
 					throw new Error("rollback");
@@ -120,8 +120,8 @@ describe("scope", () => {
 			}
 		});
 
-		expect(renders).toBe(1);
-		expect(screen.getByTestId("count").textContent).toBe("0");
+		expect(renders).toBe(2);
+		expect(screen.getByTestId("count").textContent).toBe("1");
 	});
 
 	it("shows the live value when a departed source is written and then returned to", async () => {
