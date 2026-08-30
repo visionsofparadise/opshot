@@ -31,7 +31,6 @@
 		"check": "concurrently --group \"prettier --check .\" \"eslint . --no-cache -f unix\" \"tsc --noEmit --pretty false\" \"markdownlint-cli2 \\\"**/*.md\\\"\" \"textlint -f compact \\\"**/*.md\\\"\" \"knip --no-progress\" \"jscpd .\" \"node tools.mjs run actionlint\"",
 		"unit": "vitest run --project unit",
 		"integration": "vitest run --project integration --project react16 --project react17 --project react18",
-		"integration:heavy": "vitest run --config vitest.heavy.config.ts",
 		"build": "tsup --config tsup.config.ts"
 	},
 	"peerDependencies": {
