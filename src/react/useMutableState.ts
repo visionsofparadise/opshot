@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { snapshot } from "valtio/vanilla";
-import { createMutableState, type MutableStateOptions, type Unmarked } from "../createMutableState";
+import { createMutableState, type MutableStateOptions } from "../createMutableState";
 import { handlesOf, type Handle } from "../handle";
 import { subscribe } from "../subscribe";
 import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
@@ -23,11 +23,8 @@ const isObjectLike = (value: unknown): value is object =>
  * @param options - Creation options.
  * @returns The state.
  */
-export function useMutableState<T extends object>(
-	properties: (() => T) | T,
-	options?: MutableStateOptions,
-): Unmarked<T> {
-	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<Unmarked<T>> => {
+export function useMutableState<T extends object>(properties: (() => T) | T, options?: MutableStateOptions): T {
+	const [{ writeProxy, readTracker }] = useState((): MutableStateHolder<T> => {
 		const initial = typeof properties === "function" ? properties() : properties;
 
 		return {

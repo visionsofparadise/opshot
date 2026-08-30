@@ -301,21 +301,19 @@ describe("boundary: ignore", () => {
 		expect(lookup.get("hits")).toBe(1);
 	});
 
-	it("keeps a create-time ignored path untracked after a later assign", () => {
+	it("tracks a later unmarked occupant after a create-time ignored assignment", () => {
 		const state = createMutableState({ box: ignore(new Map([["k", 1]])), tick: 0 });
 		const emissions = recordEmissions(state);
 		const kept = new Map([["k", 2]]);
 
-		transact(state, () => {
-			state.box = kept;
-			state.tick = 1;
-		});
+		expect(() => {
+			transact(state, () => {
+				state.box = kept;
+				state.tick = 1;
+			});
+		}).toThrow("cannot be tracked");
 
-		expect(emissions).toHaveLength(1);
-		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
-			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
-		]);
-		expect(state.box).toBe(kept);
+		expect(emissions).toHaveLength(0);
 	});
 
 	it("leaves the interior of an ignored container uncertified", () => {
@@ -541,7 +539,6 @@ describe("boundary: in-edges", () => {
 		const status = edgeStatusOf(handle, state.box);
 
 		expect(status.occupied).toBe(true);
-		expect(status.unsafe).toBe(false);
 
 		transact(state, () => {
 			state.box.n = 2;

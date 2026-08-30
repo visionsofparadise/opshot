@@ -1,16 +1,17 @@
 import { getUntracked } from "proxy-compare";
 import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
-import { addInEdge, descendChains, isIgnoredFrontier, removeInEdge, seedInEdgesUnder, slotStatusOf } from "../edges";
+import { addInEdge, edgeStatusOf, removeInEdge, seedInEdgesUnder } from "../edges";
 import { handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget } from "../identity";
+import { isIgnored } from "../ignore";
 import { isPlainArray } from "../ops/cloneValue";
 import { isCanonicalArrayIndexString } from "../ops/predicates";
 import { peelReadProxy } from "../peelReadProxy";
+import { isUnsafeMarked } from "../unsafeTrack";
 import { walkDataEntries } from "../utils/dataEntries";
 import { nonWritablePropertyError, rejectionError, snapshotDonationError } from "./boundaryErrors";
 import { admissionDecision, admissionLane, classifyValue, type AdmissionLane } from "./classify";
 import { createSnapshotPreservingAccessors } from "./snapshotAccessors";
-import type { DeclarationTrie } from "../declarations";
 
 const { proxyStateMap, proxyCache } = unstable_getInternalStates();
 
@@ -30,71 +31,17 @@ const handleOwning = (target: object): Handle | undefined => {
 const segmentForProp = (parent: object, prop: string): string | number =>
 	isPlainArray(parent) && isCanonicalArrayIndexString(prop) ? Number(prop) : prop;
 
-interface AssignmentStatus {
-	readonly handle: Handle;
-	readonly ignored: boolean;
-	readonly unsafe: boolean;
-	readonly chains: ReadonlyArray<DeclarationTrie | undefined>;
-}
-
 interface SetFrame {
 	readonly target: object;
 	readonly prop: string | symbol;
-	readonly statuses: ReadonlyArray<AssignmentStatus> | undefined;
 }
 
 const setFrameStack = new Array<SetFrame>();
 
 const currentSetParentOf = (): object | undefined => setFrameStack[setFrameStack.length - 1]?.target;
 
-const currentStatuses = (): ReadonlyArray<AssignmentStatus> | undefined =>
-	setFrameStack[setFrameStack.length - 1]?.statuses;
-
-const heldStatusesOf = (target: object, prop: string): ReadonlyArray<AssignmentStatus> | undefined => {
-	const key = segmentForProp(target, prop);
-	const statuses = new Array<AssignmentStatus>();
-
-	for (const handle of handlesOf(target)) {
-		const slot = slotStatusOf(handle, target, key);
-
-		if (!slot.occupied) continue;
-
-		statuses.push({ handle, ignored: slot.ignored, unsafe: slot.unsafe, chains: slot.chains });
-	}
-
-	return statuses.length === 0 ? undefined : statuses;
-};
-
-const inheritedStatusesOf = (target: object, prop: string): ReadonlyArray<AssignmentStatus> | undefined => {
-	const parent = setFrameStack[setFrameStack.length - 1];
-
-	if (parent?.statuses === undefined) return undefined;
-
-	const key = segmentForProp(target, prop);
-
-	return parent.statuses.map((status) => {
-		const descended = descendChains(status.chains, key);
-
-		return {
-			handle: status.handle,
-			ignored: status.ignored || descended.ignored,
-			unsafe: status.unsafe || descended.unsafe,
-			chains: descended.chains,
-		};
-	});
-};
-
-const statusesForFrame = (
-	target: object,
-	prop: string | symbol,
-	initializing: boolean,
-): ReadonlyArray<AssignmentStatus> | undefined => {
-	if (typeof prop !== "string") return undefined;
-
-	if (!initializing) return heldStatusesOf(target, prop);
-
-	return inheritedStatusesOf(target, prop) ?? heldStatusesOf(target, prop);
-};
+const isMarkable = (value: unknown): value is object =>
+	(typeof value === "object" && value !== null) || typeof value === "function";
 
 const certifyAdmission = (value: object, path?: ReadonlyArray<string>, unsafe = false): AdmissionLane => {
 	const decision = admissionDecision(value);
@@ -126,7 +73,6 @@ const walkDataPaths = (
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode,
-	chains: ReadonlyArray<DeclarationTrie | undefined>,
 	ignored: boolean,
 	unsafe: boolean,
 ): void => {
@@ -140,11 +86,9 @@ const walkDataPaths = (
 
 	for (const entry of walkDataEntries(node)) {
 		const childPath = [...path, entry.key];
-		const descended = descendChains(chains, segmentForProp(node, entry.key));
-		const childIgnored = descended.ignored;
-		const childUnsafe = unsafe || descended.unsafe;
-		const childChains = descended.chains;
 		const child: unknown = entry.value;
+		const childIgnored = isMarkable(child) && isIgnored(child);
+		const childUnsafe = unsafe || (isMarkable(child) && isUnsafeMarked(child));
 
 		if (mode === "admission" && classifyValue(node) === "cleanClass" && !unsafe && typeof child === "function")
 			throw rejectionError(node, "cleanClass", childPath);
@@ -170,20 +114,20 @@ const walkDataPaths = (
 
 		if (mode === "admission") {
 			if (childUnsafe) {
-				walkDataPaths(childNode, childPath, visits, mode, childChains, childIgnored, childUnsafe);
+				walkDataPaths(childNode, childPath, visits, mode, childIgnored, childUnsafe);
 
 				continue;
 			}
 
 			if (certifyAdmission(childNode, childPath, childUnsafe) === "tracked")
-				walkDataPaths(childNode, childPath, visits, mode, childChains, childIgnored, childUnsafe);
+				walkDataPaths(childNode, childPath, visits, mode, childIgnored, childUnsafe);
 
 			continue;
 		}
 
 		if (admissionLane(childNode) === "untracked") continue;
 
-		walkDataPaths(childNode, childPath, visits, mode, childChains, childIgnored, childUnsafe);
+		walkDataPaths(childNode, childPath, visits, mode, childIgnored, childUnsafe);
 	}
 };
 
@@ -192,30 +136,25 @@ export const assertSafeDataPaths = (
 	path: Array<string>,
 	visits: Set<object>,
 	mode: DataPathWalkMode = "admission",
-	chains: ReadonlyArray<DeclarationTrie | undefined> = [],
+	unsafe = false,
 ): void => {
-	walkDataPaths(
-		value,
-		path,
-		visits,
-		mode,
-		chains,
-		chains.some((residual) => residual?.ignored === true),
-		chains.some((residual) => residual?.unsafe === true),
-	);
+	walkDataPaths(value, path, visits, mode, isIgnored(value), unsafe || isUnsafeMarked(value));
 };
 
 const certifyCurrentAssignment = (target: object, prop: string | symbol, resolved: object): void => {
 	if (typeof prop !== "string") return;
 
-	const assignments = currentStatuses();
-
-	if (assignments === undefined) return;
-
 	const path = [prop];
 
-	for (const assignment of assignments) {
-		if (!assignment.handle.strict || assignment.ignored || assignment.unsafe) continue;
+	for (const handle of handlesOf(target)) {
+		if (!handle.strict) continue;
+
+		if (!edgeStatusOf(handle, target).occupied) continue;
+
+		const ignored = isIgnored(resolved);
+		const unsafe = handle.nodes.get(rawTargetOf(target))?.exempt === true || isUnsafeMarked(resolved);
+
+		if (ignored || unsafe) continue;
 
 		if (typeof resolved === "function") {
 			const parentKind = classifyValue(rawTargetOf(target));
@@ -230,16 +169,7 @@ const certifyCurrentAssignment = (target: object, prop: string | symbol, resolve
 
 		if (decision.lane === "dangerous") throw rejectionError(resolved, decision.kind, path);
 
-		if (decision.lane === "tracked")
-			walkDataPaths(
-				resolved,
-				path,
-				new Set(),
-				"admission",
-				assignment.chains,
-				assignment.ignored,
-				assignment.unsafe,
-			);
+		if (decision.lane === "tracked") walkDataPaths(resolved, path, new Set(), "admission", ignored, unsafe);
 	}
 };
 
@@ -329,7 +259,7 @@ export function canProxy(value: unknown, parentTarget?: object, unsafe = false):
 	if (
 		rootHandle !== undefined &&
 		rawTargetOf(rootHandle.proxy.root) === rawTargetOf(value) &&
-		(!rootHandle.strict || rootHandle.declarations?.unsafe === true)
+		(!rootHandle.strict || isUnsafeMarked(value) || rootHandle.nodes.get(rawTargetOf(value))?.exempt === true)
 	)
 		return true;
 
@@ -348,19 +278,25 @@ class MissingMutationTrapError extends Error {
 }
 
 const canProxyCurrentAssignment = (value: unknown): boolean => {
-	const assignments = currentStatuses();
+	if (isMarkable(value) && isIgnored(value)) return false;
 
-	if (assignments === undefined) return canProxy(value, currentSetParentOf());
+	const parent = currentSetParentOf();
+	const handles =
+		parent === undefined ? [] : handlesOf(parent).filter((handle) => edgeStatusOf(handle, parent).occupied);
 
-	const judging = assignments.filter((assignment) => !assignment.ignored);
+	if (handles.length === 0) return canProxy(value, parent);
 
-	if (judging.length === 0) return false;
+	const unsafe = handles.every((handle) => {
+		if (!handle.strict) return true;
 
-	return canProxy(
-		value,
-		currentSetParentOf(),
-		judging.every((assignment) => assignment.unsafe || !assignment.handle.strict),
-	);
+		if (isMarkable(value) && isUnsafeMarked(value)) return true;
+
+		if (parent === undefined) return false;
+
+		return handle.nodes.get(rawTargetOf(parent))?.exempt === true;
+	});
+
+	return canProxy(value, parent, unsafe);
 };
 
 const truncatedOccupantsOf = (
@@ -413,7 +349,7 @@ const commitSetInEdges = (
 		typeof next === "object" && next !== null && admissionLane(next) !== "untracked" ? next : undefined;
 
 	for (const handle of handles) {
-		if (isIgnoredFrontier(handle, target, key)) {
+		if (nextObject !== undefined && isIgnored(nextObject)) {
 			if (previousObject !== undefined) removeInEdge(handle, previousObject, target, key);
 
 			continue;
@@ -431,9 +367,7 @@ const commitSetInEdges = (
 
 		if (wasOccupied) continue;
 
-		const slot = slotStatusOf(handle, target, key);
-
-		seedInEdgesUnder(handle, nextObject, slot.chains);
+		seedInEdgesUnder(handle, nextObject);
 	}
 };
 
@@ -477,7 +411,7 @@ export function installBoundary(): void {
 					const previous: unknown = typeof prop === "string" ? Reflect.get(target, prop) : undefined;
 					const initializing = isInitializing();
 
-					setFrameStack.push({ target, prop, statuses: statusesForFrame(target, prop, initializing) });
+					setFrameStack.push({ target, prop });
 
 					try {
 						if (typeof resolved === "object" && resolved !== null) {

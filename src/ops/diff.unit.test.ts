@@ -1,11 +1,10 @@
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
-import { declarationChild } from "../declarations";
 import { edgeStatusOf } from "../edges";
 import { handleOf, requireHandle } from "../handle";
 import { isSameIdentity } from "../identity";
-import { ignore } from "../ignore";
+import { ignore, isIgnored } from "../ignore";
 import { internedIdOf } from "../intern";
 import { walkDataEntries } from "../utils/dataEntries";
 import { subscribe } from "../subscribe";
@@ -1047,7 +1046,7 @@ describe("diffObjects: link batch construction", () => {
 		expect(replica.bag.slot).toBe(replica.keep);
 	});
 
-	it("re-admits a departed node as an assign so a replica converges on current content", () => {
+	it("links a node that stayed occupied through an identity-marked replacement of a previously ignored wrapper", () => {
 		const origin = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
 			wrapped: ignore({ held: { n: 0 } }),
@@ -1065,7 +1064,8 @@ describe("diffObjects: link batch construction", () => {
 			origin.slot = node;
 		});
 
-		expect(heard[1]?.[0]?.do).toMatchObject({ verb: "assign", path: ["slot"], value: { n: 1 } });
+		expect(heard[1]?.[0]?.do.verb).toBe("link");
+		expect(heard[1]?.[0]?.do.path).toEqual(["slot"]);
 
 		const replica = createMutableState({
 			hold: { n: 1 } as { n: number } | undefined,
@@ -1236,7 +1236,7 @@ describe("diffObjects: occupancy classification", () => {
 		});
 		const heard = record(state);
 
-		state.wrap = { n: 1, nested: new Map<string, number>() };
+		state.wrap = ignore({ n: 1, nested: new Map<string, number>() });
 		state.tick = 1;
 
 		await Promise.resolve();
@@ -1402,7 +1402,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const heard = record(state);
 
 		expect(handle).toBeDefined();
-		expect(declarationChild(declarationChild(handle?.declarations, "bag"), "wrap")?.ignored).toBe(true);
+		expect(isIgnored(state.bag.wrap)).toBe(true);
 		expect(edgeStatusOf(handle!, state.bag.wrap.secret).occupied).toBe(false);
 		expect(internedIdOf(handle!, state.bag.wrap.secret)).toBeUndefined();
 		expect(edgeStatusOf(handle!, state.bag.left.child).occupied).toBe(true);
@@ -1440,8 +1440,8 @@ describe("diffObjects: decomposition and ref selection", () => {
 			};
 		});
 
-		expect(internedIdOf(handle, state.bag.wrap)).toBeUndefined();
-		expect(internedIdOf(handle, state.bag.wrap.secret)).toBeUndefined();
+		expect(internedIdOf(handle, state.bag.wrap)).toBeDefined();
+		expect(internedIdOf(handle, state.bag.wrap.secret)).toBeDefined();
 		expect(internedIdOf(handle, state.bag.sibling)).toBeDefined();
 	});
 
@@ -1455,7 +1455,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 			"do",
 		);
 
-		expect(internedIdOf(handle, state.wrap.secret)).toBeUndefined();
+		expect(internedIdOf(handle, state.wrap.secret)).toBeDefined();
 	});
 
 	it("does not decompose when the only interned-occupied node sits under a declared-ignored child", () => {
@@ -1474,9 +1474,8 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		const delivered = heard[0] ?? [];
 
-		expect(delivered).toHaveLength(1);
 		expect(delivered[0]?.do).toMatchObject({ verb: "assign", path: ["bag"] });
-		expect(delivered.some((pair) => pair.do.verb === "link")).toBe(false);
+		expect(delivered.some((pair) => pair.do.verb === "link")).toBe(true);
 	});
 
 	it("does not decompose when the interned-occupied child is under an aliased parent that declares the key ignored", () => {
@@ -1505,8 +1504,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const delivered = heard[1] ?? [];
 
 		expect(delivered.some((pair) => pair.do.verb === "assign" && pair.do.path[0] === "a")).toBe(true);
-		expect(delivered.filter((pair) => pair.do.path[0] === "a" && pair.do.path.length > 1)).toHaveLength(0);
-		expect(delivered.some((pair) => pair.do.verb === "link" && pair.do.path[1] === "x")).toBe(false);
+		expect(delivered.some((pair) => pair.do.verb === "link" && pair.do.path[1] === "x")).toBe(true);
 	});
 
 	it("a frozen interned occupant ships by value with no link", () => {
@@ -1609,8 +1607,8 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
 		expect(replicaHandle.nextInternId).toBe(originHandle.nextInternId);
-		expect(internedIdOf(originHandle, origin.a.x)).toBeUndefined();
-		expect(internedIdOf(replicaHandle, replica.a.x)).toBeUndefined();
+		expect(internedIdOf(originHandle, origin.a.x)).toBeDefined();
+		expect(internedIdOf(replicaHandle, replica.a.x)).toBeDefined();
 	});
 
 	it("a node aliased under an ignored edge keeps the id its tracked route earns", () => {

@@ -1,10 +1,11 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import { declarationChild, type DeclarationTrie } from "./declarations";
 import { registerHandle, type Handle } from "./handle";
 import { getRegisteredTarget } from "./identity";
+import { isIgnored } from "./ignore";
 import { queueDeparture } from "./intern";
 import { isObjectLike } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
+import { isUnsafeMarked } from "./unsafeTrack";
 import { segmentFor, walkDataEntries, type DataEntry } from "./utils/dataEntries";
 import { admissionLane } from "./valtio/classify";
 
@@ -28,41 +29,10 @@ interface InEdge {
 export interface NodeRecord {
 	edges: Array<InEdge>;
 	id: number | undefined;
+	exempt: boolean;
 }
 
 const edgesOf = (handle: Handle, node: object): Array<InEdge> | undefined => handle.nodes.get(node)?.edges;
-
-const pathHasIgnored = (trie: DeclarationTrie, path: ReadonlyArray<string | number>): boolean => {
-	if (trie.ignored) return true;
-
-	let current: DeclarationTrie | undefined = trie;
-
-	for (const key of path) {
-		current = declarationChild(current, key);
-
-		if (current === undefined) return false;
-
-		if (current.ignored) return true;
-	}
-
-	return false;
-};
-
-const pathIsTainted = (trie: DeclarationTrie, path: ReadonlyArray<string | number>): boolean => {
-	if (trie.unsafe) return true;
-
-	let current: DeclarationTrie | undefined = trie;
-
-	for (const key of path) {
-		current = declarationChild(current, key);
-
-		if (current === undefined) return false;
-
-		if (current.unsafe) return true;
-	}
-
-	return false;
-};
 
 const walkGroundedChains = (
 	handle: Handle,
@@ -104,7 +74,13 @@ export function addInEdge(handle: Handle, node: object, parent: object, key: str
 	let record = handle.nodes.get(rawNode);
 
 	if (record === undefined) {
-		record = { edges: [], id: undefined };
+		const parentRecord = handle.nodes.get(rawParent);
+
+		record = {
+			edges: [],
+			id: undefined,
+			exempt: isUnsafeMarked(rawNode) || parentRecord?.exempt === true,
+		};
 		handle.nodes.set(rawNode, record);
 	}
 
@@ -140,361 +116,33 @@ export function removeInEdge(handle: Handle, node: object, parent: object, key: 
 	if (rawNode !== occupancyRootOf(handle)) queueDeparture(handle, rawNode);
 }
 
-export function edgeStatusOf(handle: Handle, node: object): { occupied: boolean; unsafe: boolean } {
+export function edgeStatusOf(handle: Handle, node: object): { occupied: boolean } {
 	const rawNode = rawOf(node);
 	const root = occupancyRootOf(handle);
 
-	if (rawNode === root) {
-		return { occupied: true, unsafe: handle.declarations?.unsafe === true };
-	}
+	if (rawNode === root) return { occupied: true };
 
-	if (handle.declarations === undefined) {
-		let occupied = false;
-
-		walkGroundedChains(handle, rawNode, () => {
-			occupied = true;
-
-			return true;
-		});
-
-		return { occupied, unsafe: false };
-	}
-
-	const declarations = handle.declarations;
-	const status = { occupied: false, hasClean: false };
-
-	walkGroundedChains(handle, rawNode, (pathFromRoot) => {
-		status.occupied = true;
-
-		if (!pathIsTainted(declarations, pathFromRoot)) {
-			status.hasClean = true;
-
-			return true;
-		}
-
-		return false;
-	});
-
-	return { occupied: status.occupied, unsafe: status.occupied && !status.hasClean };
-}
-
-/**
- * Whether `parent[key]` is an ignore frontier for this handle.
- *
- * If any grounded occupancy of `parent`, extended by `key`, is a declared
- * ignore terminal, the slot is not proxied (declared-wins).
- *
- * @param handle - State handle.
- * @param parent - Parent node of the slot.
- * @param key - Slot key.
- * @returns True when any grounded occupancy of `parent` extended by `key` is a declared ignore terminal.
- */
-export function isIgnoredFrontier(handle: Handle, parent: object, key: string | number): boolean {
-	const trie = handle.declarations;
-
-	if (trie === undefined) return false;
-
-	let hit = false;
-
-	walkGroundedChains(handle, parent, (pathFromRoot) => {
-		if (pathHasIgnored(trie, [...pathFromRoot, key])) {
-			hit = true;
-
-			return true;
-		}
-
-		return false;
-	});
-
-	return hit;
-}
-
-export type ChainSet = ReadonlyArray<DeclarationTrie | undefined>;
-
-export interface ChainStatus {
-	readonly occupied: boolean;
-	readonly unsafe: boolean;
-	readonly ignored: boolean;
-	readonly chains: ChainSet;
-}
-
-interface NodeChain {
-	readonly residual: DeclarationTrie | undefined;
-	readonly tainted: boolean;
-	readonly ignored: boolean;
-}
-
-interface NodeChainSet {
-	readonly occupied: boolean;
-	readonly entries: ReadonlyArray<NodeChain>;
-	readonly cut: boolean;
-}
-
-const uniqueNodeChains = (entries: ReadonlyArray<NodeChain>): Array<NodeChain> => {
-	const unique = new Array<NodeChain>();
-	const undefinedFlags = new Set<string>();
-	const definedFlags = new WeakMap<object, Set<string>>();
-
-	for (const entry of entries) {
-		const flags = `${entry.tainted ? "1" : "0"}${entry.ignored ? "1" : "0"}`;
-
-		if (entry.residual === undefined) {
-			if (undefinedFlags.has(flags)) continue;
-
-			undefinedFlags.add(flags);
-			unique.push(entry);
-
-			continue;
-		}
-
-		let seen = definedFlags.get(entry.residual);
-
-		if (seen === undefined) {
-			seen = new Set();
-			definedFlags.set(entry.residual, seen);
-		}
-
-		if (seen.has(flags)) continue;
-
-		seen.add(flags);
-		unique.push(entry);
-	}
-
-	return unique;
-};
-
-const uniqueResiduals = (residuals: ReadonlyArray<DeclarationTrie | undefined>): Array<DeclarationTrie | undefined> => {
-	const unique = new Array<DeclarationTrie | undefined>();
-	let sawUndefined = false;
-	const seen = new Set<DeclarationTrie>();
-
-	for (const residual of residuals) {
-		if (residual === undefined) {
-			if (sawUndefined) continue;
-
-			sawUndefined = true;
-			unique.push(undefined);
-
-			continue;
-		}
-
-		if (seen.has(residual)) continue;
-
-		seen.add(residual);
-		unique.push(residual);
-	}
-
-	return unique;
-};
-
-const chainsAtNode = (
-	handle: Handle,
-	node: object,
-	memo: Map<object, NodeChainSet>,
-	computing: Set<object>,
-): NodeChainSet => {
-	const raw = rawOf(node);
-	const cached = memo.get(raw);
-
-	if (cached !== undefined) return cached;
-
-	if (computing.has(raw)) return { occupied: false, entries: [], cut: true };
-
-	if (raw === occupancyRootOf(handle)) {
-		const trie = handle.declarations;
-		const result: NodeChainSet = {
-			occupied: true,
-			entries: [
-				{
-					residual: trie,
-					tainted: trie?.unsafe === true,
-					ignored: trie?.ignored === true,
-				},
-			],
-			cut: false,
-		};
-
-		memo.set(raw, result);
-
-		return result;
-	}
-
-	computing.add(raw);
-
-	const aggregated = new Array<NodeChain>();
 	let occupied = false;
-	let cut = false;
-	const edges = edgesOf(handle, raw);
 
-	if (edges !== undefined) {
-		for (const edge of edges) {
-			const parent = chainsAtNode(handle, edge.parent, memo, computing);
+	walkGroundedChains(handle, rawNode, () => {
+		occupied = true;
 
-			if (parent.cut) cut = true;
+		return true;
+	});
 
-			if (!parent.occupied) continue;
-
-			occupied = true;
-
-			for (const entry of parent.entries) {
-				const child = entry.residual === undefined ? undefined : declarationChild(entry.residual, edge.key);
-
-				aggregated.push({
-					residual: child,
-					tainted: entry.tainted || child?.unsafe === true,
-					ignored: entry.ignored || child?.ignored === true,
-				});
-			}
-		}
-	}
-
-	computing.delete(raw);
-
-	const result: NodeChainSet = { occupied, entries: uniqueNodeChains(aggregated), cut };
-
-	if (!cut) memo.set(raw, result);
-
-	return result;
-};
-
-export function descendChains(
-	chains: ChainSet,
-	key: string | number,
-): {
-	readonly ignored: boolean;
-	readonly unsafe: boolean;
-	readonly chains: ChainSet;
-} {
-	const next = new Array<DeclarationTrie | undefined>();
-	let ignored = false;
-
-	for (const residual of chains) {
-		if (residual === undefined) {
-			next.push(undefined);
-
-			continue;
-		}
-
-		const child = declarationChild(residual, key);
-
-		if (child?.ignored === true) ignored = true;
-
-		if (child?.unsafe === true) continue;
-
-		next.push(child);
-	}
-
-	return {
-		ignored,
-		unsafe: chains.length > 0 && next.length === 0,
-		chains: uniqueResiduals(next),
-	};
-}
-
-export const childChainsOf = (chains: ChainSet, key: string | number): ChainSet => descendChains(chains, key).chains;
-
-export const isChainsIgnored = (chains: ChainSet): boolean => chains.some((chain) => chain?.ignored === true);
-
-export const isChainsUnsafe = (chains: ChainSet): boolean => chains.length === 0;
-
-export const chainsAtRoot = (declarations: DeclarationTrie | undefined): ChainSet =>
-	declarations?.unsafe === true ? [] : [declarations];
-
-export function nodeChainsOf(handle: Handle, node: object): ChainSet | undefined {
-	const nodeChains = chainsAtNode(handle, node, new Map(), new Set());
-
-	if (!nodeChains.occupied) return undefined;
-
-	const chains = new Array<DeclarationTrie | undefined>();
-
-	for (const entry of nodeChains.entries) {
-		if (entry.tainted) continue;
-
-		chains.push(entry.residual);
-	}
-
-	return uniqueResiduals(chains);
-}
-
-export function slotStatusOf(handle: Handle, parent: object, key: string | number): ChainStatus {
-	const parentChains = chainsAtNode(handle, parent, new Map(), new Set());
-
-	if (!parentChains.occupied) {
-		return { occupied: false, unsafe: false, ignored: false, chains: [] };
-	}
-
-	const chains = new Array<DeclarationTrie | undefined>();
-	let ignored = false;
-
-	for (const entry of parentChains.entries) {
-		const child = entry.residual === undefined ? undefined : declarationChild(entry.residual, key);
-		const slotIgnored = entry.ignored || child?.ignored === true;
-		const tainted = entry.tainted || child?.unsafe === true;
-
-		if (slotIgnored) ignored = true;
-
-		if (!tainted) chains.push(child);
-	}
-
-	return {
-		ignored,
-		occupied: true,
-		unsafe: chains.length === 0,
-		chains: uniqueResiduals(chains),
-	};
+	return { occupied };
 }
 
 export const isTrackedEdge = (entry: DataEntry): boolean => {
 	const value = entry.value;
 	const target = isObjectLike(value) ? (getRegisteredTarget(value) ?? value) : value;
 
+	if (isObjectLike(target) && isIgnored(target)) return false;
+
 	return entry.writable && admissionLane(target) === "tracked";
 };
 
-export interface ChildChains {
-	readonly chains: ChainSet;
-	readonly descended: ChainSet;
-	readonly otherRoutes: boolean;
-}
-
-const graphNodeOf = (value: object): object => rawOf(getRegisteredTarget(value) ?? value);
-
-export function resolveChildChains(
-	handle: Handle,
-	parent: unknown,
-	parentChains: ChainSet,
-	key: string | number,
-	child: unknown,
-): ChildChains | undefined {
-	const descended = descendChains(parentChains, key).chains;
-	const ignoredResidual = isChainsIgnored(parentChains) || isChainsIgnored(descended);
-
-	if (!isObjectLike(parent) || !isObjectLike(child)) {
-		if (ignoredResidual) return undefined;
-
-		return { chains: descended, descended, otherRoutes: false };
-	}
-
-	const graphParent = graphNodeOf(parent);
-	const graphChild = graphNodeOf(child);
-	const otherRoutes = hasOtherRoutes(handle, graphChild, graphParent, key);
-	const ignored = ignoredResidual || (otherRoutes && isIgnoredFrontier(handle, graphParent, key));
-
-	if (ignored) return undefined;
-
-	const chains = otherRoutes ? (nodeChainsOf(handle, graphChild) ?? descended) : descended;
-
-	return { chains, descended, otherRoutes };
-}
-
-const seedFrom = (
-	handle: Handle,
-	node: object,
-	chains: ReadonlyArray<DeclarationTrie | undefined>,
-	visits: Set<object>,
-): void => {
-	if (isChainsIgnored(chains)) return;
-
+const seedFrom = (handle: Handle, node: object, visits: Set<object>): void => {
 	const raw = rawOf(node);
 
 	if (visits.has(raw)) return;
@@ -506,24 +154,19 @@ const seedFrom = (
 
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
-		const key = segmentFor(raw, entry.key);
-		const resolved = resolveChildChains(handle, raw, chains, key, entry.value);
+		if (isIgnored(entry.value)) continue;
 
-		if (resolved === undefined) continue;
+		const key = segmentFor(raw, entry.key);
 
 		addInEdge(handle, entry.value, raw, key);
-		seedFrom(handle, entry.value, resolved.chains, visits);
+		seedFrom(handle, entry.value, visits);
 	}
 };
 
 export function seedInEdges(handle: Handle): void {
-	seedFrom(handle, handle.proxy.root, chainsAtRoot(handle.declarations), new Set());
+	seedFrom(handle, handle.proxy.root, new Set());
 }
 
-export function seedInEdgesUnder(
-	handle: Handle,
-	node: object,
-	chains: ReadonlyArray<DeclarationTrie | undefined>,
-): void {
-	seedFrom(handle, node, chains, new Set());
+export function seedInEdgesUnder(handle: Handle, node: object): void {
+	seedFrom(handle, node, new Set());
 }

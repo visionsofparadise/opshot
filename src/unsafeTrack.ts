@@ -1,21 +1,20 @@
-export const unsafeMarker: unique symbol = Symbol("opshot.unsafe");
+const unsafeMarked = new WeakSet<object>();
 
 /**
- * A factory-argument marker wrapping `T`.
+ * Marks an object so a node entering a state while marked, or entering beneath an exempt node, is exempt from strict.
  *
  * @typeParam T - Value type.
+ * @param value - Value to mark or unmark.
+ * @param on - Whether the mark is set.
+ * @returns `value`.
  */
-export interface UnsafeTracked<T> {
-	readonly [unsafeMarker]: T;
+export function unsafeTrack<T>(value: T, on = true): T {
+	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
+
+	if (on) unsafeMarked.add(value);
+	else unsafeMarked.delete(value);
+
+	return value;
 }
 
-/**
- * Marks a factory-argument value so strict is disabled at and under that path.
- *
- * @typeParam T - Value type.
- * @param value - Value to track without strict.
- * @returns A marker consumed at create.
- */
-export function unsafeTrack<T>(value: T): UnsafeTracked<T> {
-	return { [unsafeMarker]: value };
-}
+export const isUnsafeMarked = (value: object): boolean => unsafeMarked.has(value);

@@ -2,9 +2,9 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "./identity";
 import { createAssignMutation, createLinkMutation, getValueOriginal, type Operation } from "./ops/operation";
 import { peelReadProxy } from "./peelReadProxy";
-import { segmentFor, walkDataEntries, type DataEntry } from "./utils/dataEntries";
+import { isUnsafeMarked } from "./unsafeTrack";
+import { walkDataEntries, type DataEntry } from "./utils/dataEntries";
 import { admissionLane } from "./valtio/classify";
-import type { ChainSet } from "./edges";
 import type { Handle } from "./handle";
 import type { CaptureTables } from "./occupancy";
 
@@ -28,7 +28,7 @@ const committedIdOf = (handle: Handle, raw: object): number | undefined => handl
 const writeId = (handle: Handle, raw: object, id: number): void => {
 	const record = handle.nodes.get(raw);
 
-	if (record === undefined) handle.nodes.set(raw, { edges: [], id });
+	if (record === undefined) handle.nodes.set(raw, { edges: [], id, exempt: isUnsafeMarked(raw) });
 	else {
 		if (record.id !== undefined && record.id !== id) handle.byId.delete(record.id);
 
@@ -164,21 +164,13 @@ export function nodeOfInternedId(handle: Handle, id: number, capture?: CaptureTa
 	return liveOfInterned(raw);
 }
 
-export type ChildChainResolver = (
-	parent: object,
-	parentChains: ChainSet,
-	key: string | number,
-	entry: DataEntry,
-) => ChainSet | undefined;
-
 const walkTracked = (
 	node: object,
 	visits: Set<object>,
-	chains: ChainSet | undefined,
-	resolve: ChildChainResolver | undefined,
+	skipChild: ((parent: object, entry: DataEntry) => boolean) | undefined,
 	visit: (current: object, raw: object, parent?: object, key?: string) => boolean,
 ): void => {
-	const walk = (current: object, currentChains: ChainSet | undefined, parent?: object, key?: string): void => {
+	const walk = (current: object, parent?: object, key?: string): void => {
 		const raw = occupancyNodeOf(current);
 
 		if (visits.has(raw)) return;
@@ -194,31 +186,22 @@ const walkTracked = (
 		for (const entry of walkDataEntries(source)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
 
-			if (currentChains === undefined || resolve === undefined) {
-				walk(entry.value, currentChains, current, entry.key);
+			if (skipChild?.(source, entry) === true) continue;
 
-				continue;
-			}
-
-			const childChains = resolve(source, currentChains, segmentFor(source, entry.key), entry);
-
-			if (childChains === undefined) continue;
-
-			walk(entry.value, childChains, current, entry.key);
+			walk(entry.value, current, entry.key);
 		}
 	};
 
-	walk(node, chains);
+	walk(node);
 };
 
 export function internSubtree(
 	handle: Handle,
 	node: object,
-	chains: ChainSet | undefined,
-	resolve: ChildChainResolver | undefined,
+	skipChild: ((parent: object, entry: DataEntry) => boolean) | undefined,
 	capture?: CaptureTables,
 ): void {
-	walkTracked(node, new Set(), chains, resolve, (current) => {
+	walkTracked(node, new Set(), skipChild, (current) => {
 		if (capture === undefined) internNode(handle, current);
 		else stageVend(handle, capture, current);
 
@@ -274,7 +257,7 @@ const walkUnoccupiedCluster = (
 	node: object,
 	visit: (raw: object, id: number | undefined) => void,
 ): void => {
-	walkTracked(node, new Set(), undefined, undefined, (_current, raw) => {
+	walkTracked(node, new Set(), undefined, (_current, raw) => {
 		if (isOccupiedMember(handle, raw)) return false;
 
 		visit(raw, committedIdOf(handle, raw));

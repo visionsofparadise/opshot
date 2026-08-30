@@ -1,6 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { peelReadProxy } from "./peelReadProxy";
-import type { DeclarationTrie } from "./declarations";
 import type { NodeRecord } from "./edges";
 import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
 import type { CaptureTables } from "./occupancy";
@@ -29,7 +28,6 @@ export interface Handle {
 	disarmWatch?: () => void;
 	emitOn?: EmissionScheduler;
 	strict: boolean;
-	declarations: DeclarationTrie | undefined;
 	nodes: WeakMap<object, NodeRecord>;
 	byId: Map<number, object>;
 	nextInternId: number;

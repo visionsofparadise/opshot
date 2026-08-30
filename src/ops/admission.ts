@@ -1,17 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
-import {
-	childChainsOf,
-	descendChains,
-	edgeStatusOf,
-	hasOtherRoutes,
-	isChainsIgnored,
-	isChainsUnsafe,
-	nodeChainsOf,
-	resolveChildChains,
-	slotStatusOf,
-	type ChainSet,
-} from "../edges";
+import { isIgnored } from "../ignore";
 import { bindVisitedOccupancy, markDirtyPath, type OccupancyVisit } from "../occupancy";
+import { isUnsafeMarked } from "../unsafeTrack";
 import { segmentFor, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { appendOperationPath, type OperationPath } from "./path";
@@ -33,66 +23,42 @@ export interface StepVerdict {
 	readonly visit: OccupancyVisit;
 	readonly ignored: boolean;
 	readonly liveChild: unknown;
-	readonly chains: ChainSet;
 }
+
+const isIgnoredValue = (value: unknown): boolean => isObjectLike(value) && isIgnored(value);
 
 export const admitStep = (
 	handle: Handle | undefined,
 	dirty: DirtyIndex | undefined,
 	path: OperationPath,
 	liveParent: unknown,
-	residual: ChainSet,
 ): StepVerdict => {
 	if (path.length === 0) {
-		return { visit: "continue", ignored: isChainsIgnored(residual), liveChild: liveParent, chains: residual };
+		return { visit: "continue", ignored: isIgnoredValue(liveParent), liveChild: liveParent };
 	}
 
 	const key = path[path.length - 1];
 	const liveChild: unknown =
 		isObjectLike(liveParent) && key !== undefined ? (Reflect.get(liveParent, key) as unknown) : undefined;
+	const ignored = isIgnoredValue(liveChild);
 
-	if (handle === undefined) {
-		const childChains = key === undefined ? residual : childChainsOf(residual, key);
-
-		return { visit: "continue", ignored: isChainsIgnored(childChains), liveChild, chains: childChains };
+	if (handle === undefined || key === undefined) {
+		return { visit: "continue", ignored, liveChild };
 	}
 
-	if (key === undefined) {
-		return { visit: "continue", ignored: isChainsIgnored(residual), liveChild: liveParent, chains: residual };
-	}
+	if (dirty === undefined) return { visit: "continue", ignored, liveChild };
 
-	const resolved = resolveChildChains(handle, liveParent, residual, key, liveChild);
-	const ignored = resolved === undefined;
-	const chains = resolved?.chains ?? childChainsOf(residual, key);
-
-	if (dirty === undefined) return { visit: "continue", ignored, liveChild, chains };
-
-	if (ignored) return { visit: "skip", ignored, liveChild, chains };
-
-	if (resolved.otherRoutes) {
-		if (!isObjectLike(liveParent) || !isObjectLike(liveChild)) throw new MissingDiffParentError();
-
-		const slot = slotStatusOf(handle, liveParent, key);
-		let unsafe = slot.occupied ? slot.unsafe : isChainsUnsafe(resolved.descended);
-		const status = edgeStatusOf(handle, liveChild);
-
-		if (status.occupied) unsafe = status.unsafe;
-
-		return {
-			visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, unsafe, false),
-			ignored,
-			liveChild,
-			chains,
-		};
-	}
+	if (ignored) return { visit: "skip", ignored, liveChild };
 
 	if (!isObjectLike(liveParent)) throw new MissingDiffParentError();
 
+	const parentExempt = handle.nodes.get(rawTargetOf(liveParent))?.exempt === true;
+	const childExempt = isObjectLike(liveChild) && (isUnsafeMarked(liveChild) || isUnsafeMarked(rawTargetOf(liveChild)));
+
 	return {
-		visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, isChainsUnsafe(resolved.descended), false),
+		visit: bindVisitedOccupancy(handle, path, liveParent, key, liveChild, parentExempt || childExempt),
 		ignored,
 		liveChild,
-		chains,
 	};
 };
 
@@ -100,7 +66,6 @@ export const admitDescendants = (
 	handle: Handle | undefined,
 	path: OperationPath,
 	visits: Set<object>,
-	residual: ChainSet,
 	liveNode: unknown,
 	unsafe = false,
 ): void => {
@@ -114,50 +79,23 @@ export const admitDescendants = (
 
 	visits.add(nodeKey);
 
-	if (isChainsIgnored(residual)) return;
+	if (isIgnored(liveNode)) return;
 
-	const nodeUnsafe = unsafe || isChainsUnsafe(residual);
+	const nodeUnsafe = unsafe || handle.nodes.get(nodeKey)?.exempt === true;
 
 	for (const entry of walkDataEntries(liveNode)) {
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
+		if (isIgnored(entry.value)) continue;
+
 		const key = segmentFor(liveNode, entry.key);
 		const childPath = appendOperationPath(path, key);
-		const descended = descendChains(residual, key);
-		let ignored: boolean;
-		let childChains: ChainSet;
-		let childUnsafe: boolean;
-		let ignoredFrontier: boolean | undefined;
-
-		if (hasOtherRoutes(handle, entry.value, liveNode, key)) {
-			const slot = slotStatusOf(handle, liveNode, key);
-
-			ignored = slot.ignored || descended.ignored;
-			childChains = nodeChainsOf(handle, entry.value) ?? descended.chains;
-			childUnsafe = slot.occupied ? slot.unsafe : nodeUnsafe || descended.unsafe;
-			ignoredFrontier = undefined;
-		} else {
-			ignored = descended.ignored || isChainsIgnored(descended.chains);
-			childChains = descended.chains;
-			childUnsafe = nodeUnsafe || descended.unsafe;
-			ignoredFrontier = false;
-		}
-
-		if (ignored) continue;
-
-		const visit = bindVisitedOccupancy(
-			handle,
-			childPath,
-			liveNode,
-			entry.key,
-			entry.value,
-			childUnsafe,
-			ignoredFrontier,
-		);
+		const childUnsafe = nodeUnsafe || isUnsafeMarked(entry.value) || isUnsafeMarked(rawTargetOf(entry.value));
+		const visit = bindVisitedOccupancy(handle, childPath, liveNode, entry.key, entry.value, childUnsafe);
 
 		if (visit !== "continue") continue;
 
-		admitDescendants(handle, childPath, visits, childChains, Reflect.get(liveNode, key) as unknown, childUnsafe);
+		admitDescendants(handle, childPath, visits, Reflect.get(liveNode, key) as unknown, childUnsafe);
 	}
 };
 

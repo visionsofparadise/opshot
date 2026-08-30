@@ -1,4 +1,4 @@
-import { chainsAtRoot, descendChains, isTrackedEdge, nodeChainsOf, resolveChildChains } from "../edges";
+import { isTrackedEdge } from "../edges";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
 import { bindVendedIds, internSubtree, nodeOfInternedId, rewindAdmission } from "../intern";
 import { walkDataEntries } from "../utils/dataEntries";
@@ -275,22 +275,7 @@ const applyPlain = (
 			bindVendedIds(handle, attached, payload.recorded, operation.ids, handle.transactionCapture, parent, key);
 		}
 	} else {
-		let chains = chainsAtRoot(handle.declarations);
-
-		for (const segment of path) chains = descendChains(chains, segment).chains;
-
-		chains = nodeChainsOf(handle, attached) ?? chains;
-
-		internSubtree(
-			handle,
-			attached,
-			chains,
-			(parent, parentChains, key, entry) =>
-				isTrackedEdge(entry)
-					? resolveChildChains(handle, parent, parentChains, key, entry.value)?.chains
-					: undefined,
-			handle.transactionCapture,
-		);
+		internSubtree(handle, attached, (_parent, entry) => !isTrackedEdge(entry), handle.transactionCapture);
 	}
 };
 

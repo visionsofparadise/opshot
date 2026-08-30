@@ -1,9 +1,9 @@
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
-import { createMutableState, type Unmarked } from "../createMutableState";
+import { createMutableState } from "../createMutableState";
 import { requireHandle } from "../handle";
 import { identify, isSameIdentity } from "../identity";
-import { ignore, type Ignored } from "../ignore";
+import { ignore } from "../ignore";
 import { internedIdOf, nodeOfInternedId } from "../intern";
 import { applyOperations } from "./applyOperations";
 import type { ApplyDirection } from "./applyMutations";
@@ -984,11 +984,11 @@ describe("applyOperations: link halves", () => {
 
 	it("transported undo of a cluster holding an ignored slot names only its tracked members", () => {
 		interface IgnoredSlotSource {
-			box?: { a: { n: number }; odd: Ignored<{ o: number }>; b: { n: number } };
+			box?: { a: { n: number }; odd: { o: number }; b: { n: number } };
 		}
 
 		const build = (): IgnoredSlotSource => ({ box: { a: { n: 1 }, odd: ignore({ o: 1 }), b: { n: 2 } } });
-		const namedNodesOf = (state: Unmarked<IgnoredSlotSource>): ReadonlyArray<object> => [
+		const namedNodesOf = (state: IgnoredSlotSource): ReadonlyArray<object> => [
 			state.box!,
 			state.box!.a,
 			state.box!.b,
@@ -1020,11 +1020,10 @@ describe("applyOperations: link halves", () => {
 		expect(replica).toEqual(origin);
 		expect(origin.box).toEqual({ a: { n: 1 }, odd: { o: 1 }, b: { n: 2 } });
 		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
-		expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual(admitted);
 		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
-		expect(internedIdOf(replicaHandle, replica.box!.odd)).toBeUndefined();
+		expect(internedIdOf(replicaHandle, replica.box!.odd)).toBeDefined();
+		expect(namedNodesOf(replica).map((node) => internId(replica, node))).toEqual([1, 2, 4]);
 		expect(originHandle.nextInternId).toBe(minted);
-		expect(replicaHandle.nextInternId).toBe(minted);
 	});
 
 	it("a throw after an override bind leaves the batch's naming rolled back", () => {

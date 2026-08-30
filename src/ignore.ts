@@ -1,21 +1,20 @@
-export const ignoreMarker: unique symbol = Symbol("opshot.ignore");
+const ignored = new WeakSet<object>();
 
 /**
- * A factory-argument marker wrapping `T`.
+ * Marks an object so every edge to it is untracked in every state.
  *
  * @typeParam T - Value type.
+ * @param value - Value to mark or unmark.
+ * @param on - Whether the mark is set.
+ * @returns `value`.
  */
-export interface Ignored<T> {
-	readonly [ignoreMarker]: T;
+export function ignore<T>(value: T, on = true): T {
+	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
+
+	if (on) ignored.add(value);
+	else ignored.delete(value);
+
+	return value;
 }
 
-/**
- * Marks a factory-argument value so the edge at that path is untracked in that state.
- *
- * @typeParam T - Value type.
- * @param value - Value to ignore.
- * @returns A marker consumed at create.
- */
-export function ignore<T>(value: T): Ignored<T> {
-	return { [ignoreMarker]: value };
-}
+export const isIgnored = (value: object): boolean => ignored.has(value);

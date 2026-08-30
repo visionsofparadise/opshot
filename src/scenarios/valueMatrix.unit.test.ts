@@ -1,6 +1,6 @@
 import { createMutableState } from "../createMutableState";
 import { requireHandle } from "../handle";
-import { ignore, type Ignored } from "../ignore";
+import { ignore } from "../ignore";
 import { isSameIdentity } from "../identity";
 import { internedIdOf } from "../intern";
 import { isState } from "../isState";
@@ -9,7 +9,7 @@ import { applyOperations } from "../ops/applyOperations";
 import { type Operation } from "../ops/operation";
 import { subscribe } from "../subscribe";
 import { transact } from "../transact/transact";
-import { unsafeTrack, type UnsafeTracked } from "../unsafeTrack";
+import { unsafeTrack } from "../unsafeTrack";
 
 const record = <T extends object>(state: T): Array<Array<Operation>> => {
 	const heard = new Array<Array<Operation>>();
@@ -635,7 +635,7 @@ describe("ignore()", () => {
 			state.box = object;
 		});
 
-		expect(state.box).toBe(object);
+		expect(isSameIdentity(state.box, object)).toBe(true);
 	});
 
 	it("in-place write", () => {
@@ -662,13 +662,13 @@ describe("ignore()", () => {
 			state.tick = 1;
 		});
 
-		expect(state.box).toBe(second);
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["tick"] });
+		expect(isSameIdentity(state.box, second)).toBe(true);
+		expect(heard[0]?.some((ops) => ops.do.path[0] === "box")).toBe(true);
 	});
 
 	it("delete", () => {
 		const object = { a: 1 };
-		const state = createMutableState({ box: ignore(object) as Ignored<{ a: number }> | undefined, tick: 0 });
+		const state = createMutableState({ box: ignore(object) as { a: number } | undefined, tick: 0 });
 		const heard = record(state);
 
 		transact(state, () => {
@@ -677,7 +677,7 @@ describe("ignore()", () => {
 		});
 
 		expect(state.box).toBeUndefined();
-		expect(heard[0]?.[0]?.do).toMatchObject({ verb: "assign", path: ["tick"] });
+		expect(heard[0]?.some((operation) => operation.do.path[0] === "box")).toBe(true);
 	});
 
 	it("rollback", () => {
@@ -827,7 +827,7 @@ describe("unsafeTrack() of dangerous", () => {
 		});
 
 		transact(state, () => {
-			state.box = map;
+			state.box = unsafeTrack(map);
 		});
 
 		expect(state.box !== undefined && isSameIdentity(state.box, map)).toBe(true);
@@ -840,7 +840,7 @@ describe("unsafeTrack() of dangerous", () => {
 		const heard = record(state);
 
 		transact(state, () => {
-			state.box = second;
+			state.box = unsafeTrack(second);
 		});
 
 		expect(isSameIdentity(state.box, second)).toBe(true);
@@ -850,7 +850,7 @@ describe("unsafeTrack() of dangerous", () => {
 	it("delete", () => {
 		const map = new Map<string, number>();
 		const state = createMutableState({
-			box: unsafeTrack(map) as UnsafeTracked<Map<string, number>> | undefined,
+			box: unsafeTrack(map) as Map<string, number> | undefined,
 		});
 		const heard = record(state);
 
@@ -870,7 +870,7 @@ describe("unsafeTrack() of dangerous", () => {
 
 		expect(() =>
 			transact(state, () => {
-				state.box = new Map([["b", 2]]);
+				state.box = unsafeTrack(new Map([["b", 2]]));
 
 				throw new Error("abort");
 			}),

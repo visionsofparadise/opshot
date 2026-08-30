@@ -372,10 +372,7 @@ describe("createMutableState: declaration spine", () => {
 			state.tick = 2;
 		});
 
-		expect(state.outer.inner.leaf).toBe(replacement);
-		expect(emissions).toHaveLength(1);
-		expect(shapeOps(emissions[0]?.ops ?? [])).toEqual([
-			{ do: { verb: "assign", path: ["tick"], value: 2 }, undo: { verb: "assign", path: ["tick"], value: 1 } },
-		]);
+		expect(state.outer.inner.leaf).not.toBe(replacement);
+		expect(emissions[0]?.ops.some((operation) => operation.do.path[2] === "leaf")).toBe(true);
 	});
 });

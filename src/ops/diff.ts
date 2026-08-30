@@ -1,8 +1,8 @@
-import { chainsAtRoot, isTrackedEdge, resolveChildChains, type ChainSet } from "../edges";
+import { isTrackedEdge } from "../edges";
 import { isSameIdentity } from "../identity";
 import { internedIdOf, internSubtree, stageVend } from "../intern";
 import { createCaptureTables, type CaptureTables } from "../occupancy";
-import { dataEntryValuesOf, segmentFor, walkDataEntries } from "../utils/dataEntries";
+import { dataEntryValuesOf, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
 import { admitDescendants, admitStep, emitsSkippedOccupancy, markChangedPath, type StepVerdict } from "./admission";
 import { walkContainer, type Ancestors } from "./ancestorPairs";
@@ -69,7 +69,6 @@ const mintDecomposedContents = (
 	after: object,
 	verdict: StepVerdict,
 ): void => {
-	const residual = verdict.chains;
 	const liveNode = verdict.liveChild;
 
 	if (isPlainArray(after)) {
@@ -83,21 +82,21 @@ const mintDecomposedContents = (
 			if (!Object.hasOwn(after, index)) continue;
 
 			const nextPath = appendOperationPath(path, index);
-			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, after[index], childVerdict, liveNode);
 		}
 
 		for (const [key, value] of namedArrayEntriesOf(after)) {
 			const nextPath = appendOperationPath(path, key);
-			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, value, childVerdict, liveNode);
 		}
 	} else {
 		for (const entry of walkDataEntries(after)) {
 			const nextPath = appendOperationPath(path, entry.key);
-			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const childVerdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, entry.value, childVerdict, liveNode);
 		}
@@ -135,13 +134,12 @@ const surveyAssignedSubtree = (
 	handle: Handle,
 	capture: CaptureTables,
 	node: object,
-	residual: ChainSet,
 	stopAtInternedOccupied: boolean,
 ): { readonly reachesInternedOccupied: boolean } => {
 	const visits = new Set<object>();
 	const pending = new Array<object>();
 
-	const visit = (current: object, currentResidual: ChainSet): boolean => {
+	const visit = (current: object): boolean => {
 		const raw = occupancyNodeOf(current);
 
 		if (visits.has(raw)) return false;
@@ -161,16 +159,11 @@ const surveyAssignedSubtree = (
 
 			if (!isTrackedEdge(entry)) continue;
 
-			const key = segmentFor(source, entry.key);
-			const resolved = resolveChildChains(handle, source, currentResidual, key, entry.value);
-
-			if (resolved === undefined) continue;
-
 			const child = entry.value;
 
 			if (stopAtInternedOccupied && internedOccupied(handle, child, capture)) return true;
 
-			if (visit(child, resolved.chains)) return true;
+			if (visit(child)) return true;
 		}
 
 		return false;
@@ -178,7 +171,7 @@ const surveyAssignedSubtree = (
 
 	if (stopAtInternedOccupied) stageVend(handle, capture, node);
 
-	const reachesInternedOccupied = visit(node, residual);
+	const reachesInternedOccupied = visit(node);
 
 	if (stopAtInternedOccupied && !reachesInternedOccupied) {
 		for (const pendingNode of pending) stageVend(handle, capture, pendingNode);
@@ -200,7 +193,11 @@ const internIdsOfSubtree = (handle: Handle, node: object, capture: CaptureTables
 		ids.push(id);
 
 		for (const entry of walkDataEntries(liveOf(current))) {
-			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value);
+			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			if (!isTrackedEdge(entry)) continue;
+
+			walk(entry.value);
 		}
 	};
 
@@ -236,15 +233,9 @@ const mintAssignment = (
 				return;
 			}
 
-			surveyAssignedSubtree(handle, context.capture, after, verdict.chains, false);
+			surveyAssignedSubtree(handle, context.capture, after, false);
 		} else if (admissionLane(after) !== "untracked" && (isPlainObject(after) || isPlainArray(after))) {
-			const { reachesInternedOccupied } = surveyAssignedSubtree(
-				handle,
-				context.capture,
-				after,
-				verdict.chains,
-				true,
-			);
+			const { reachesInternedOccupied } = surveyAssignedSubtree(handle, context.capture, after, true);
 
 			if (reachesInternedOccupied) {
 				if (!beforePresent) {
@@ -258,19 +249,10 @@ const mintAssignment = (
 				return;
 			}
 		} else {
-			admitDescendants(handle, path, new Set(), verdict.chains, verdict.liveChild);
-			internSubtree(
-				handle,
-				after,
-				verdict.chains,
-				(parent, parentChains, key, entry) =>
-					isTrackedEdge(entry)
-						? resolveChildChains(handle, parent, parentChains, key, entry.value)?.chains
-						: undefined,
-				context.capture,
-			);
+			admitDescendants(handle, path, new Set(), verdict.liveChild);
+			internSubtree(handle, after, (_parent, entry) => !isTrackedEdge(entry), context.capture);
 		}
-	} else if (isObjectLike(after)) admitDescendants(context.handle, path, new Set(), verdict.chains, verdict.liveChild);
+	} else if (isObjectLike(after)) admitDescendants(context.handle, path, new Set(), verdict.liveChild);
 
 	const ids =
 		isObjectLike(after) && handle !== undefined ? internIdsOfSubtree(handle, after, context.capture) : undefined;
@@ -347,7 +329,6 @@ const diffCollectedProperties = (
 	before: object,
 	after: object,
 	path: OperationPath,
-	residual: ChainSet,
 	liveNode: unknown,
 	beforeEntries: Map<string, unknown>,
 	afterEntries: Map<string, unknown>,
@@ -360,13 +341,13 @@ const diffCollectedProperties = (
 		const afterPresent = afterEntries.has(key);
 
 		if (beforePresent && afterPresent) {
-			diffValue(context, beforeEntries.get(key), afterEntries.get(key), nextPath, residual, liveNode);
+			diffValue(context, beforeEntries.get(key), afterEntries.get(key), nextPath, liveNode);
 		} else if (beforePresent && !Object.hasOwn(after, key)) {
-			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushRemoval(context, nextPath, beforeEntries.get(key), verdict, liveNode);
 		} else if (afterPresent && !Object.hasOwn(before, key)) {
-			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, afterEntries.get(key), verdict, liveNode);
 		}
@@ -378,19 +359,9 @@ const diffObjectProperties = (
 	before: Record<string, unknown>,
 	after: Record<string, unknown>,
 	path: OperationPath,
-	residual: ChainSet,
 	liveNode: unknown,
 ): void => {
-	diffCollectedProperties(
-		context,
-		before,
-		after,
-		path,
-		residual,
-		liveNode,
-		dataEntryValuesOf(before),
-		dataEntryValuesOf(after),
-	);
+	diffCollectedProperties(context, before, after, path, liveNode, dataEntryValuesOf(before), dataEntryValuesOf(after));
 };
 
 const diffArray = (
@@ -398,7 +369,6 @@ const diffArray = (
 	before: Array<unknown>,
 	after: Array<unknown>,
 	path: OperationPath,
-	residual: ChainSet,
 	liveNode: unknown,
 ): void => {
 	const overlap = Math.min(before.length, after.length);
@@ -412,19 +382,19 @@ const diffArray = (
 		const nextPath = appendOperationPath(path, index);
 
 		if (!beforePresent) {
-			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, after[index], verdict, liveNode);
 		} else if (!afterPresent) {
-			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushRemoval(context, nextPath, before[index], verdict, liveNode);
-		} else diffValue(context, before[index], after[index], nextPath, residual, liveNode);
+		} else diffValue(context, before[index], after[index], nextPath, liveNode);
 	}
 
 	if (after.length > before.length) {
 		const lengthPath = appendOperationPath(path, "length");
-		const lengthVerdict = admitStep(context.handle, context.dirty, lengthPath, liveNode, residual);
+		const lengthVerdict = admitStep(context.handle, context.dirty, lengthPath, liveNode);
 
 		pushChange(context, lengthPath, before.length, after.length, lengthVerdict, liveNode);
 
@@ -432,7 +402,7 @@ const diffArray = (
 			if (!Object.hasOwn(after, index)) continue;
 
 			const nextPath = appendOperationPath(path, index);
-			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushAddition(context, nextPath, after[index], verdict, liveNode);
 		}
@@ -441,13 +411,13 @@ const diffArray = (
 			if (!Object.hasOwn(before, index)) continue;
 
 			const nextPath = appendOperationPath(path, index);
-			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode, residual);
+			const verdict = admitStep(context.handle, context.dirty, nextPath, liveNode);
 
 			pushRemoval(context, nextPath, before[index], verdict, liveNode);
 		}
 
 		const lengthPath = appendOperationPath(path, "length");
-		const lengthVerdict = admitStep(context.handle, context.dirty, lengthPath, liveNode, residual);
+		const lengthVerdict = admitStep(context.handle, context.dirty, lengthPath, liveNode);
 
 		pushChange(context, lengthPath, before.length, after.length, lengthVerdict, liveNode);
 	}
@@ -457,7 +427,6 @@ const diffArray = (
 		before,
 		after,
 		path,
-		residual,
 		liveNode,
 		namedArrayEntriesOf(before),
 		namedArrayEntriesOf(after),
@@ -469,14 +438,13 @@ const diffValue = (
 	before: unknown,
 	after: unknown,
 	path: OperationPath,
-	residual: ChainSet,
 	liveParent: unknown,
 ): void => {
 	const replacing =
 		path.length > 0 && isObjectLike(before) && isObjectLike(after) && !sharesStorageIdentity(before, after);
 
-	const verdict = admitStep(context.handle, context.dirty, path, liveParent, residual);
-	const { visit, ignored, liveChild, chains } = verdict;
+	const verdict = admitStep(context.handle, context.dirty, path, liveParent);
+	const { visit, ignored, liveChild } = verdict;
 
 	if (visit === "skip" || ignored) {
 		if (Object.is(before, after)) return;
@@ -499,14 +467,14 @@ const diffValue = (
 	}
 
 	if (isPlainArray(before) && isPlainArray(after)) {
-		walkContainer(context.ancestors, before, after, () => diffArray(context, before, after, path, chains, liveChild));
+		walkContainer(context.ancestors, before, after, () => diffArray(context, before, after, path, liveChild));
 
 		return;
 	}
 
 	if (isPlainObject(before) && isPlainObject(after)) {
 		walkContainer(context.ancestors, before, after, () =>
-			diffObjectProperties(context, before, after, path, chains, liveChild),
+			diffObjectProperties(context, before, after, path, liveChild),
 		);
 
 		return;
@@ -552,14 +520,7 @@ export function diffObjects(
 		capture: capture ?? createCaptureTables(),
 	};
 
-	diffValue(
-		context,
-		before,
-		after,
-		createOperationPath([]),
-		handle === undefined ? [undefined] : chainsAtRoot(handle.declarations),
-		handle?.proxy.root,
-	);
+	diffValue(context, before, after, createOperationPath([]), handle?.proxy.root);
 
 	return ops;
 }

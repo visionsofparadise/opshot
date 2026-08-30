@@ -1,3 +1,4 @@
+import { isIgnored } from "../ignore";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
 import { walkDataEntries, type DataEntry } from "../utils/dataEntries";
@@ -34,6 +35,8 @@ const isReactOwnNode = (value: object): boolean =>
 
 const childRole = (value: unknown, writable: boolean, mode: WalkMode): ChildRole => {
 	if (typeof value !== "object" || value === null) return "skip";
+
+	if (isIgnored(value)) return "skip";
 
 	if (isReactOwnNode(value)) return "skip";
 

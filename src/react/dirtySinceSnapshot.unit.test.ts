@@ -20,7 +20,6 @@ describe("dirtySinceSnapshot", () => {
 		const from = snapshot(handle.proxy.root);
 		const lastSnapshot = handle.lastSnapshot;
 		const lastDirty = handle.lastDirty;
-		const declarations = handle.declarations;
 		const byId = handle.byId;
 		const internCount = handle.byId.size;
 		const rootId = internedIdOf(handle, state);
@@ -41,7 +40,6 @@ describe("dirtySinceSnapshot", () => {
 		expect(heard).toEqual([]);
 		expect(handle.lastSnapshot).toBe(lastSnapshot);
 		expect(handle.lastDirty).toBe(lastDirty);
-		expect(handle.declarations).toBe(declarations);
 		expect(handle.byId).toBe(byId);
 		expect(handle.byId.size).toBe(internCount);
 		expect(internedIdOf(handle, state)).toBe(rootId);
