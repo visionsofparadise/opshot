@@ -154,7 +154,7 @@ const captureDiffOf = (handle: Handle, from: object, capture: CaptureTables): Ca
 	};
 };
 
-const captureRange = (handle: Handle, meta: unknown, channelId: object | undefined): CapturedRange => {
+const captureRange = (handle: Handle, meta: unknown): CapturedRange => {
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
@@ -173,7 +173,7 @@ const captureRange = (handle: Handle, meta: unknown, channelId: object | undefin
 		for (const operation of ops) stampOperation(handle, operation);
 	}
 
-	return ops.length > 0 ? prepareDelivery(handle, ops, meta, channelId, committed.dirty) : undefined;
+	return ops.length > 0 ? prepareDelivery(handle, ops, meta, committed.dirty) : undefined;
 };
 
 export function deliverCapturedRanges(ranges: ReadonlyArray<CapturedRange>): void {
@@ -184,8 +184,8 @@ export function deliverCapturedRanges(ranges: ReadonlyArray<CapturedRange>): voi
 	drainDeliveries();
 }
 
-const emitRange = (handle: Handle, meta: unknown, channelId: object | undefined): void => {
-	const captured = captureRange(handle, meta, channelId);
+const emitRange = (handle: Handle, meta: unknown): void => {
+	const captured = captureRange(handle, meta);
 
 	if (captured !== undefined) enqueueDelivery(captured);
 
@@ -193,13 +193,13 @@ const emitRange = (handle: Handle, meta: unknown, channelId: object | undefined)
 };
 
 export function captureWrites(handle: Handle): CapturedRange {
-	return captureRange(handle, undefined, undefined);
+	return captureRange(handle, undefined);
 }
 
-export function captureTransactionWrites(handle: Handle, meta: unknown, channelId: object | undefined): CapturedRange {
-	return captureRange(handle, meta, channelId);
+export function captureTransactionWrites(handle: Handle, meta: unknown): CapturedRange {
+	return captureRange(handle, meta);
 }
 
 export function emitWrites(handle: Handle): void {
-	emitRange(handle, undefined, undefined);
+	emitRange(handle, undefined);
 }

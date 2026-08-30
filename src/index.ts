@@ -1,4 +1,3 @@
-export { createChannel, type Channel } from "./createChannel";
 export { createGroup, type Group } from "./createGroup";
 export { createMutableState, type MutableStateOptions } from "./createMutableState";
 export { type EmissionScheduler, type MutableNodeOptions } from "./settings";
@@ -14,7 +13,7 @@ export { TrackedDate } from "./tracked/trackedDate";
 export { TrackedMap } from "./tracked/trackedMap";
 export { TrackedSet } from "./tracked/trackedSet";
 export { type GroupListener, type StateListener } from "./emit/emitterRegistry";
-export { subscribe, type EmissionContext } from "./subscribe";
+export { subscribe } from "./subscribe";
 export { transact } from "./transact/transact";
 export { scope } from "./react/scope";
 export { useGroup } from "./react/useGroup";

@@ -4,92 +4,47 @@ import type { GroupDeliver, GroupListeners, StateDeliver } from "./emitterRegist
 interface StateBinding {
 	readonly handle: Handle;
 	readonly listener: Function;
-	readonly channelId: object | undefined;
 }
 
 interface GroupBinding {
 	readonly listeners: GroupListeners;
 	readonly listener: Function;
-	readonly channelId: object | undefined;
 }
 
 const bindings = new WeakMap<() => void, StateBinding | GroupBinding>();
 
-const dropListenerChannel = <Deliver>(
-	byListener: Map<Function, Map<object | undefined, Deliver>>,
-	listener: Function,
-	channelId: object | undefined,
-	unsubscribe: () => void,
-): void => {
-	const channels = byListener.get(listener);
-
-	if (channels?.has(channelId) !== true) {
-		bindings.delete(unsubscribe);
-
-		return;
-	}
-
-	channels.delete(channelId);
-
-	if (channels.size === 0) byListener.delete(listener);
-
-	bindings.delete(unsubscribe);
-};
-
-export function addStateListener(
-	state: object,
-	listener: Function,
-	channelId: object | undefined,
-	deliver: StateDeliver,
-): () => void {
+export function addStateListener(state: object, listener: Function, deliver: StateDeliver): () => void {
 	const handle = requireHandle(state, "opshot: subscribe requires a state");
 
-	let byChannel = handle.subscribers.get(listener);
-
-	if (byChannel === undefined) {
-		byChannel = new Map();
-		handle.subscribers.set(listener, byChannel);
-	}
-
-	byChannel.set(channelId, deliver);
+	handle.subscribers.set(listener, deliver);
 
 	const unsubscribe = (): void => {
 		const held = bindings.get(unsubscribe) as StateBinding | undefined;
 
 		if (held === undefined) return;
 
-		dropListenerChannel(held.handle.subscribers, held.listener, held.channelId, unsubscribe);
+		held.handle.subscribers.delete(held.listener);
+		bindings.delete(unsubscribe);
 	};
 
-	bindings.set(unsubscribe, { handle, listener, channelId });
+	bindings.set(unsubscribe, { handle, listener });
 
 	return unsubscribe;
 }
 
-export function addGroupListener(
-	groupListeners: GroupListeners,
-	listener: Function,
-	channelId: object | undefined,
-	deliver: GroupDeliver,
-): () => void {
-	let byChannel = groupListeners.get(listener);
-
-	if (byChannel === undefined) {
-		byChannel = new Map();
-		groupListeners.set(listener, byChannel);
-	}
-
-	byChannel.set(channelId, deliver);
+export function addGroupListener(listeners: GroupListeners, listener: Function, deliver: GroupDeliver): () => void {
+	listeners.set(listener, deliver);
 
 	const unsubscribe = (): void => {
 		const held = bindings.get(unsubscribe) as GroupBinding | undefined;
 
 		if (held === undefined) return;
 
-		dropListenerChannel(held.listeners, held.listener, held.channelId, unsubscribe);
+		held.listeners.delete(held.listener);
+		bindings.delete(unsubscribe);
 	};
 
-	bindings.set(unsubscribe, { listeners: groupListeners, listener, channelId });
+	bindings.set(unsubscribe, { listeners, listener });
 
 	return unsubscribe;
 }

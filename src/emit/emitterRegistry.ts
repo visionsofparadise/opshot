@@ -20,18 +20,13 @@ export type StateListener = (ops: ReadonlyArray<Operation>, meta: unknown) => vo
  */
 export type GroupListener = (state: object, ops: ReadonlyArray<Operation>, meta: unknown) => void;
 
-export type StateDeliver = (ops: ReadonlyArray<Operation>, meta: unknown, channelId: object | undefined) => void;
+export type StateDeliver = (ops: ReadonlyArray<Operation>, meta: unknown) => void;
 
-export type GroupDeliver = (
-	state: object,
-	ops: ReadonlyArray<Operation>,
-	meta: unknown,
-	channelId: object | undefined,
-) => void;
+export type GroupDeliver = (state: object, ops: ReadonlyArray<Operation>, meta: unknown) => void;
 
-export type StateListeners = Map<Function, Map<object | undefined, StateDeliver>>;
+export type StateListeners = Map<Function, StateDeliver>;
 
-export type GroupListeners = Map<Function, Map<object | undefined, GroupDeliver>>;
+export type GroupListeners = Map<Function, GroupDeliver>;
 
 const { proxyStateMap } = unstable_getInternalStates();
 

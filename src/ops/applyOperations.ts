@@ -84,15 +84,14 @@ export function applyOperations(
 	direction: ApplyDirection,
 	meta?: unknown,
 ): void {
-	runOperations(state, operations, direction, meta, undefined);
+	runOperations(state, operations, direction, meta);
 }
 
-export function runOperations(
+function runOperations(
 	state: object,
 	operations: ReadonlyArray<Operation>,
 	direction: ApplyDirection,
 	meta: unknown,
-	channelId: object | undefined,
 ): void {
 	for (const operation of operations) assertApplicable(operation);
 
@@ -153,7 +152,6 @@ export function runOperations(
 				}
 			},
 			meta,
-			channelId,
 		);
 	} finally {
 		handle.replaying = false;

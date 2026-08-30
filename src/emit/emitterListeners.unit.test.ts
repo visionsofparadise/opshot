@@ -13,7 +13,7 @@ describe("emitterListeners", () => {
 			heard.push({ ops, meta });
 		};
 
-		addStateListener(state, listener, undefined, listener);
+		addStateListener(state, listener, listener);
 
 		transact(
 			state,
@@ -37,7 +37,7 @@ describe("emitterListeners", () => {
 			heard.push({ ops, meta });
 		};
 
-		addStateListener(state, listener, undefined, listener);
+		addStateListener(state, listener, listener);
 
 		state.count = 5;
 
@@ -61,7 +61,7 @@ describe("emitterListeners", () => {
 			order.push(`${String(path)}:${meta === undefined ? "bare" : "tx"}`);
 		};
 
-		addStateListener(state, listener, undefined, listener);
+		addStateListener(state, listener, listener);
 
 		state.count = 1;
 		transact(
@@ -86,7 +86,7 @@ describe("emitterListeners", () => {
 		const stateListener = (ops: ReadonlyArray<Operation>): void => {
 			stateHeard.push(ops.length);
 		};
-		const stopState = addStateListener(state, stateListener, undefined, stateListener);
+		const stopState = addStateListener(state, stateListener, stateListener);
 
 		transact(state, () => {
 			state.count = 1;
@@ -107,7 +107,7 @@ describe("emitterListeners", () => {
 		const groupListener = (_emitted: object, ops: ReadonlyArray<Operation>): void => {
 			groupHeard.push(ops.length);
 		};
-		const stopGroup = addGroupListener(getGroupListeners(group), groupListener, undefined, groupListener);
+		const stopGroup = addGroupListener(getGroupListeners(group), groupListener, groupListener);
 
 		transact(grouped, () => {
 			grouped.count = 1;
@@ -123,22 +123,21 @@ describe("emitterListeners", () => {
 		expect(groupHeard).toHaveLength(1);
 	});
 
-	it("the second unsubscribe of a duplicated listener+channel pair releases only its binding", () => {
+	it("the second unsubscribe of a duplicated listener pair releases only its binding", () => {
 		const state = createMutableState({ count: 0 });
 		const heard = new Array<string>();
-		const channelId = {};
 		const pairListener = (): void => undefined;
 		const pairDeliver = (): void => {
 			heard.push("pair");
 		};
-		const first = addStateListener(state, pairListener, channelId, pairDeliver);
-		const second = addStateListener(state, pairListener, channelId, pairDeliver);
+		const first = addStateListener(state, pairListener, pairDeliver);
+		const second = addStateListener(state, pairListener, pairDeliver);
 		const otherListener = (): void => undefined;
 		const otherDeliver = (): void => {
 			heard.push("other");
 		};
 
-		addStateListener(state, otherListener, undefined, otherDeliver);
+		addStateListener(state, otherListener, otherDeliver);
 
 		transact(state, () => {
 			state.count = 1;

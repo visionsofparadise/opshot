@@ -3,14 +3,6 @@ import { addGroupListener, addStateListener } from "./emit/emitterListeners";
 import type { GroupListener, StateListener } from "./emit/emitterRegistry";
 
 /**
- * Listener context from a channel subscription.
- *
- * @typeParam M - Meta type for this channel.
- */
-export type EmissionContext<M> =
-	{ readonly isTransaction: true; readonly meta: M } | { readonly isTransaction: false; readonly meta: unknown };
-
-/**
  * Listens for changes from a group's states.
  *
  * @param group - Group to listen to.
@@ -29,26 +21,8 @@ export function subscribe(group: Group, listener: GroupListener): () => void;
 export function subscribe(state: object, listener: StateListener): () => void;
 export function subscribe(target: object | Group, listener: StateListener | GroupListener): () => void {
 	if (isGroup(target)) {
-		return addGroupListener(getGroupListeners(target), listener, undefined, (state, ops, meta) =>
-			(listener as GroupListener)(state, ops, meta),
-		);
+		return addGroupListener(getGroupListeners(target), listener, listener as GroupListener);
 	}
 
-	return addStateListener(target, listener, undefined, (ops, meta) => (listener as StateListener)(ops, meta));
-}
-
-export function toChannelContext<M extends object>(
-	channelId: object,
-	defaults: M | undefined,
-	meta: unknown,
-	deliveredChannelId: object | undefined,
-): EmissionContext<M> {
-	if (deliveredChannelId === channelId) {
-		return {
-			isTransaction: true,
-			meta: { ...defaults, ...(typeof meta === "object" && meta !== null ? meta : undefined) } as M,
-		};
-	}
-
-	return { isTransaction: false, meta };
+	return addStateListener(target, listener, listener as StateListener);
 }

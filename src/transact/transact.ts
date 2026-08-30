@@ -13,7 +13,7 @@ import { rollbackTransaction } from "./rollback";
  * @returns Nothing.
  */
 export function transact(state: object, mutate: () => void, meta?: unknown): void {
-	runTransaction(state, mutate, meta, undefined);
+	runTransaction(state, mutate, meta);
 }
 
 const attachRollbackCause = (error: unknown, rollbackError: unknown): void => {
@@ -46,7 +46,7 @@ const releaseUncaught = (failures: ReadonlyArray<unknown>): void => {
 	});
 };
 
-export function runTransaction(state: object, mutate: () => void, meta: unknown, channelId: object | undefined): void {
+export function runTransaction(state: object, mutate: () => void, meta: unknown): void {
 	if (isTransactionOpen()) {
 		throw new Error(
 			"opshot: transact cannot be nested; a transaction cannot contain another. Mutate inside the callback rather than transacting, run transactions in sequence, or call applyOperations at top level.",
@@ -121,7 +121,7 @@ export function runTransaction(state: object, mutate: () => void, meta: unknown,
 		let transaction: ReturnType<typeof captureTransactionWrites>;
 
 		try {
-			transaction = captureTransactionWrites(handle, meta, channelId);
+			transaction = captureTransactionWrites(handle, meta);
 		} catch (error) {
 			try {
 				rollbackTransaction(handle);

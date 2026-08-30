@@ -11,7 +11,6 @@ export interface PendingDelivery {
 	readonly deliveries: ReadonlyArray<Delivery>;
 	readonly ops: ReadonlyArray<Operation>;
 	readonly meta: unknown;
-	readonly channelId: object | undefined;
 	readonly dirty: DirtyIndex;
 }
 
@@ -19,17 +18,13 @@ const collectDeliveries = (handle: Handle): Array<Delivery> => {
 	const deliveries: Array<Delivery> = [];
 
 	for (const groupListeners of handle.groups ?? []) {
-		for (const byChannel of groupListeners.values()) {
-			for (const deliverToListener of byChannel.values()) {
-				deliveries.push({ kind: "group", deliver: deliverToListener });
-			}
+		for (const deliverToListener of groupListeners.values()) {
+			deliveries.push({ kind: "group", deliver: deliverToListener });
 		}
 	}
 
-	for (const byChannel of handle.subscribers.values()) {
-		for (const deliverToListener of byChannel.values()) {
-			deliveries.push({ kind: "own", deliver: deliverToListener });
-		}
+	for (const deliverToListener of handle.subscribers.values()) {
+		deliveries.push({ kind: "own", deliver: deliverToListener });
 	}
 
 	return deliveries;
@@ -43,9 +38,9 @@ const runDelivery = (pending: PendingDelivery, failures: Array<unknown>): void =
 	for (const delivery of pending.deliveries) {
 		try {
 			if (delivery.kind === "group") {
-				delivery.deliver(pending.writeProxy, pending.ops, pending.meta, pending.channelId);
+				delivery.deliver(pending.writeProxy, pending.ops, pending.meta);
 			} else {
-				delivery.deliver(pending.ops, pending.meta, pending.channelId);
+				delivery.deliver(pending.ops, pending.meta);
 			}
 		} catch (error) {
 			failures.push(error);
@@ -70,14 +65,12 @@ export const prepareDelivery = (
 	handle: Handle,
 	ops: ReadonlyArray<Operation>,
 	meta: unknown,
-	channelId: object | undefined,
 	dirty: DirtyIndex,
 ): PendingDelivery => ({
 	writeProxy: handle.proxy.root,
 	deliveries: collectDeliveries(handle),
 	ops,
 	meta,
-	channelId,
 	dirty,
 });
 
