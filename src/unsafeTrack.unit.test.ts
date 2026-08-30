@@ -225,4 +225,46 @@ describe("unsafeTrack occupancy", () => {
 
 		expect(() => createMutableState({ extra: holder })).toThrow("cannot be tracked");
 	});
+
+	it("recomputes exemption when a deleted node re-enters the same state while marked", () => {
+		const node = { nested: { n: 1 } as object };
+		const state = createMutableState({ slot: node as typeof node | undefined });
+
+		batch(() => {
+			delete state.slot;
+		});
+
+		unsafeTrack(node);
+
+		batch(() => {
+			state.slot = node;
+			state.slot.nested = new Map<string, number>([["k", 1]]);
+		});
+
+		expect(state.slot?.nested).toBeInstanceOf(Map);
+	});
+
+	it("recomputes exemption when a deleted exempt node re-enters unmarked", () => {
+		const node = { nested: { n: 1 } as object };
+
+		unsafeTrack(node);
+
+		const state = createMutableState({
+			slot: node as typeof node | undefined,
+			next: 0 as number | typeof node,
+		});
+
+		batch(() => {
+			delete state.slot;
+		});
+
+		unsafeTrack(node, false);
+
+		expect(() => {
+			batch(() => {
+				state.next = node;
+				(state.next as { nested: object }).nested = new Map<string, number>([["k", 1]]);
+			});
+		}).toThrow("cannot be tracked");
+	});
 });

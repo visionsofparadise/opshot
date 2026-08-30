@@ -1,5 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "./identity";
+import { isIgnored } from "./ignore";
 import { peelReadProxy } from "./peelReadProxy";
 import { isUnsafeMarked } from "./unsafeTrack";
 import { walkDataEntries, type DataEntry } from "./utils/dataEntries";
@@ -144,6 +145,8 @@ const walkSlots = (
 
 		for (const entry of walkDataEntries(carriedCurrent)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			if (isIgnored(entry.value)) continue;
 
 			const child: unknown = Reflect.get(current, entry.key);
 

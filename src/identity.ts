@@ -25,6 +25,13 @@ export function getRegisteredTarget(copy: object): object | undefined {
 	return targetRegistry.get(copy);
 }
 
+export const storageIdentityOf = (value: object): object => {
+	const registered = targetRegistry.get(value);
+	const object = registered ?? value;
+
+	return proxyStateMap.get(object)?.[0] ?? object;
+};
+
 export const registerReadProxyTarget = (readProxy: object, target: object): void => {
 	readProxyTargets.set(readProxy, target);
 };

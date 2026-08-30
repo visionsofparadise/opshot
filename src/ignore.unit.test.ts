@@ -362,6 +362,28 @@ describe("ignore", () => {
 		]);
 	});
 
+	it("leaves an existing edge tracked when ignore is called on the proxy after assignment", () => {
+		const state = createMutableState({ box: { n: 1 }, tick: 0 });
+		const heard = new Array<Array<Operation>>();
+
+		subscribe(state, (ops) => heard.push([...ops]));
+
+		ignore(state.box);
+
+		batch(() => {
+			state.box.n = 2;
+			state.tick = 1;
+		});
+
+		expect(shapeOps(heard[0] ?? [])).toEqual([
+			{
+				do: { verb: "assign", path: ["box", "n"], value: 2 },
+				undo: { verb: "assign", path: ["box", "n"], value: 1 },
+			},
+			{ do: { verb: "assign", path: ["tick"], value: 1 }, undo: { verb: "assign", path: ["tick"], value: 0 } },
+		]);
+	});
+
 	it("returns a primitive or null unmarked", () => {
 		expect(ignore(5)).toBe(5);
 		expect(ignore(null)).toBe(null);

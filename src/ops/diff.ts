@@ -1,5 +1,6 @@
 import { isTrackedEdge } from "../edges";
 import { isSameIdentity } from "../identity";
+import { isIgnored } from "../ignore";
 import { internedIdOf, internNode, internSubtree } from "../intern";
 import { dataEntryValuesOf, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
@@ -258,6 +259,8 @@ const internIdsOfSubtree = (handle: Handle, node: object): Array<number> | undef
 
 		for (const entry of walkDataEntries(current)) {
 			if (typeof entry.value !== "object" || entry.value === null) continue;
+
+			if (isIgnored(entry.value)) continue;
 
 			walk(entry.value);
 		}

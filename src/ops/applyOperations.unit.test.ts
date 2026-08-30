@@ -1012,6 +1012,8 @@ describe("applyOperations: link halves", () => {
 		expect(origin.box).toEqual({ a: { n: 1 }, odd: { o: 1 }, b: { n: 2 } });
 		expect(namedNodesOf(origin).map((node) => internId(origin, node))).toEqual(admitted);
 		expect(internedIdOf(originHandle, origin.box!.odd)).toBeUndefined();
+		expect(internId(replica, replica.box!)).toBe(admitted[0]);
+		expect(internId(replica, replica.box!.a)).toBe(admitted[1]);
 		expect(originHandle.nextInternId).toBeGreaterThanOrEqual(minted);
 	});
 

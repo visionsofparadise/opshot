@@ -1,9 +1,11 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { hasInEdge } from "../edges";
 import { isIgnored } from "../ignore";
 import { bindVisitedOccupancy, markDirtyPath, type OccupancyVisit } from "../occupancy";
 import { isUnsafeMarked } from "../unsafeTrack";
 import { segmentFor, walkDataEntries } from "../utils/dataEntries";
 import { admissionLane } from "../valtio/classify";
+import { internedOccupied } from "./internedOccupancy";
 import { appendOperationPath, type OperationPath } from "./path";
 import { isObjectLike } from "./predicates";
 import type { DirtyIndex, Handle } from "../handle";
@@ -40,7 +42,13 @@ export const admitStep = (
 	const key = path[path.length - 1];
 	const liveChild: unknown =
 		isObjectLike(liveParent) && key !== undefined ? (Reflect.get(liveParent, key) as unknown) : undefined;
-	const ignored = isIgnoredValue(liveChild);
+	const held =
+		handle !== undefined &&
+		isObjectLike(liveParent) &&
+		isObjectLike(liveChild) &&
+		key !== undefined &&
+		hasInEdge(handle, liveChild, liveParent, key);
+	const ignored = isIgnoredValue(liveChild) && !held;
 
 	if (handle === undefined || key === undefined) {
 		return { visit: "continue", ignored, liveChild };
@@ -79,23 +87,24 @@ export const admitDescendants = (
 
 	visits.add(nodeKey);
 
-	if (isIgnored(liveNode)) return;
+	if (isIgnored(liveNode) && !internedOccupied(handle, liveNode)) return;
 
 	const nodeUnsafe = unsafe || handle.nodes.get(nodeKey)?.exempt === true;
 
 	for (const entry of walkDataEntries(liveNode)) {
 		if (typeof entry.value !== "object" || entry.value === null) continue;
 
-		if (isIgnored(entry.value)) continue;
+		const childKey = segmentFor(liveNode, entry.key);
 
-		const key = segmentFor(liveNode, entry.key);
-		const childPath = appendOperationPath(path, key);
+		if (isIgnored(entry.value) && !hasInEdge(handle, entry.value, liveNode, childKey)) continue;
+
+		const childPath = appendOperationPath(path, childKey);
 		const childUnsafe = nodeUnsafe || isUnsafeMarked(entry.value) || isUnsafeMarked(rawTargetOf(entry.value));
 		const visit = bindVisitedOccupancy(handle, childPath, liveNode, entry.key, entry.value, childUnsafe);
 
 		if (visit !== "continue") continue;
 
-		admitDescendants(handle, childPath, visits, Reflect.get(liveNode, key) as unknown, childUnsafe);
+		admitDescendants(handle, childPath, visits, Reflect.get(liveNode, entry.key) as unknown, childUnsafe);
 	}
 };
 

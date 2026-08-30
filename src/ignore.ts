@@ -1,3 +1,5 @@
+import { storageIdentityOf } from "./identity";
+
 const ignored = new WeakSet<object>();
 
 /**
@@ -11,10 +13,10 @@ const ignored = new WeakSet<object>();
 export function ignore<T>(value: T, on = true): T {
 	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
 
-	if (on) ignored.add(value);
-	else ignored.delete(value);
+	if (on) ignored.add(storageIdentityOf(value));
+	else ignored.delete(storageIdentityOf(value));
 
 	return value;
 }
 
-export const isIgnored = (value: object): boolean => ignored.has(value);
+export const isIgnored = (value: object): boolean => ignored.has(storageIdentityOf(value));

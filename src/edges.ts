@@ -37,16 +37,17 @@ export function addInEdge(handle: Handle, node: object, parent: object, key: str
 	const rawParent = rawOf(parent);
 	let record = handle.nodes.get(rawNode);
 
-	if (record === undefined) {
-		const parentRecord = handle.nodes.get(rawParent);
+	const parentRecord = handle.nodes.get(rawParent);
+	const exempt = isUnsafeMarked(rawNode) || parentRecord?.exempt === true;
 
+	if (record === undefined) {
 		record = {
 			edges: [],
 			id: undefined,
-			exempt: isUnsafeMarked(rawNode) || parentRecord?.exempt === true,
+			exempt,
 		};
 		handle.nodes.set(rawNode, record);
-	}
+	} else if (record.edges.length === 0) record.exempt = exempt;
 
 	internNode(handle, node);
 
@@ -56,14 +57,24 @@ export function addInEdge(handle: Handle, node: object, parent: object, key: str
 	registerHandle(rawNode, handle);
 }
 
-export function hasOtherRoutes(handle: Handle, node: object, parent: object, key: string | number): boolean {
+export function hasInEdge(handle: Handle, node: object, parent: object, key: string | number): boolean {
 	const edges = handle.nodes.get(rawOf(node))?.edges;
 
 	if (edges === undefined) return false;
 
 	const rawParent = rawOf(parent);
 
-	return edges.some((edge) => rawOf(edge.parent) !== rawParent || edge.key !== key);
+	return edges.some((edge) => rawOf(edge.parent) === rawParent && edge.key === key);
+}
+
+export function hasOtherRoutes(handle: Handle, node: object, parent: object, key: string | number): boolean {
+	const edges = handle.nodes.get(rawOf(node))?.edges;
+
+	if (edges === undefined || edges.length === 0) return false;
+
+	if (edges.length === 1) return !hasInEdge(handle, node, parent, key);
+
+	return true;
 }
 
 export function removeInEdge(

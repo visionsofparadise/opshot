@@ -1,4 +1,5 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
+import { hasInEdge } from "./edges";
 import { getRegisteredTarget } from "./identity";
 import { isIgnored } from "./ignore";
 import { internNode } from "./intern";
@@ -30,7 +31,8 @@ export function bindVisitedOccupancy(
 ): OccupancyVisit {
 	if (path.length === 0) return "continue";
 
-	if (typeof child === "object" && child !== null && isIgnored(child)) return "skip";
+	if (typeof child === "object" && child !== null && isIgnored(child) && !hasInEdge(handle, child, parent, key))
+		return "skip";
 
 	const parentRaw = liveOf(parent);
 	const occupancyKey = occupancyKeyOf(key);
@@ -118,8 +120,12 @@ const walkLiveOccupancies = (handle: Handle): void => {
 	const root = handle.proxy.root;
 	const visits = new Set<object>();
 
-	const walk = (node: object, path: OperationPath): void => {
-		if (isIgnored(node)) return;
+	const walk = (node: object, path: OperationPath, parent?: object, parentKey?: string | number): void => {
+		if (
+			isIgnored(node) &&
+			(parent === undefined || parentKey === undefined || !hasInEdge(handle, node, parent, parentKey))
+		)
+			return;
 
 		internNode(handle, node);
 
@@ -132,9 +138,16 @@ const walkLiveOccupancies = (handle: Handle): void => {
 		const nodeExempt = handle.nodes.get(nodeRaw)?.exempt === true;
 
 		for (const entry of walkDataEntries(node)) {
-			if (typeof entry.value === "object" && entry.value !== null && isIgnored(entry.value)) continue;
-
 			const key = segmentFor(node, entry.key);
+
+			if (
+				typeof entry.value === "object" &&
+				entry.value !== null &&
+				isIgnored(entry.value) &&
+				!hasInEdge(handle, entry.value, node, key)
+			)
+				continue;
+
 			const childPath = appendOperationPath(path, key);
 			const childUnsafe =
 				nodeExempt ||
@@ -145,7 +158,7 @@ const walkLiveOccupancies = (handle: Handle): void => {
 
 			if (visit !== "continue") continue;
 
-			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value, childPath);
+			if (typeof entry.value === "object" && entry.value !== null) walk(entry.value, childPath, node, key);
 		}
 	};
 
