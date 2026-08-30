@@ -41,7 +41,7 @@ const commitName = (handle: Handle, raw: object, id: number): void => {
 };
 
 /**
- * Interns `node` on `handle`, minting an id on first admission. Undo of a departure rebinds via the `ids` override on the assign half, the one carried naming fact.
+ * Interns `node` on `handle`, minting an id on first admission. Undo of a departure rebinds via the `ids` the assign half carries.
  *
  * @param handle - State handle.
  * @param node - Node to intern.

@@ -95,10 +95,10 @@ const Player = () => {
 	const player: PlayerState = useMutableState({
 		position: 0,
 
-		// ignore() on a value in the factory argument makes the edge at that path untracked.
+		// ignore() marks an object; every edge to it is untracked in every state.
 		element: ignore(new Audio()),
 
-		// unsafeTrack() on a value in the factory argument disables strict at and under that path.
+		// unsafeTrack() marks an object; a node entering while marked, or entering beneath it, is exempt from strict.
 		queue: unsafeTrack(new Playlist()),
 
 		seek(position: number) {
@@ -127,7 +127,7 @@ It can't track:
 
 `strict: true` throws at a dangerous edge, at the cause.
 
-Use `ignore` on a value in the factory argument to make the edge at that path untracked. Use `unsafeTrack` on a value in the factory argument to disable strict at and under that path.
+`ignore(value)` marks an object; every edge to it is untracked in every state. `ignore(value, false)` clears the mark. Marking or clearing changes no existing edge. `unsafeTrack(value)` marks an object so a node entering a state while marked, or entering beneath an exempt node, is exempt from strict.
 
 ## Tracked collections
 
@@ -189,7 +189,7 @@ interface Operation {
 }
 ```
 
-Ids vend in admission-walk order over the emitted artifact; a departure's undo assign may carry `ids` to rebind that walk, the one naming fact construction cannot re-derive. `applyOperations` puts them back on a state, so a history is a list of ops and an undo is `applyOperations` with `"undo"`.
+`ids` on an assign half and `ref` on a link half carry intern ids. Assigning a node into a state it currently occupies keeps its identity. `applyOperations` puts ops back on a state; undo is `applyOperations` with `"undo"`.
 
 ```tsx
 import { useEffect, useRef } from "react";
@@ -262,32 +262,21 @@ const Editor = () => {
 };
 ```
 
-## Channels
+## Batches
 
-A channel binds `transact`, `subscribe`, and `applyOperations` to a typed meta convention, so a listener can tell its own writes from everyone else's.
+`batch` runs its callback synchronously. Writes inside it reach subscribers as one emission carrying the batch's meta. A state's pending ordinary Writes emit first. Nested batches each deliver their own writes with their own meta. A throwing callback emits its completed writes, then rethrows. The emitted undo halves are the consumer's rollback.
 
 ```tsx
 import { useEffect } from "react";
-import { createChannel, useMutableState } from "opshot";
-
-interface DocumentMeta {
-	replay?: boolean;
-	source?: string;
-}
-
-const docChannel = createChannel<DocumentMeta>({ source: "editor" }); // set defaults
+import { batch, subscribe, useMutableState } from "opshot";
 
 const TitleBar = () => {
 	const doc = useMutableState({ title: "Untitled" });
 
 	useEffect(
 		() =>
-			docChannel.subscribe(doc, (ops, context) => {
-				// A bare write, or a transact from another channel: meta is unknown.
-				if (!context.isTransaction) return;
-
-				// Own-channel transaction: meta is typed, with defaults merged.
-				if (context.meta.replay) return;
+			subscribe(doc, (ops, meta) => {
+				if (meta === "replay") return;
 
 				// ...
 			}),
@@ -295,9 +284,12 @@ const TitleBar = () => {
 	);
 
 	const rename = () => {
-		docChannel.transact(doc, () => {
-			doc.title = "Draft";
-		});
+		batch(
+			() => {
+				doc.title = "Draft";
+			},
+			{ source: "editor" },
+		);
 	};
 
 	// ...

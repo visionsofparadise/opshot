@@ -25,7 +25,7 @@ export interface AssignMutation {
 	readonly value: unknown;
 
 	/**
-	 * Walk-ordered intern ids that override deterministic vending when this half re-admits departed material.
+	 * Intern ids minted at admission for this assigned tree; apply binds the ids the op carries.
 	 */
 	readonly ids?: ReadonlyArray<number>;
 }
@@ -163,12 +163,12 @@ export const isMutation = (value: unknown): value is Mutation =>
 export const getValueOriginal = (half: object): unknown => valueOriginals.get(half);
 
 /**
- * Creates an assign half. `ids` is the one carried naming fact: walk-ordered intern ids that override deterministic vending when this half re-admits departed material.
+ * Creates an assign half. `ids` are intern ids minted at admission for this assigned tree; apply binds the ids the op carries.
  *
  * @param path - Path to assign.
  * @param value - Value to assign.
  * @param original - Identity original, defaulting to `value`.
- * @param ids - Walk-ordered intern ids that override deterministic vending.
+ * @param ids - Intern ids this half carries for the assigned tree.
  * @returns The assign half.
  */
 export const createAssignMutation = (
