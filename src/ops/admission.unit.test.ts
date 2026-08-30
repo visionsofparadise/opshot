@@ -1,6 +1,6 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { createMutableState } from "../createMutableState";
-import { edgeStatusOf, hasOtherRoutes, isTrackedEdge } from "../edges";
+import { hasOtherRoutes, isTrackedEdge } from "../edges";
 import { requireHandle, type DirtyIndex } from "../handle";
 import { ignore } from "../ignore";
 import { internedOccupied } from "./internedOccupancy";
@@ -161,7 +161,7 @@ describe("admission", () => {
 
 		delete state.box;
 
-		expect(edgeStatusOf(handle, box).occupied).toBe(false);
+		expect(internedOccupied(handle, box)).toBe(false);
 	});
 
 	it("continues on an aliased node whose second route entered unsafe-marked", () => {
@@ -324,7 +324,6 @@ describe("admission", () => {
 		const raw = rawTargetOf(map);
 		const record = handle.nodes.get(raw);
 
-		expect(edgeStatusOf(handle, map).occupied).toBe(false);
 		expect(internedOccupied(handle, map)).toBe(false);
 		expect(record?.edges.length ?? 0).toBe(0);
 	});

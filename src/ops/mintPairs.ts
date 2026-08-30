@@ -3,7 +3,6 @@ import { internedOccupied } from "./internedOccupancy";
 import { createAssignMutation, createDeleteMutation, createLinkMutation, type Operation } from "./operation";
 import { isObjectLike } from "./predicates";
 import type { Handle } from "../handle";
-import type { CaptureTables } from "../occupancy";
 import type { OperationPath } from "./path";
 
 export const additionPair = (path: OperationPath, after: unknown, ids?: ReadonlyArray<number>): Operation => ({
@@ -11,9 +10,9 @@ export const additionPair = (path: OperationPath, after: unknown, ids?: Readonly
 	undo: createDeleteMutation(path),
 });
 
-export const removalPair = (path: OperationPath, before: unknown): Operation => ({
+export const removalPair = (path: OperationPath, before: unknown, ids?: ReadonlyArray<number>): Operation => ({
 	do: createDeleteMutation(path),
-	undo: createAssignMutation(path, before),
+	undo: createAssignMutation(path, before, before, ids),
 });
 
 export const linkUndo = (
@@ -21,12 +20,11 @@ export const linkUndo = (
 	before: unknown,
 	beforePresent: boolean,
 	handle: Handle | undefined,
-	capture?: CaptureTables,
 ): Operation["undo"] => {
 	if (!beforePresent) return createDeleteMutation(path);
 
-	if (handle !== undefined && isObjectLike(before) && internedOccupied(handle, before, capture)) {
-		const id = internedIdOf(handle, before, capture);
+	if (handle !== undefined && isObjectLike(before) && internedOccupied(handle, before)) {
+		const id = internedIdOf(handle, before);
 
 		if (id !== undefined) return createLinkMutation(path, id);
 	}
@@ -40,10 +38,9 @@ export const linkOperation = (
 	before: unknown,
 	beforePresent: boolean,
 	handle: Handle | undefined,
-	capture?: CaptureTables,
 ): Operation => ({
 	do: createLinkMutation(path, ref),
-	undo: linkUndo(path, before, beforePresent, handle, capture),
+	undo: linkUndo(path, before, beforePresent, handle),
 });
 
 export const changePair = (
@@ -51,9 +48,8 @@ export const changePair = (
 	before: unknown,
 	after: unknown,
 	handle: Handle | undefined,
-	capture?: CaptureTables,
 	ids?: ReadonlyArray<number>,
 ): Operation => ({
 	do: createAssignMutation(path, after, after, ids),
-	undo: linkUndo(path, before, true, handle, capture),
+	undo: linkUndo(path, before, true, handle),
 });

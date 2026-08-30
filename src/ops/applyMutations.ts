@@ -1,6 +1,6 @@
 import { isTrackedEdge } from "../edges";
 import { getRegisteredTarget, resolveIdentity } from "../identity";
-import { bindVendedIds, internSubtree, nodeOfInternedId, rewindAdmission } from "../intern";
+import { bindVendedIds, internSubtree, nodeOfInternedId } from "../intern";
 import { walkDataEntries } from "../utils/dataEntries";
 import { cloneValue } from "./cloneValue";
 import { getValueOriginal, type AssignMutation, type LinkMutation, type Mutation, type Operation } from "./operation";
@@ -185,7 +185,7 @@ const applyLink = (root: object, operation: LinkMutation, handle: Handle): void 
 
 	if (path.length === 0) throw linkError(path, ref, "does not resolve to a supported operation address");
 
-	const resolved = nodeOfInternedId(handle, ref, undefined);
+	const resolved = nodeOfInternedId(handle, ref);
 
 	if (resolved === undefined) throw linkError(path, ref, "does not resolve");
 
@@ -272,10 +272,10 @@ const applyPlain = (
 
 	if (operation.ids !== undefined) {
 		if (isObjectLike(payload.recorded)) {
-			bindVendedIds(handle, attached, payload.recorded, operation.ids, undefined, parent, key);
+			bindVendedIds(handle, attached, payload.recorded, operation.ids, parent, key);
 		}
 	} else {
-		internSubtree(handle, attached, (_parent, entry) => !isTrackedEdge(entry), undefined);
+		internSubtree(handle, attached, (_parent, entry) => !isTrackedEdge(entry));
 	}
 };
 
@@ -304,28 +304,6 @@ export function applyMutations(
 		return;
 	}
 
-	const occupantAt = (path: Operation["undo"]["path"]): unknown => {
-		let current: unknown = root;
-
-		for (const segment of path) {
-			if (!isObjectLike(current)) return undefined;
-
-			current = Reflect.get(current, segment);
-		}
-
-		return current;
-	};
-
-	const admittedRoots = new Array<object>();
-
-	for (const operation of operations) {
-		if (operation.do.verb !== "assign" || !isObjectLike(operation.do.value)) continue;
-
-		const occupant = occupantAt(operation.undo.path);
-
-		if (isObjectLike(occupant)) admittedRoots.push(occupant);
-	}
-
 	for (let index = operations.length - 1; index >= 0; index--) {
 		const operation = operations[index];
 
@@ -333,12 +311,4 @@ export function applyMutations(
 
 		applyMutation(root, operation.undo, identity, handle);
 	}
-
-	const idSet = new Set<number>();
-
-	for (const node of admittedRoots) {
-		for (const id of rewindAdmission(handle, node)) idSet.add(id);
-	}
-
-	while (idSet.has(handle.nextInternId - 1)) handle.nextInternId -= 1;
 }

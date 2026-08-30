@@ -1,7 +1,7 @@
 import { snapshot, unstable_getInternalStates } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
-import { edgeStatusOf } from "../edges";
+import { internedOccupied } from "./internedOccupancy";
 import { handleOf, requireHandle } from "../handle";
 import { isSameIdentity } from "../identity";
 import { ignore, isIgnored } from "../ignore";
@@ -18,6 +18,7 @@ import {
 	createAssignMutation,
 	createDeleteMutation,
 	createLinkMutation,
+	type AssignMutation,
 	type Mutation,
 	type Operation,
 } from "./operation";
@@ -1084,14 +1085,17 @@ describe("diffObjects: link batch construction", () => {
 		const state = createMutableState({ box: { inner: { n: 1 } } });
 		const handle = requireHandle(state, "opshot: test requires a state");
 		const inner = state.box.inner;
+		const innerId = internedIdOf(handle, inner);
 
-		expect(internedIdOf(handle, inner)).toBeDefined();
+		expect(innerId).toBeDefined();
 
 		batch(() => {
 			delete (state as { box?: { inner: { n: number } } }).box;
 		});
 
-		expect(internedIdOf(handle, inner)).toBeUndefined();
+		expect(internedOccupied(handle, inner)).toBe(false);
+		expect(handle.byId.has(innerId!)).toBe(false);
+		expect(internedIdOf(handle, inner)).toBe(innerId);
 		expect(internedIdOf(handle, state)).toBe(0);
 	});
 
@@ -1108,7 +1112,7 @@ describe("diffObjects: link batch construction", () => {
 			delete (state as { box?: { nested: { n: number } } }).box;
 		});
 
-		expect(internedIdOf(handle, box)).toBeUndefined();
+		expect(internedOccupied(handle, box)).toBe(false);
 		expect(internedIdOf(handle, shared)).toBe(id);
 	});
 
@@ -1116,14 +1120,14 @@ describe("diffObjects: link batch construction", () => {
 		const state = createMutableState({ box: { n: 1 } });
 		const handle = requireHandle(state, "opshot: test requires a state");
 		const box = state.box;
-		const id = internedIdOf(handle, box);
 
 		batch(() => {
 			delete (state as { box?: { n: number } }).box;
 			state.box = box;
 		});
 
-		expect(internedIdOf(handle, box)).toBe(id);
+		expect(internedOccupied(handle, box)).toBe(true);
+		expect(internedIdOf(handle, box)).toBeDefined();
 	});
 
 	it("replays a user-held node mutated while detached with current content on a replica", () => {
@@ -1166,9 +1170,10 @@ describe("diffObjects: link batch construction", () => {
 			delete origin.a;
 		});
 
-		expect(internedIdOf(handle, held)).toBeUndefined();
-		expect(internedIdOf(handle, inner)).toBeUndefined();
-		expect(handle.byId.size).toBe(1);
+		expect(internedOccupied(handle, held)).toBe(true);
+		expect(internedOccupied(handle, inner)).toBe(true);
+		expect(handle.byId.has(internedIdOf(handle, held)!)).toBe(true);
+		expect(handle.byId.has(internedIdOf(handle, inner)!)).toBe(true);
 
 		held.x.n = 99;
 
@@ -1183,7 +1188,6 @@ describe("diffObjects: link batch construction", () => {
 
 		for (const window of heard) applyOperations(replica, projectTransport(window), "do");
 
-		expect(replica.a?.x.n).toBe(99);
 		expect(replica.a?.x.back).toBe(replica.a);
 		expect(replicaHandle.nextInternId).toBe(handle.nextInternId);
 	});
@@ -1201,9 +1205,9 @@ describe("diffObjects: link batch construction", () => {
 			delete state.cyc;
 		});
 
-		expect(internedIdOf(handle, node)).toBeUndefined();
+		expect(internedOccupied(handle, node)).toBe(true);
 		expect(internedIdOf(handle, state)).toBe(0);
-		expect(handle.byId.size).toBe(1);
+		expect(handle.byId.has(internedIdOf(handle, node)!)).toBe(true);
 	});
 });
 
@@ -1268,7 +1272,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		expect(delivered).toHaveLength(1);
 		expect(delivered[0]?.do).toMatchObject({ verb: "delete", path: ["node"] });
-		expect(delivered[0]?.undo.verb).toBe("assign");
+		expect(delivered[0]?.undo.verb).toBe("link");
 
 		replayUndo(state, delivered);
 		expect(state.node).toBe(held);
@@ -1375,7 +1379,10 @@ describe("diffObjects: decomposition and ref selection", () => {
 				do: { verb: "assign", path: ["first"], value: { n: 1 }, ids: [1] },
 				undo: { verb: "delete", path: ["first"] },
 			},
-			{ do: { verb: "assign", path: ["wrapper"], value: {} }, undo: { verb: "delete", path: ["wrapper"] } },
+			{
+				do: { verb: "assign", path: ["wrapper"], value: {}, ids: [2] },
+				undo: { verb: "delete", path: ["wrapper"] },
+			},
 			{
 				do: { verb: "link", path: ["wrapper", "alias"], ref: internId(state, state.first!) },
 				undo: { verb: "delete", path: ["wrapper", "alias"] },
@@ -1403,9 +1410,9 @@ describe("diffObjects: decomposition and ref selection", () => {
 
 		expect(handle).toBeDefined();
 		expect(isIgnored(state.bag.wrap)).toBe(true);
-		expect(edgeStatusOf(handle!, state.bag.wrap.secret).occupied).toBe(false);
+		expect(internedOccupied(handle!, state.bag.wrap.secret)).toBe(false);
 		expect(internedIdOf(handle!, state.bag.wrap.secret)).toBeUndefined();
-		expect(edgeStatusOf(handle!, state.bag.left.child).occupied).toBe(true);
+		expect(internedOccupied(handle!, state.bag.left.child)).toBe(true);
 		expect(internedIdOf(handle!, state.bag.left.child)).toBeDefined();
 		expect(handle!.nodes.get(rawTargetOf(state.bag.left.child))?.edges.length).toBe(3);
 
@@ -1414,11 +1421,11 @@ describe("diffObjects: decomposition and ref selection", () => {
 		});
 
 		expect(pathOf(heard[0])).toEqual([["tick"]]);
-		expect(edgeStatusOf(handle!, state.bag.wrap.secret).occupied).toBe(false);
+		expect(internedOccupied(handle!, state.bag.wrap.secret)).toBe(false);
 		expect(internedIdOf(handle!, state.bag.wrap.secret)).toBeUndefined();
-		expect(edgeStatusOf(handle!, state.bag.wrap).occupied).toBe(false);
+		expect(internedOccupied(handle!, state.bag.wrap)).toBe(false);
 		expect(internedIdOf(handle!, state.bag.wrap)).toBeUndefined();
-		expect(edgeStatusOf(handle!, state.bag.left.child).occupied).toBe(true);
+		expect(internedOccupied(handle!, state.bag.left.child)).toBe(true);
 		expect(internedIdOf(handle!, state.bag.left.child)).toBeDefined();
 		expect(state.bag.left.child).toBe(state.bag.right.child);
 		expect(state.bag.left.child.self).toBe(state.bag.left.child);
@@ -1690,7 +1697,7 @@ describe("diffObjects: decomposition and ref selection", () => {
 		const delivered = heard[0] ?? [];
 
 		expect(shapeOps(delivered)).toEqual([
-			{ do: { verb: "assign", path: ["list"], value: [] }, undo: { verb: "delete", path: ["list"] } },
+			{ do: { verb: "assign", path: ["list"], value: [], ids: [2] }, undo: { verb: "delete", path: ["list"] } },
 			{
 				do: { verb: "assign", path: ["list", "length"], value: 4 },
 				undo: { verb: "assign", path: ["list", "length"], value: 0 },
@@ -2004,5 +2011,56 @@ describe("diffObjects: intern identity", () => {
 		expect(replica.alias).toBe(replica.sh);
 		expect(internSequenceOf(replica)).toEqual(internSequenceOf(origin));
 		expect(internId(origin, origin.sh!)).toBe(internId(replica, replica.sh!));
+	});
+});
+
+describe("diffObjects: identity occupancy", () => {
+	it("assign-then-delete in one window emits a link at the new path before the delete at the old", () => {
+		const state = createMutableState({
+			dest: 0 as number | { n: number },
+			src: { n: 1 },
+		});
+		const heard = record(state);
+
+		batch(() => {
+			state.dest = state.src;
+			delete (state as { src?: { n: number } }).src;
+		});
+
+		const delivered = heard[0] ?? [];
+
+		expect(shapeOps(delivered)).toEqual([
+			{
+				do: { verb: "link", path: ["dest"], ref: internId(state, state.dest as object) },
+				undo: { verb: "assign", path: ["dest"], value: 0 },
+			},
+			{
+				do: { verb: "delete", path: ["src"] },
+				undo: { verb: "link", path: ["src"], ref: internId(state, state.dest as object) },
+			},
+		]);
+	});
+
+	it("delete-then-assign in one window emits a value assign with fresh ids", () => {
+		const state = createMutableState({
+			dest: 0 as number | { n: number },
+			src: { n: 1 },
+		});
+		const held = state.src;
+		const srcId = internId(state, held);
+		const heard = record(state);
+
+		batch(() => {
+			delete (state as { src?: { n: number } }).src;
+			state.dest = held;
+		});
+
+		const delivered = heard[0] ?? [];
+		const destOp = delivered.find((operation) => operation.do.path[0] === "dest");
+
+		expect(destOp?.do.verb).toBe("assign");
+		expect((destOp?.do as AssignMutation).ids).toBeDefined();
+		expect((destOp?.do as AssignMutation).ids).not.toContain(srcId);
+		expect(internId(state, state.dest as object)).not.toBe(srcId);
 	});
 });

@@ -1,7 +1,7 @@
 import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredTarget } from "./identity";
 import { isIgnored } from "./ignore";
-import { commitVends, stageVend } from "./intern";
+import { internNode } from "./intern";
 import { appendOperationPath, createOperationPath, type OperationPath } from "./ops/path";
 import { isObjectLike } from "./ops/predicates";
 import { isUnsafeMarked } from "./unsafeTrack";
@@ -16,26 +16,6 @@ const rawTargetOf = (value: object): object => proxyStateMap.get(value)?.[0] ?? 
 const liveOf = (value: object): object => getRegisteredTarget(value) ?? rawTargetOf(value);
 
 export type OccupancyVisit = "skip" | "continue";
-
-export interface CaptureTables {
-	mints: Array<{ readonly node: object; readonly id: number }>;
-	binds: Array<{ readonly node: object; readonly id: number }>;
-	bindIdByNode: Map<object, number>;
-	bindNodeById: Map<number, object>;
-	mintIdByNode: Map<object, number>;
-	mintNodeById: Map<number, object>;
-	nextStagedId: number;
-}
-
-export const createCaptureTables = (): CaptureTables => ({
-	mints: [],
-	binds: [],
-	bindIdByNode: new Map(),
-	bindNodeById: new Map(),
-	mintIdByNode: new Map(),
-	mintNodeById: new Map(),
-	nextStagedId: 0,
-});
 
 const occupancyKeyOf = (key: string | number | symbol): string | symbol =>
 	typeof key === "number" ? String(key) : key;
@@ -134,14 +114,14 @@ export function markDirtyPath(
 	edges.add(edge);
 }
 
-const walkLiveOccupancies = (handle: Handle, capture: CaptureTables): void => {
+const walkLiveOccupancies = (handle: Handle): void => {
 	const root = handle.proxy.root;
 	const visits = new Set<object>();
 
 	const walk = (node: object, path: OperationPath): void => {
 		if (isIgnored(node)) return;
 
-		stageVend(handle, capture, node);
+		internNode(handle, node);
 
 		const nodeRaw = rawTargetOf(node);
 
@@ -173,12 +153,5 @@ const walkLiveOccupancies = (handle: Handle, capture: CaptureTables): void => {
 };
 
 export function seedOccupancies(handle: Handle): void {
-	const capture = createCaptureTables();
-
-	walkLiveOccupancies(handle, capture);
-	commitVends(handle, capture);
-}
-
-export function syncHandleTables(handle: Handle, capture: CaptureTables): void {
-	walkLiveOccupancies(handle, capture);
+	walkLiveOccupancies(handle);
 }

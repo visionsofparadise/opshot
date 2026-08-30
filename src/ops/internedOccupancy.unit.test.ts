@@ -1,8 +1,6 @@
 import { createMutableState } from "../createMutableState";
-import { edgeStatusOf } from "../edges";
 import { requireHandle } from "../handle";
-import { internedIdOf, stageVend } from "../intern";
-import { createCaptureTables } from "../occupancy";
+import { internedIdOf } from "../intern";
 import { internedOccupied, liveOf, occupancyNodeOf } from "./internedOccupancy";
 
 describe("internedOccupancy", () => {
@@ -48,21 +46,6 @@ describe("internedOccupancy", () => {
 		delete state.box;
 
 		expect(internedIdOf(handle, box)).toBeDefined();
-		expect(edgeStatusOf(handle, box).occupied).toBe(false);
 		expect(internedOccupied(handle, box)).toBe(false);
-	});
-
-	it("consults capture-staged ids without treating an unoccupied staged node as interned-occupied", () => {
-		const state = createMutableState({ box: { n: 1 } });
-		const handle = requireHandle(state, "opshot: test requires a state");
-		const capture = createCaptureTables();
-		const outsider = { n: 2 };
-		const staged = stageVend(handle, capture, outsider);
-
-		expect(internedOccupied(handle, state.box, capture)).toBe(true);
-		expect(internedIdOf(handle, outsider, capture)).toBe(staged);
-		expect(internedIdOf(handle, outsider)).toBeUndefined();
-		expect(edgeStatusOf(handle, outsider).occupied).toBe(false);
-		expect(internedOccupied(handle, outsider, capture)).toBe(false);
 	});
 });

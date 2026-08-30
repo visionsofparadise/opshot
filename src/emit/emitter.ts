@@ -1,7 +1,5 @@
 import { snapshot, subscribe as valtioSubscribe } from "valtio/vanilla";
 import { getRegisteredTarget, registerSnapshotCopy } from "../identity";
-import { annotateDepartureUndos, commitVends, evictDepartedClusters } from "../intern";
-import { createCaptureTables, syncHandleTables } from "../occupancy";
 import { diffObjects } from "../ops/diff";
 import { stampOperation } from "../ops/operation";
 import { carriedOwnKeysOf } from "../utils/dataEntries";
@@ -9,7 +7,6 @@ import { admissionLane } from "../valtio/classify";
 import { drainDeliveries, enqueueDelivery, prepareDelivery, type PendingDelivery } from "./emitterDeliver";
 import { targetOf } from "./emitterRegistry";
 import type { DirtyIndex, Handle } from "../handle";
-import type { CaptureTables } from "../occupancy";
 import type { Operation } from "../ops/operation";
 
 export type CapturedRange = PendingDelivery | undefined;
@@ -133,24 +130,18 @@ interface CaptureDiff {
 	readonly to: object;
 	readonly ops: Array<Operation>;
 	readonly dirty: DirtyIndex;
-	readonly capture: CaptureTables;
 }
 
-const captureDiffOf = (handle: Handle, from: object, capture: CaptureTables): CaptureDiff => {
+const captureDiffOf = (handle: Handle, from: object): CaptureDiff => {
 	const to = snapshot(handle.proxy.root);
 	const dirty: DirtyIndex = { edges: new WeakMap(), nodes: new WeakSet() };
 
-	if (from === to) {
-		syncHandleTables(handle, capture);
-
-		return { to, ops: [], dirty, capture };
-	}
+	if (from === to) return { to, ops: [], dirty };
 
 	return {
 		to,
-		ops: diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty, capture),
+		ops: diffObjects(reconcileUntracked(from, handle.proxy.root, new WeakSet()), to, handle, dirty),
 		dirty,
-		capture,
 	};
 };
 
@@ -158,16 +149,11 @@ const captureRange = (handle: Handle, meta: unknown): CapturedRange => {
 	handle.hasPendingWrites = false;
 
 	const from = handle.lastSnapshot;
-	const capture = createCaptureTables();
-	const committed = captureDiffOf(handle, from, capture);
+	const committed = captureDiffOf(handle, from);
 	const ops = committed.ops;
 
-	commitVends(handle, committed.capture);
 	handle.lastSnapshot = committed.to;
-
-	const evicted = evictDepartedClusters(handle);
-
-	if (ops.length > 0) annotateDepartureUndos(handle, ops, evicted);
+	handle.internedThrough = handle.nextInternId - 1;
 
 	if (ops.length > 0 && !handle.replaying) {
 		for (const operation of ops) stampOperation(handle, operation);

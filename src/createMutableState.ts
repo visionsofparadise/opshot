@@ -85,6 +85,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		nodes: new WeakMap(),
 		byId: new Map(),
 		nextInternId: 1,
+		internedThrough: 0,
 		stamp: {},
 		version: 0,
 		replaying: false,
@@ -101,6 +102,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 	handle.lastSnapshot = requireObjectSnapshot(snapshot(instrumented.root));
 	seedInEdges(handle);
 	seedOccupancies(handle);
+	handle.internedThrough = handle.nextInternId - 1;
 	armWatch(handle);
 
 	return instrumented.root as T;

@@ -2,7 +2,7 @@ import { unstable_getInternalStates } from "valtio/vanilla";
 import { registerHandle, type Handle } from "./handle";
 import { getRegisteredTarget } from "./identity";
 import { isIgnored } from "./ignore";
-import { queueDeparture } from "./intern";
+import { internNode } from "./intern";
 import { isObjectLike } from "./ops/predicates";
 import { peelReadProxy } from "./peelReadProxy";
 import { isUnsafeMarked } from "./unsafeTrack";
@@ -32,42 +32,6 @@ export interface NodeRecord {
 	exempt: boolean;
 }
 
-const edgesOf = (handle: Handle, node: object): Array<InEdge> | undefined => handle.nodes.get(node)?.edges;
-
-const walkGroundedChains = (
-	handle: Handle,
-	node: object,
-	onGround: (pathFromRoot: ReadonlyArray<string | number>) => boolean,
-): void => {
-	const root = occupancyRootOf(handle);
-
-	const walk = (current: object, reverseKeys: ReadonlyArray<string | number>, pathVisited: Set<object>): boolean => {
-		if (current === root) return onGround([...reverseKeys].reverse());
-
-		if (pathVisited.has(current)) return false;
-
-		pathVisited.add(current);
-
-		const edges = edgesOf(handle, current);
-
-		if (edges !== undefined) {
-			for (const edge of edges) {
-				if (walk(rawOf(edge.parent), [...reverseKeys, edge.key], pathVisited)) {
-					pathVisited.delete(current);
-
-					return true;
-				}
-			}
-		}
-
-		pathVisited.delete(current);
-
-		return false;
-	};
-
-	walk(rawOf(node), [], new Set());
-};
-
 export function addInEdge(handle: Handle, node: object, parent: object, key: string | number): void {
 	const rawNode = rawOf(node);
 	const rawParent = rawOf(parent);
@@ -83,6 +47,8 @@ export function addInEdge(handle: Handle, node: object, parent: object, key: str
 		};
 		handle.nodes.set(rawNode, record);
 	}
+
+	internNode(handle, node);
 
 	if (record.edges.some((edge) => rawOf(edge.parent) === rawParent && edge.key === key)) return;
 
@@ -100,7 +66,13 @@ export function hasOtherRoutes(handle: Handle, node: object, parent: object, key
 	return edges.some((edge) => rawOf(edge.parent) !== rawParent || edge.key !== key);
 }
 
-export function removeInEdge(handle: Handle, node: object, parent: object, key: string | number): void {
+export function removeInEdge(
+	handle: Handle,
+	node: object,
+	parent: object,
+	key: string | number,
+	visited?: Set<object>,
+): void {
 	const rawNode = rawOf(node);
 	const rawParent = rawOf(parent);
 	const record = handle.nodes.get(rawNode);
@@ -113,24 +85,23 @@ export function removeInEdge(handle: Handle, node: object, parent: object, key: 
 
 	record.edges.splice(index, 1);
 
-	if (rawNode !== occupancyRootOf(handle)) queueDeparture(handle, rawNode);
-}
+	if (rawNode === occupancyRootOf(handle) || record.edges.length > 0) return;
 
-export function edgeStatusOf(handle: Handle, node: object): { occupied: boolean } {
-	const rawNode = rawOf(node);
-	const root = occupancyRootOf(handle);
+	const cascade = visited ?? new Set<object>();
 
-	if (rawNode === root) return { occupied: true };
+	if (cascade.has(rawNode)) return;
 
-	let occupied = false;
+	cascade.add(rawNode);
 
-	walkGroundedChains(handle, rawNode, () => {
-		occupied = true;
+	if (record.id !== undefined) handle.byId.delete(record.id);
 
-		return true;
-	});
+	for (const entry of walkDataEntries(rawNode)) {
+		if (typeof entry.value !== "object" || entry.value === null) continue;
 
-	return { occupied };
+		if (!isTrackedEdge(entry)) continue;
+
+		removeInEdge(handle, entry.value, rawNode, segmentFor(rawNode, entry.key), cascade);
+	}
 }
 
 export const isTrackedEdge = (entry: DataEntry): boolean => {

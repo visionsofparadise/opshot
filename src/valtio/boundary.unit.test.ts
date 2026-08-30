@@ -2,7 +2,7 @@ import { createProxy } from "proxy-compare";
 import { snapshot } from "valtio/vanilla";
 
 import { createMutableState } from "../createMutableState";
-import { edgeStatusOf } from "../edges";
+import { internedOccupied } from "../ops/internedOccupancy";
 import { applyOperations } from "../ops/applyOperations";
 import { handleOf } from "../handle";
 import { ignore } from "../ignore";
@@ -536,9 +536,7 @@ describe("boundary: in-edges", () => {
 
 		if (handle === undefined) throw new Error("expected a handle");
 
-		const status = edgeStatusOf(handle, state.box);
-
-		expect(status.occupied).toBe(true);
+		expect(internedOccupied(handle, state.box)).toBe(true);
 
 		batch(() => {
 			state.box.n = 2;
@@ -558,13 +556,13 @@ describe("boundary: in-edges", () => {
 
 		if (occupant === undefined) throw new Error("expected an occupant");
 
-		expect(edgeStatusOf(handle, occupant).occupied).toBe(true);
+		expect(internedOccupied(handle, occupant)).toBe(true);
 
 		batch(() => {
 			state.list.length = 0;
 		});
 
-		expect(edgeStatusOf(handle, occupant).occupied).toBe(false);
+		expect(internedOccupied(handle, occupant)).toBe(false);
 	});
 });
 

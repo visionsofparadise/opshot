@@ -1,12 +1,11 @@
 import { createMutableState } from "./createMutableState";
-import { edgeStatusOf } from "./edges";
 import { handleOf } from "./handle";
 import { internedIdOf } from "./intern";
-import { createCaptureTables, syncHandleTables } from "./occupancy";
+import { internedOccupied } from "./ops/internedOccupancy";
 import { unsafeTrack } from "./unsafeTrack";
 
 describe("occupancy re-sync", () => {
-	it("re-syncing an admitted-unsafe node keeps its intern id without an in-edge", () => {
+	it("an admitted-unsafe node keeps its intern id without an in-edge", () => {
 		const map = new Map<string, number>([["k", 1]]);
 		const state = createMutableState({ box: unsafeTrack(map) });
 		const handle = handleOf(state);
@@ -16,14 +15,8 @@ describe("occupancy re-sync", () => {
 		const internId = internedIdOf(handle!, map);
 
 		expect(internId).toBeDefined();
-		expect(edgeStatusOf(handle!, map).occupied).toBe(false);
-
-		const capture = createCaptureTables();
-
-		syncHandleTables(handle!, capture);
-
+		expect(internedOccupied(handle!, map)).toBe(false);
 		expect(internedIdOf(handle!, map)).toBe(internId);
-		expect(edgeStatusOf(handle!, map).occupied).toBe(false);
 		expect(state.box).toBeInstanceOf(Map);
 	});
 });

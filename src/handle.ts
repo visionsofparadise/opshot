@@ -31,6 +31,7 @@ export interface Handle {
 	nodes: WeakMap<object, NodeRecord>;
 	byId: Map<number, object>;
 	nextInternId: number;
+	internedThrough: number;
 	lastDirty?: DirtyIndex;
 	stamp: object;
 	version: number;

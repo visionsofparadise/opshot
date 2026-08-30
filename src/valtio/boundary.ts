@@ -1,11 +1,12 @@
 import { getUntracked } from "proxy-compare";
 import { proxy, unstable_getInternalStates, unstable_replaceInternalFunction } from "valtio/vanilla";
 import { commitBatchWrite, currentBatchFrame, prepareBatchWrite } from "../batch";
-import { addInEdge, edgeStatusOf, removeInEdge, seedInEdgesUnder } from "../edges";
+import { addInEdge, removeInEdge, seedInEdgesUnder } from "../edges";
 import { handlesOf, type Handle } from "../handle";
 import { getRegisteredTarget } from "../identity";
 import { isIgnored } from "../ignore";
 import { isPlainArray } from "../ops/cloneValue";
+import { internedOccupied } from "../ops/internedOccupancy";
 import { isCanonicalArrayIndexString } from "../ops/predicates";
 import { peelReadProxy } from "../peelReadProxy";
 import { isUnsafeMarked } from "../unsafeTrack";
@@ -150,7 +151,7 @@ const certifyCurrentAssignment = (target: object, prop: string | symbol, resolve
 	for (const handle of handlesOf(target)) {
 		if (!handle.strict) continue;
 
-		if (!edgeStatusOf(handle, target).occupied) continue;
+		if (!internedOccupied(handle, target)) continue;
 
 		const ignored = isIgnored(resolved);
 		const unsafe = handle.nodes.get(rawTargetOf(target))?.exempt === true || isUnsafeMarked(resolved);
@@ -282,8 +283,7 @@ const canProxyCurrentAssignment = (value: unknown): boolean => {
 	if (isMarkable(value) && isIgnored(value)) return false;
 
 	const parent = currentSetParentOf();
-	const handles =
-		parent === undefined ? [] : handlesOf(parent).filter((handle) => edgeStatusOf(handle, parent).occupied);
+	const handles = parent === undefined ? [] : handlesOf(parent).filter((handle) => internedOccupied(handle, parent));
 
 	if (handles.length === 0) return canProxy(value, parent);
 
@@ -356,19 +356,21 @@ const commitSetInEdges = (
 			continue;
 		}
 
-		if (previousObject !== undefined) removeInEdge(handle, previousObject, target, key);
+		if (nextObject !== undefined) {
+			const rawNext = rawTargetOf(nextObject);
+			const wasOccupied =
+				rawNext === rawTargetOf(handle.proxy.root) || (handle.nodes.get(rawNext)?.edges.length ?? 0) > 0;
 
-		if (nextObject === undefined) continue;
+			addInEdge(handle, nextObject, target, key);
 
-		const rawNext = rawTargetOf(nextObject);
-		const wasOccupied =
-			rawNext === rawTargetOf(handle.proxy.root) || (handle.nodes.get(rawNext)?.edges.length ?? 0) > 0;
+			if (!wasOccupied) seedInEdgesUnder(handle, nextObject);
+		}
 
-		addInEdge(handle, nextObject, target, key);
+		if (previousObject !== undefined) {
+			const sameOccupant = nextObject !== undefined && rawTargetOf(previousObject) === rawTargetOf(nextObject);
 
-		if (wasOccupied) continue;
-
-		seedInEdgesUnder(handle, nextObject);
+			if (!sameOccupant) removeInEdge(handle, previousObject, target, key);
+		}
 	}
 };
 
