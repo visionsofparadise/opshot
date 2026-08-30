@@ -400,7 +400,7 @@ describe("write-window classification", () => {
 	});
 });
 
-describe("reconcileUntracked", () => {
+describe("live-frozen occupants in lastSnapshot", () => {
 	const lastSnapshotOf = (state: object): object => {
 		const handle = handleOf(state);
 
