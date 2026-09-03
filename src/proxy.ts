@@ -1,13 +1,18 @@
-import { assertAdmissible } from "./admission";
 import { currentMeta } from "./batch";
 import { rejectionError } from "./boundaryErrors";
 import { classifyValue } from "./classify";
 import { attach, detach, evict, isTrackedEntry } from "./edges";
 import { recordOperation } from "./emit/window";
-import { handlesOf, proxyOf, recordOf, rawOf } from "./node";
-import { isUnsafeMarked } from "./unsafeTrack";
+import { membershipsOf, proxyOf, recordOf, rawOf, type Membership } from "./node";
 import { isObjectLike } from "./utils/predicates";
+import type { Handle } from "./handle";
 import type { DataEntry } from "./utils/dataEntries";
+
+interface MembershipWrite {
+	readonly handle: Handle;
+	readonly membership: Membership;
+	readonly hadKey: boolean;
+}
 
 const prototypeFunctionOf = (target: object, key: string | symbol): Function | undefined => {
 	for (let holder = Reflect.getPrototypeOf(target); holder !== null; holder = Reflect.getPrototypeOf(holder)) {
@@ -75,17 +80,12 @@ const truncatedOwnEntriesOf = (target: object, next: unknown): Array<DataEntry> 
 	return truncated;
 };
 
-const ownDataDescriptor = (
-	target: object,
-	key: string,
-): { hadPrevious: boolean; previous: unknown; writable: boolean } => {
+const ownDataDescriptor = (target: object, key: string): { hadPrevious: boolean; previous: unknown } => {
 	const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
 
-	if (descriptor === undefined || !("value" in descriptor)) {
-		return { hadPrevious: false, previous: undefined, writable: false };
-	}
+	if (descriptor === undefined || !("value" in descriptor)) return { hadPrevious: false, previous: undefined };
 
-	return { hadPrevious: true, previous: descriptor.value, writable: descriptor.writable === true };
+	return { hadPrevious: true, previous: descriptor.value };
 };
 
 export const handler: ProxyHandler<object> = {
@@ -117,42 +117,61 @@ export const handler: ProxyHandler<object> = {
 			return Reflect.set(target, key, value, receiver);
 		}
 
-		const { hadPrevious, previous, writable: previousWritable } = ownDataDescriptor(target, key);
+		const { hadPrevious, previous } = ownDataDescriptor(target, key);
 		const resolved: unknown = isObjectLike(value) ? rawOf(value) : value;
-		const handles = handlesOf(target);
+		const memberships: Array<MembershipWrite> = membershipsOf(target).map(([handle, membership]) => ({
+			handle,
+			membership,
+			hadKey: membership.keys.has(key),
+		}));
 		const truncated = key === "length" ? truncatedOwnEntriesOf(target, resolved) : [];
 		const previousLength = Array.isArray(target) ? target.length : undefined;
 
-		for (const handle of handles) {
-			const membership = recordOf(target)?.memberships.get(handle);
+		if (typeof resolved === "function" && memberships.some(({ membership }) => !membership.exempt)) {
+			const kind = classifyValue(target);
 
-			if (membership === undefined || membership.exempt) continue;
+			if (kind !== "plain" && kind !== "plainArray") throw rejectionError(target, kind, [key]);
+		}
 
-			if (isObjectLike(resolved) && typeof resolved !== "function") {
-				assertAdmissible(handle, resolved, [key], isUnsafeMarked(resolved));
-			} else if (typeof resolved === "function") {
-				const kind = classifyValue(target);
+		const incoming: object | undefined =
+			resolved !== previous && isTrackedEntry(resolved, true) ? resolved : undefined;
+		const started = new Array<MembershipWrite>();
 
-				if (kind !== "plain" && kind !== "plainArray") throw rejectionError(target, kind, [key]);
+		const rollBack = (attached: object): void => {
+			for (const { handle, membership, hadKey } of started) {
+				detach(handle, attached);
+
+				if (!hadKey) membership.keys.delete(key);
+			}
+		};
+
+		if (incoming !== undefined) {
+			try {
+				for (const write of memberships) {
+					started.push(write);
+					attach(write.handle, target, key, incoming, [key]);
+				}
+			} catch (error) {
+				rollBack(incoming);
+
+				throw error;
 			}
 		}
 
 		const result = Reflect.set(target, key, resolved, receiver);
 
-		if (!result) return result;
+		if (!result) {
+			if (incoming !== undefined) rollBack(incoming);
 
-		const newDescriptor = Reflect.getOwnPropertyDescriptor(target, key);
-		const newEntry: DataEntry = {
-			key,
-			value: resolved,
-			writable: newDescriptor?.writable === true,
-		};
+			return result;
+		}
+
 		const meta = currentMeta();
 		const node = proxyOf(target);
 
-		for (const handle of handles) {
+		for (const { handle, membership, hadKey } of memberships) {
 			for (const entry of truncated) {
-				if (isTrackedEntry(handle, target, entry)) detach(handle, entry.value);
+				if (membership.keys.delete(entry.key) && isObjectLike(entry.value)) detach(handle, entry.value);
 
 				recordOperation(handle, target, {
 					node,
@@ -164,17 +183,10 @@ export const handler: ProxyHandler<object> = {
 				});
 			}
 
-			if (
-				hadPrevious &&
-				isObjectLike(previous) &&
-				previous !== resolved &&
-				isTrackedEntry(handle, target, { key, value: previous, writable: previousWritable })
-			) {
-				detach(handle, previous);
-			}
+			if (hadKey && previous !== resolved) {
+				if (isObjectLike(previous)) detach(handle, previous);
 
-			if (isObjectLike(resolved) && resolved !== previous && isTrackedEntry(handle, target, newEntry)) {
-				attach(handle, target, resolved);
+				if (incoming === undefined) membership.keys.delete(key);
 			}
 
 			recordOperation(handle, target, {
@@ -206,7 +218,7 @@ export const handler: ProxyHandler<object> = {
 	deleteProperty(target, key) {
 		if (typeof key !== "string" || isRideAlongKey(target, key)) return Reflect.deleteProperty(target, key);
 
-		const { hadPrevious, previous, writable } = ownDataDescriptor(target, key);
+		const { hadPrevious, previous } = ownDataDescriptor(target, key);
 		const result = Reflect.deleteProperty(target, key);
 
 		if (!result || !hadPrevious) return result;
@@ -214,10 +226,8 @@ export const handler: ProxyHandler<object> = {
 		const meta = currentMeta();
 		const node = proxyOf(target);
 
-		for (const handle of handlesOf(target)) {
-			if (isObjectLike(previous) && isTrackedEntry(handle, target, { key, value: previous, writable })) {
-				detach(handle, previous);
-			}
+		for (const [handle, membership] of membershipsOf(target)) {
+			if (membership.keys.delete(key) && isObjectLike(previous)) detach(handle, previous);
 
 			recordOperation(handle, target, {
 				node,
@@ -233,7 +243,7 @@ export const handler: ProxyHandler<object> = {
 	},
 
 	preventExtensions(target) {
-		for (const handle of handlesOf(target)) evict(handle, target);
+		for (const [handle] of membershipsOf(target)) evict(handle, target);
 
 		return Reflect.preventExtensions(target);
 	},

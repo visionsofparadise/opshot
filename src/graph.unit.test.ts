@@ -117,6 +117,33 @@ describe("§1.2 freezing makes every edge to a node untracked", () => {
 		expect(heard).toEqual([]);
 		expect(state.child.inner.x).toBe(2);
 	});
+
+	it("a frozen object holding an object assigns into a strict state as an untracked edge", async () => {
+		const state = createMutableState({ x: undefined as { a: { n: number } } | undefined });
+		const heard = listen(state);
+		const frozen = Object.freeze({ a: { n: 1 } });
+
+		state.x = frozen;
+
+		await Promise.resolve();
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.key).toBe("x");
+
+		const readBack = state.x;
+
+		if (readBack === undefined) throw new Error("missing child");
+
+		expect(readBack).toBe(frozen);
+
+		heard.length = 0;
+
+		readBack.a.n = 2;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
 });
 
 describe("§1.3 a node with no route of tracked edges from a root is untracked", () => {
@@ -363,6 +390,20 @@ describe("§1.6 ignore() marks an object; every edge to an ignored object is unt
 		expect(heard).toEqual([]);
 		expect(child.n).toBe(2);
 	});
+
+	it("an ignored object holding a dangerous edge assigns into a strict state without a throw", async () => {
+		const state = createMutableState({ x: undefined as object | undefined });
+		const heard = listen(state);
+		const marked = ignore({ inner: new Map<string, number>() });
+
+		state.x = marked;
+
+		await Promise.resolve();
+
+		expect(state.x).toBe(marked);
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.key).toBe("x");
+	});
 });
 
 describe("§1.7 marking or clearing an object changes no existing edge", () => {
@@ -378,6 +419,27 @@ describe("§1.7 marking or clearing an object changes no existing edge", () => {
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.[0]?.key).toBe("n");
 		expect(heard[0]?.[0]?.after).toBe(2);
+	});
+
+	it("a node ignored after admission detaches when its edge is deleted", async () => {
+		const state = createMutableState({ inner: { v: 0 } } as { inner?: { v: number } });
+		const held = state.inner;
+
+		if (held === undefined) throw new Error("missing child");
+
+		ignore(held);
+
+		delete state.inner;
+
+		await Promise.resolve();
+
+		const heard = listen(state);
+
+		held.v = 1;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
 	});
 });
 
@@ -453,5 +515,45 @@ describe("§2.2 assigning a node into a state it currently occupies keeps its id
 		expect(heard[0]?.[0]?.node).toBe(held);
 		expect(heard[0]?.[0]?.key).toBe("n");
 		expect(heard[0]?.[0]?.after).toBe(2);
+	});
+
+	it("aliasing a member keeps its children at one edge each", async () => {
+		const child = { grand: { n: 1 } };
+		const state = createMutableState({ a: child, b: undefined } as {
+			a?: { grand: { n: number } };
+			b?: { grand: { n: number } };
+		});
+
+		state.b = state.a;
+
+		delete state.a;
+
+		await Promise.resolve();
+
+		const heard = listen(state);
+		const branch = state.b;
+
+		if (branch === undefined) throw new Error("missing child");
+
+		branch.grand.n = 2;
+
+		await Promise.resolve();
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]?.key).toBe("n");
+
+		const held = branch.grand;
+
+		delete state.b;
+
+		await Promise.resolve();
+
+		heard.length = 0;
+
+		held.n = 3;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
 	});
 });

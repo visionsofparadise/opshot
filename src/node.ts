@@ -1,8 +1,9 @@
 import type { Handle } from "./handle";
 
-interface Membership {
+export interface Membership {
 	edges: number;
 	exempt: boolean;
+	readonly keys: Set<string>;
 }
 
 export interface NodeRecord {
@@ -56,4 +57,18 @@ export function handlesOf(node: object): Array<Handle> {
 	}
 
 	return handles;
+}
+
+export function membershipsOf(node: object): Array<[Handle, Membership]> {
+	const record = recordOf(rawOf(node));
+
+	if (record === undefined) return [];
+
+	const memberships = new Array<[Handle, Membership]>();
+
+	for (const [handle, membership] of record.memberships) {
+		if (membership.edges > 0) memberships.push([handle, membership]);
+	}
+
+	return memberships;
 }

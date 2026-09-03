@@ -1,5 +1,17 @@
 import { createMutableState } from "./createMutableState";
+import type { Operation } from "./operation";
+import { subscribe } from "./subscribe";
 import { unsafeTrack } from "./unsafeTrack";
+
+const listen = (state: object): Array<ReadonlyArray<Operation>> => {
+	const heard: Array<ReadonlyArray<Operation>> = [];
+
+	subscribe(state, (operations) => {
+		heard.push(operations);
+	});
+
+	return heard;
+};
 
 class Vault {
 	#secret = 1;
@@ -53,6 +65,76 @@ describe("§7.1 strict: true throws at a dangerous edge, at the cause", () => {
 		}).toThrow("Map at /foo cannot be tracked");
 
 		expect(state.foo).toEqual({ n: 1 });
+	});
+
+	it("a throwing assignment rolls back the edges it attached before the throw", async () => {
+		const state = createMutableState({ keep: { n: 0 }, x: undefined } as {
+			keep?: { n: number };
+			x?: object;
+		});
+		const keep = state.keep;
+
+		if (keep === undefined) throw new Error("missing child");
+
+		expect(() => {
+			state.x = { also: keep, bad: new Map() };
+		}).toThrow("Map at /x/bad cannot be tracked");
+
+		const heard = listen(state);
+
+		keep.n = 1;
+
+		await Promise.resolve();
+
+		expect(heard).toHaveLength(1);
+
+		delete state.keep;
+
+		await Promise.resolve();
+
+		heard.length = 0;
+
+		keep.n = 2;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("a throwing assignment undoes the partial attach beneath it", async () => {
+		const state = createMutableState({ x: undefined } as { x?: { deep: { n: number } } });
+		const fine = { deep: { n: 0 } };
+
+		expect(() => {
+			state.x = { fine, bad: new Map() } as unknown as { deep: { n: number } };
+		}).toThrow("Map at /x/bad cannot be tracked");
+
+		state.x = fine;
+
+		const attached = state.x;
+
+		if (attached === undefined) throw new Error("missing child");
+
+		const held = attached.deep;
+
+		delete state.x;
+
+		await Promise.resolve();
+
+		const heard = listen(state);
+
+		held.n = 1;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("a throwing creation leaves no membership behind", () => {
+		const raw = { ok: {}, bad: new Map() };
+
+		expect(() => createMutableState(raw)).toThrow("Map at /bad cannot be tracked");
+		expect(() => createMutableState(raw)).toThrow("Map at /bad cannot be tracked");
 	});
 });
 

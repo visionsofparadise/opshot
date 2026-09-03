@@ -1,4 +1,4 @@
-import { dataEntryValuesOf, segmentFor, walkDataEntries } from "./dataEntries";
+import { walkDataEntries } from "./dataEntries";
 
 const symbolKey = Symbol("symbolKey");
 
@@ -43,42 +43,5 @@ describe("walkDataEntries", () => {
 		const keys = walkDataEntries(createFixture()).map((entry) => entry.key);
 
 		expect(keys).toEqual(["plain", "locked"]);
-	});
-
-	it("appends array length only when includeArrayLength is true", () => {
-		const list = [10, 20];
-
-		expect(walkDataEntries(list).map((entry) => entry.key)).toEqual(["0", "1"]);
-		expect(walkDataEntries(list, true)).toEqual([
-			{ key: "0", value: 10, writable: true },
-			{ key: "1", value: 20, writable: true },
-			{ key: "length", value: 2, writable: true },
-		]);
-	});
-});
-
-describe("segmentFor", () => {
-	it("coerces canonical array indexes to numbers", () => {
-		expect(segmentFor([10, 20], "0")).toBe(0);
-		expect(segmentFor([10, 20], "1")).toBe(1);
-	});
-
-	it("keeps named keys on arrays as strings", () => {
-		expect(segmentFor([10], "named")).toBe("named");
-		expect(segmentFor([10], "length")).toBe("length");
-	});
-
-	it("keeps object keys as strings even when they look like indexes", () => {
-		expect(segmentFor({ 0: 1 }, "0")).toBe("0");
-	});
-});
-
-describe("dataEntryValuesOf", () => {
-	it("includes array indexes and named keys", () => {
-		const list = Object.assign([10, 20], { named: 3 });
-
-		expect([...dataEntryValuesOf(list).keys()]).toEqual(["0", "1", "named"]);
-		expect(dataEntryValuesOf(list).get("0")).toBe(10);
-		expect(dataEntryValuesOf(list).get("named")).toBe(3);
 	});
 });

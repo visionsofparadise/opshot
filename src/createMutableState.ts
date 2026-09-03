@@ -1,11 +1,9 @@
-import { assertAdmissible } from "./admission";
-import { attach, isTrackedEntry } from "./edges";
+import { attachRoot } from "./edges";
 import { handleOf, type Handle } from "./handle";
 import { isIgnored } from "./ignore";
-import { installProxyHandler, proxyOf, recordOf, rawOf } from "./node";
+import { installProxyHandler, proxyOf, rawOf } from "./node";
 import { handler } from "./proxy";
 import { isUnsafeMarked } from "./unsafeTrack";
-import { walkDataEntries } from "./utils/dataEntries";
 
 installProxyHandler(handler);
 
@@ -70,18 +68,9 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		isFlushScheduled: false,
 	};
 
-	if (strict && !exempt) assertAdmissible(handle, root, [], false);
-
 	const proxy = proxyOf(root);
-	const record = recordOf(root);
 
-	if (record === undefined) throw new Error("opshot: node record missing after proxy");
-
-	record.memberships.set(handle, { edges: 1, exempt });
-
-	for (const entry of walkDataEntries(root)) {
-		if (isTrackedEntry(handle, root, entry)) attach(handle, root, entry.value);
-	}
+	attachRoot(handle, root, exempt);
 
 	return proxy as T;
 }

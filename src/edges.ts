@@ -1,46 +1,83 @@
+import { nonWritablePropertyError, rejectionError } from "./boundaryErrors";
+import { classifyValue } from "./classify";
 import { isIgnored } from "./ignore";
 import { proxyOf, recordOf, rawOf } from "./node";
 import { isUnsafeMarked } from "./unsafeTrack";
 import { walkDataEntries, type DataEntry } from "./utils/dataEntries";
 import type { Handle } from "./handle";
 
-export function isTrackedEntry(
-	_handle: Handle,
-	_parent: object,
-	entry: DataEntry,
-): entry is DataEntry & { value: object } {
-	return (
-		entry.writable &&
-		typeof entry.value === "object" &&
-		entry.value !== null &&
-		!isIgnored(entry.value) &&
-		!Object.isFrozen(entry.value)
-	);
-}
+export const isTrackedEntry = (value: unknown, writable: boolean): value is object =>
+	writable && typeof value === "object" && value !== null && !isIgnored(value) && !Object.isFrozen(value);
 
-const walkTrackedEntries = (handle: Handle, node: object, visit: (child: object) => void): void => {
-	for (const entry of walkDataEntries(node)) {
-		if (isTrackedEntry(handle, node, entry)) visit(entry.value);
+const checkNode = (node: object, entries: Array<DataEntry>, route: ReadonlyArray<string>): void => {
+	const kind = classifyValue(node);
+
+	if (kind !== "plain" && kind !== "plainArray" && kind !== "cleanClass") throw rejectionError(node, kind, route);
+
+	for (const entry of entries) {
+		if (typeof entry.value === "function") {
+			if (kind === "cleanClass") throw rejectionError(node, "cleanClass", [...route, entry.key]);
+
+			continue;
+		}
+
+		if (typeof entry.value !== "object" || entry.value === null) continue;
+
+		if (isIgnored(entry.value) || Object.isFrozen(entry.value)) continue;
+
+		if (!entry.writable) throw nonWritablePropertyError(node, [...route, entry.key]);
 	}
 };
 
-const flipUnexempt = (handle: Handle, node: object): void => {
-	const record = recordOf(rawOf(node));
-	const membership = record?.memberships.get(handle);
+const descend = (handle: Handle, node: object, route: ReadonlyArray<string>, checked: boolean): void => {
+	const entries = walkDataEntries(node);
+
+	if (checked) checkNode(node, entries, route);
+
+	for (const entry of entries) {
+		if (isTrackedEntry(entry.value, entry.writable))
+			attach(handle, node, entry.key, entry.value, [...route, entry.key]);
+	}
+};
+
+const flip = (handle: Handle, node: object, route: ReadonlyArray<string>): void => {
+	const membership = recordOf(node)?.memberships.get(handle);
 
 	if (!membership?.exempt) return;
 
 	membership.exempt = false;
-	walkTrackedEntries(handle, rawOf(node), (child) => {
-		flipUnexempt(handle, child);
-	});
+
+	const entries = walkDataEntries(node);
+
+	checkNode(node, entries, route);
+
+	for (const entry of entries) {
+		if (!isTrackedEntry(entry.value, entry.writable)) continue;
+
+		const child = rawOf(entry.value);
+
+		if (recordOf(child)?.memberships.has(handle) === true) flip(handle, child, [...route, entry.key]);
+	}
 };
 
-export function attach(handle: Handle, parent: object, child: object): void {
-	const parentRecord = recordOf(parent);
-	const parentMembership = parentRecord?.memberships.get(handle);
+const cascade = (handle: Handle, node: object, keys: ReadonlySet<string>): void => {
+	for (const key of keys) {
+		const value: unknown = Reflect.get(node, key);
+
+		if (typeof value !== "object" || value === null) continue;
+
+		const child = rawOf(value);
+
+		if (recordOf(child)?.memberships.has(handle) === true) detach(handle, child);
+	}
+};
+
+export function attach(handle: Handle, parent: object, key: string, child: object, route: ReadonlyArray<string>): void {
+	const parentMembership = recordOf(parent)?.memberships.get(handle);
 
 	if (parentMembership === undefined) return;
+
+	parentMembership.keys.add(key);
 
 	const rawChild = rawOf(child);
 
@@ -51,24 +88,34 @@ export function attach(handle: Handle, parent: object, child: object): void {
 	if (record === undefined) return;
 
 	const edgeExempt = parentMembership.exempt || isUnsafeMarked(rawChild);
-	let membership = record.memberships.get(handle);
+	const membership = record.memberships.get(handle);
 
 	if (membership === undefined) {
-		membership = { edges: 0, exempt: edgeExempt };
-		record.memberships.set(handle, membership);
-	}
-
-	membership.edges += 1;
-
-	if (membership.edges === 1) {
-		walkTrackedEntries(handle, rawChild, (grandchild) => {
-			attach(handle, rawChild, grandchild);
-		});
+		record.memberships.set(handle, { edges: 1, exempt: edgeExempt, keys: new Set() });
+		descend(handle, rawChild, route, !edgeExempt);
 
 		return;
 	}
 
-	if (membership.exempt && !edgeExempt) flipUnexempt(handle, rawChild);
+	membership.edges += 1;
+
+	if (membership.exempt && !edgeExempt) flip(handle, rawChild, route);
+}
+
+export function attachRoot(handle: Handle, root: object, exempt: boolean): void {
+	const record = recordOf(root);
+
+	if (record === undefined) return;
+
+	record.memberships.set(handle, { edges: 1, exempt, keys: new Set() });
+
+	try {
+		descend(handle, root, [], !exempt);
+	} catch (error) {
+		evict(handle, root);
+
+		throw error;
+	}
 }
 
 export function detach(handle: Handle, child: object): void {
@@ -83,19 +130,16 @@ export function detach(handle: Handle, child: object): void {
 	if (membership.edges > 0) return;
 
 	record.memberships.delete(handle);
-	walkTrackedEntries(handle, rawChild, (grandchild) => {
-		if (recordOf(grandchild)?.memberships.has(handle) === true) detach(handle, grandchild);
-	});
+	cascade(handle, rawChild, membership.keys);
 }
 
 export function evict(handle: Handle, node: object): void {
 	const rawNode = rawOf(node);
 	const record = recordOf(rawNode);
+	const membership = record?.memberships.get(handle);
 
-	if (record === undefined) return;
+	if (record === undefined || membership === undefined) return;
 
 	record.memberships.delete(handle);
-	walkTrackedEntries(handle, rawNode, (grandchild) => {
-		if (recordOf(grandchild)?.memberships.has(handle) === true) detach(handle, grandchild);
-	});
+	cascade(handle, rawNode, membership.keys);
 }
