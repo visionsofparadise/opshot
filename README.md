@@ -182,7 +182,7 @@ interface Operation {
 
 ## Batches
 
-`batch` runs its callback synchronously. Writes inside it reach subscribers as one emission carrying the batch's meta. A state's pending ordinary Writes emit first. Nested batches each deliver their own writes with their own meta. A throwing callback emits its completed writes, then rethrows. A write inside batch carries the call's meta; operations with different metas never merge.
+`batch` runs its callback synchronously and tags each write with the call's meta; nested calls use the innermost meta. It does not emit. A throw propagates, and writes already made still carry that meta. Emission is the state's window (`emitOn`, default a microtask). A write inside batch carries the call's meta; operations with different metas never merge.
 
 ```tsx
 import { useEffect } from "react";

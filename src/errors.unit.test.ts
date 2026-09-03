@@ -58,10 +58,9 @@ describe("§7.1 strict: true throws at a dangerous edge, at the cause", () => {
 
 describe("§7.2 a node entering a state while marked, or entering beneath an exempt node, is exempt from §7.1", () => {
 	it("admits a marked node that would otherwise throw", () => {
-		const map = new Map<string, number>([["k", 1]]);
-		const state = createMutableState({ box: unsafeTrack({ nested: map }) });
+		const state = createMutableState({ box: unsafeTrack(new Map<string, number>([["k", 1]])) });
 
-		expect(state.box.nested).toBeInstanceOf(Map);
+		expect(state.box).toBeInstanceOf(Map);
 	});
 
 	it("admits a node beneath a marked node", () => {

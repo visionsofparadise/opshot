@@ -10,9 +10,9 @@ import { walkDataEntries } from "./utils/dataEntries";
 installProxyHandler(handler);
 
 /**
- * Schedules when bare writes notify listeners. Call `flush` once.
+ * Sets when a state's window flushes. Call `flush` once.
  *
- * @param flush - Delivers pending ops.
+ * @param flush - Delivers pending operations.
  * @returns Nothing.
  */
 export type EmissionScheduler = (flush: () => void) => void;
@@ -25,7 +25,7 @@ export type EmissionScheduler = (flush: () => void) => void;
  */
 export interface MutableStateOptions {
 	/**
-	 * When bare writes notify listeners. Defaults to a microtask.
+	 * When the window flushes for all writes. Defaults to a microtask.
 	 */
 	readonly emitOn?: EmissionScheduler;
 

@@ -10,7 +10,7 @@ const lock = (facade: object, mutationKey: string): void => {
 	Object.defineProperty(facade, mutationKey, { ...descriptor, writable: false });
 };
 
-describe("§1.4 an edge is dangerous and untracked when it is an exotic hidden store", () => {
+describe("a non-writable mutation key throws", () => {
 	it("throws when the mutation key is a non-writable data property", () => {
 		const map = new TrackedMap([["a", 1]]);
 		const set = new TrackedSet([1]);
@@ -20,9 +20,9 @@ describe("§1.4 an edge is dangerous and untracked when it is an exotic hidden s
 		lock(set, "count");
 		lock(when, "epochMs");
 
-		expect(() => map.set("b", 2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
-		expect(() => set.add(2)).toThrow("opshot: cannot mutate a tracked collection snapshot");
-		expect(() => when.setTime(1)).toThrow("opshot: cannot mutate a tracked collection snapshot");
+		expect(() => map.set("b", 2)).toThrow("opshot: cannot mutate a non-writable tracked collection");
+		expect(() => set.add(2)).toThrow("opshot: cannot mutate a non-writable tracked collection");
+		expect(() => when.setTime(1)).toThrow("opshot: cannot mutate a non-writable tracked collection");
 
 		expect(map.get("a")).toBe(1);
 		expect(set.has(1)).toBe(true);

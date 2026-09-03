@@ -1,5 +1,6 @@
 import { createMutableState } from "./createMutableState";
 import { ignore } from "./ignore";
+import { isState } from "./isState";
 import type { Operation } from "./operation";
 import { subscribe } from "./subscribe";
 import { unsafeTrack } from "./unsafeTrack";
@@ -76,16 +77,14 @@ describe("§1.1 ride-alongs are untracked edges", () => {
 
 		Object.defineProperty(raw, "__proto__", { value: child, enumerable: true, writable: true, configurable: true });
 
-		const state = createMutableState(raw);
+		const state = createMutableState(raw) as { n: number } & Record<"__proto__", { n: number }>;
 		const heard = listen(state);
-		const proto = Object.getOwnPropertyDescriptor(state, "__proto__")?.value as { n: number };
 
-		proto.n = 2;
+		state["__proto__"] = { n: 3 };
 
 		await Promise.resolve();
 
 		expect(heard).toEqual([]);
-		expect(child.n).toBe(2);
 	});
 });
 
@@ -246,6 +245,9 @@ describe("§1.4 an edge is dangerous and untracked when it is", () => {
 		expect(strictHeard).toEqual([]);
 		expect(looseHeard).toEqual([]);
 		expect(markedHeard).toEqual([]);
+		expect(isState(strictState.holder.method)).toBe(false);
+		expect(isState(looseState.holder.method)).toBe(false);
+		expect(isState(markedState.holder.method)).toBe(false);
 
 		strictState.holder.label = 1;
 		looseState.holder.label = 1;

@@ -2,10 +2,8 @@ import { constructorName } from "./utils/constructorName";
 
 const ignoreOption = "ignore(value) to store it by reference, untracked";
 const unsafeTrackDataOption = "unsafeTrack(value) to track its data anyway";
-const unsafeTrackPrivateOption =
-	"unsafeTrack(value) tracks public fields while private methods throw on snapshots and undo drops that state";
-const unsafeTrackSlotOption =
-	"unsafeTrack(value) tracks public fields while slot methods throw on snapshots and undo drops that state";
+const unsafeTrackPrivateOption = "unsafeTrack(value) tracks public fields while private methods stay untracked";
+const unsafeTrackSlotOption = "unsafeTrack(value) tracks public fields while slot methods stay untracked";
 const unsafeTrackLossyOption = "unsafeTrack(value) to track it lossily";
 
 const locationClause = (path: ReadonlyArray<string> | undefined): string =>
@@ -30,12 +28,7 @@ const slotContainerError = (className: string, trackedName: string, path: Readon
 	);
 
 const arraySubclassError = (className: string, path: ReadonlyArray<string> | undefined): Error =>
-	boundaryError(
-		className,
-		"array subclasses lose their prototype in snapshots",
-		[unsafeTrackDataOption, ignoreOption],
-		path,
-	);
+	boundaryError(className, "array subclasses are not plain arrays", [unsafeTrackDataOption, ignoreOption], path);
 
 const cleanClassError = (className: string, path: ReadonlyArray<string> | undefined): Error =>
 	boundaryError(className, "arrow-method writes won't be tracked", [unsafeTrackDataOption, ignoreOption], path);
