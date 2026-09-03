@@ -9,7 +9,7 @@ import { batch } from "../batch";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
-describe("useMutableState", () => {
+describe("§6.2 re-render on a read edge", () => {
 	it("rerenders on tracked mutation and preserves read-your-writes", async () => {
 		let latest = 0;
 		const Counter: FC = () => {
@@ -297,7 +297,7 @@ describe("useMutableState", () => {
 		expect(screen.getByTestId("factory").textContent).toBe("0");
 	});
 
-	it("rerenders a write that lands between render and subscribe", () => {
+	it("§6.2 a change between render and subscription re-renders", () => {
 		const queued = new Array<() => void>();
 		let renders = 0;
 
@@ -331,6 +331,43 @@ describe("useMutableState", () => {
 
 		expect(screen.getByTestId("early").textContent).toBe("7");
 		expect(renders).toBe(2);
+		expect(queued).toHaveLength(0);
+	});
+
+	it("§6.2 a change to an unread key between render and subscription does not re-render", () => {
+		const queued = new Array<() => void>();
+		let renders = 0;
+
+		const Mutator: FC<{ state: { count: number; other: number } }> = ({ state }) => {
+			const mutated = useRef(false);
+
+			useLayoutEffect(() => {
+				if (mutated.current) return;
+
+				mutated.current = true;
+				state.other = 7;
+			});
+
+			return null;
+		};
+
+		const View: FC = () => {
+			const state = useMutableState({ count: 0, other: 0 }, { emitOn: (flush) => queued.push(flush) });
+
+			renders += 1;
+
+			return (
+				<div>
+					<Mutator state={state} />
+					<span data-testid="unread-gap">{state.count}</span>
+				</div>
+			);
+		};
+
+		render(<View />);
+
+		expect(screen.getByTestId("unread-gap").textContent).toBe("0");
+		expect(renders).toBe(1);
 		expect(queued).toHaveLength(0);
 	});
 

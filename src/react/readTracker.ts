@@ -12,16 +12,16 @@ const ALL_OWN_KEYS_PROPERTY = "w";
 const isWriteProxy = (value: object): boolean => recordOf(value)?.proxy === value;
 
 interface UsageRecord {
-	[KEYS_PROPERTY]?: Set<string | symbol>;
-	[HAS_KEY_PROPERTY]?: Set<string | symbol>;
-	[HAS_OWN_KEY_PROPERTY]?: Set<string | symbol>;
-	[ALL_OWN_KEYS_PROPERTY]?: true;
+	[KEYS_PROPERTY]?: Map<string | symbol, unknown>;
+	[HAS_KEY_PROPERTY]?: Map<string | symbol, boolean>;
+	[HAS_OWN_KEY_PROPERTY]?: Map<string | symbol, boolean>;
+	[ALL_OWN_KEYS_PROPERTY]?: Array<string | symbol>;
 }
 
 interface SourcePartition {
 	readonly affected: Map<object, UsageRecord>;
 	readonly identityReads: Set<object>;
-	readonly proxyCache: WeakMap<object, object>;
+	proxyCache: WeakMap<object, object>;
 }
 
 export interface ReadTracker {
@@ -47,19 +47,28 @@ const getUsage = (affected: Map<object, UsageRecord>, target: object): UsageReco
 	return used;
 };
 
-const recordKey = (
-	used: UsageRecord,
-	type: typeof KEYS_PROPERTY | typeof HAS_KEY_PROPERTY | typeof HAS_OWN_KEY_PROPERTY,
+const recordIn = <T>(
+	slot: Map<string | symbol, T> | undefined,
 	key: string | symbol,
-): void => {
-	let set = used[type];
+	value: T,
+): Map<string | symbol, T> => {
+	const map = slot ?? new Map<string | symbol, T>();
 
-	if (set === undefined) {
-		set = new Set();
-		used[type] = set;
-	}
+	if (!map.has(key)) map.set(key, value);
 
-	set.add(key);
+	return map;
+};
+
+const recordGet = (used: UsageRecord, key: string | symbol, value: unknown): void => {
+	used[KEYS_PROPERTY] = recordIn(used[KEYS_PROPERTY], key, value);
+};
+
+const recordHas = (used: UsageRecord, key: string | symbol, value: boolean): void => {
+	used[HAS_KEY_PROPERTY] = recordIn(used[HAS_KEY_PROPERTY], key, value);
+};
+
+const recordOwn = (used: UsageRecord, key: string | symbol, value: boolean): void => {
+	used[HAS_OWN_KEY_PROPERTY] = recordIn(used[HAS_OWN_KEY_PROPERTY], key, value);
 };
 
 const getPrototypeMethod = (target: object, prop: string | symbol): Function | undefined => {
@@ -89,43 +98,93 @@ class UnregisteredReadTrackerError extends Error {
 
 const trackerPartitions = new WeakMap<ReadTracker, Map<object, SourcePartition>>();
 
-const recordedKeysOf = (used: UsageRecord): Array<Set<string | symbol>> => {
-	const keySets = new Array<Set<string | symbol>>();
-
-	if (used[KEYS_PROPERTY] !== undefined) keySets.push(used[KEYS_PROPERTY]);
-
-	if (used[HAS_KEY_PROPERTY] !== undefined) keySets.push(used[HAS_KEY_PROPERTY]);
-
-	if (used[HAS_OWN_KEY_PROPERTY] !== undefined) keySets.push(used[HAS_OWN_KEY_PROPERTY]);
-
-	return keySets;
-};
-
-export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): boolean {
+const partitionsOf = (tracker: ReadTracker): Map<object, SourcePartition> => {
 	const partitions = trackerPartitions.get(tracker);
 
 	if (partitions === undefined) throw new UnregisteredReadTrackerError();
 
-	for (const partition of partitions.values()) {
+	return partitions;
+};
+
+const recordedKeysOf = (used: UsageRecord): Array<Map<string | symbol, unknown>> => {
+	const keyMaps = new Array<Map<string | symbol, unknown>>();
+
+	if (used[KEYS_PROPERTY] !== undefined) keyMaps.push(used[KEYS_PROPERTY]);
+
+	if (used[HAS_KEY_PROPERTY] !== undefined) keyMaps.push(used[HAS_KEY_PROPERTY]);
+
+	if (used[HAS_OWN_KEY_PROPERTY] !== undefined) keyMaps.push(used[HAS_OWN_KEY_PROPERTY]);
+
+	return keyMaps;
+};
+
+export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): boolean {
+	for (const partition of partitionsOf(tracker).values()) {
 		for (const [writeProxy, used] of partition.affected) {
 			const raw = rawOf(writeProxy);
 			const edges = dirty.edges.get(raw);
 
 			for (const keys of recordedKeysOf(used)) {
-				for (const key of keys) {
+				for (const key of keys.keys()) {
 					if (typeof key === "symbol") continue;
 
 					if (edges?.has(key) === true) return true;
 				}
 			}
 
-			if (used[ALL_OWN_KEYS_PROPERTY] === true && dirty.nodes.has(raw)) return true;
+			if (used[ALL_OWN_KEYS_PROPERTY] !== undefined && dirty.nodes.has(raw)) return true;
 		}
 
 		for (const writeProxy of partition.identityReads) {
 			if (partition.affected.has(writeProxy)) continue;
 
 			if (dirty.nodes.has(rawOf(writeProxy))) return true;
+		}
+	}
+
+	return false;
+}
+
+export function readsChanged(tracker: ReadTracker): boolean {
+	for (const partition of partitionsOf(tracker).values()) {
+		for (const [writeProxy, used] of partition.affected) {
+			const gets = used[KEYS_PROPERTY];
+
+			if (gets !== undefined) {
+				for (const [key, stored] of gets) {
+					if (!Object.is(Reflect.get(writeProxy, key, writeProxy), stored)) return true;
+				}
+			}
+
+			const hasKeys = used[HAS_KEY_PROPERTY];
+
+			if (hasKeys !== undefined) {
+				for (const [key, stored] of hasKeys) {
+					if (!Object.is(Reflect.has(writeProxy, key), stored)) return true;
+				}
+			}
+
+			const ownKeys = used[HAS_OWN_KEY_PROPERTY];
+
+			if (ownKeys !== undefined) {
+				for (const [key, stored] of ownKeys) {
+					const present = Reflect.getOwnPropertyDescriptor(writeProxy, key) !== undefined;
+
+					if (!Object.is(present, stored)) return true;
+				}
+			}
+
+			const listed = used[ALL_OWN_KEYS_PROPERTY];
+
+			if (listed !== undefined) {
+				const current = Reflect.ownKeys(writeProxy);
+
+				if (current.length !== listed.length) return true;
+
+				for (let index = 0; index < listed.length; index += 1) {
+					if (!Object.is(current[index], listed[index])) return true;
+				}
+			}
 		}
 	}
 
@@ -193,7 +252,7 @@ export function createReadTracker(): ReadTracker {
 
 				const used = trackUsage(partition, writeProxy);
 
-				recordKey(used, KEYS_PROPERTY, prop);
+				recordGet(used, prop, value);
 				recordIdentity(partition, value);
 
 				if (typeof value === "function") {
@@ -214,24 +273,27 @@ export function createReadTracker(): ReadTracker {
 			},
 			has(_target, prop) {
 				const used = trackUsage(partition, writeProxy);
+				const result = Reflect.has(writeProxy, prop);
 
-				recordKey(used, HAS_KEY_PROPERTY, prop);
+				recordHas(used, prop, result);
 
-				return Reflect.has(writeProxy, prop);
+				return result;
 			},
 			getOwnPropertyDescriptor(_target, prop) {
 				const used = trackUsage(partition, writeProxy);
+				const descriptor = Reflect.getOwnPropertyDescriptor(writeProxy, prop);
 
-				recordKey(used, HAS_OWN_KEY_PROPERTY, prop);
+				recordOwn(used, prop, descriptor !== undefined);
 
-				return Reflect.getOwnPropertyDescriptor(writeProxy, prop);
+				return descriptor;
 			},
 			ownKeys() {
 				const used = trackUsage(partition, writeProxy);
+				const keys = Reflect.ownKeys(writeProxy);
 
-				used[ALL_OWN_KEYS_PROPERTY] = true;
+				used[ALL_OWN_KEYS_PROPERTY] ??= keys;
 
-				return Reflect.ownKeys(writeProxy);
+				return keys;
 			},
 			set(_target, prop, value) {
 				return Reflect.set(writeProxy, prop, value, writeProxy);
@@ -273,6 +335,7 @@ export function createReadTracker(): ReadTracker {
 			for (const partition of partitions.values()) {
 				partition.affected.clear();
 				partition.identityReads.clear();
+				partition.proxyCache = new WeakMap();
 			}
 		},
 

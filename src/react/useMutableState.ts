@@ -2,7 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { createMutableState, type MutableStateOptions } from "../createMutableState";
 import { handlesOf, proxyOf } from "../node";
 import { subscribe } from "../subscribe";
-import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
+import { createReadTracker, readsChanged, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
 import type { Handle } from "../handle";
 
@@ -63,6 +63,8 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 				if (dirty !== undefined && readsIntersectDirty(readTracker, dirty)) bump();
 			}),
 		);
+
+		if (readsChanged(readTracker)) bump();
 
 		return () => {
 			cancelled = true;

@@ -5,7 +5,7 @@ import { handlesOf, proxyOf } from "../node";
 import { subscribe } from "../subscribe";
 import { addressOf } from "../tracked/address";
 import { substituteStates } from "./propWalk";
-import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
+import { createReadTracker, readsChanged, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
 import type { Handle } from "../handle";
 
@@ -105,6 +105,8 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 					if (dirty !== undefined && readsIntersectDirty(readTracker, dirty)) bump();
 				}),
 			);
+
+			if (readsChanged(readTracker)) bump();
 
 			return () => {
 				cancelled = true;

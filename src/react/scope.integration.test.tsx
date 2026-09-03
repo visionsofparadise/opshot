@@ -19,7 +19,7 @@ import { batch } from "../batch";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
-describe("scope", () => {
+describe("§6.2 re-render on a read edge", () => {
 	it("rerenders a scoped child when a read prop field changes", async () => {
 		let childRenders = 0;
 
@@ -169,7 +169,7 @@ describe("scope", () => {
 		expect(childRenders).toBe(3);
 	});
 
-	it("rerenders a write that lands between render and subscribe", () => {
+	it("§6.2 a change between render and subscription re-renders", () => {
 		const queued = new Array<() => void>();
 		let boundaryRenders = 0;
 
@@ -207,6 +207,47 @@ describe("scope", () => {
 
 		expect(screen.getByTestId("early").textContent).toBe("7");
 		expect(boundaryRenders).toBe(2);
+		expect(queued).toHaveLength(0);
+	});
+
+	it("§6.2 a change to an unread key between render and subscription does not re-render", () => {
+		const queued = new Array<() => void>();
+		let boundaryRenders = 0;
+
+		const Mutator: FC<{ state: { count: number; other: number } }> = ({ state }) => {
+			const mutated = useRef(false);
+
+			useLayoutEffect(() => {
+				if (mutated.current) return;
+
+				mutated.current = true;
+				state.other = 7;
+			});
+
+			return null;
+		};
+
+		const Scoped = scope<{ state: { count: number; other: number } }>(({ state }) => {
+			boundaryRenders += 1;
+
+			return (
+				<div>
+					<span data-testid="unread-gap">{state.count}</span>
+					<Mutator state={state} />
+				</div>
+			);
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0, other: 0 }, { emitOn: (flush) => queued.push(flush) });
+
+			return <Scoped state={state} />;
+		};
+
+		render(<Parent />);
+
+		expect(screen.getByTestId("unread-gap").textContent).toBe("0");
+		expect(boundaryRenders).toBe(1);
 		expect(queued).toHaveLength(0);
 	});
 
@@ -614,7 +655,7 @@ describe("scope", () => {
 	});
 });
 
-describe("per-key comparison", () => {
+describe("§6.1 reads", () => {
 	const mountReader = <T extends object>(state: T, read: (value: T) => ReactNode) => {
 		let renders = 0;
 
@@ -739,5 +780,42 @@ describe("per-key comparison", () => {
 
 		expect(reader.renders()).toBe(2);
 		expect(reader.text()).toBe("undefined");
+	});
+});
+
+describe("§6.3 scope reachability", () => {
+	it("re-renders a nested child that reads a state passed through props", async () => {
+		let childRenders = 0;
+
+		const Child = scope<{ state: { count: number } }>(({ state }) => {
+			childRenders += 1;
+
+			return <span data-testid="reach">{state.count}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0 });
+
+			useEffect(() => {
+				(globalThis as { __reach?: { count: number } }).__reach = state;
+			});
+
+			return <Child state={state} />;
+		};
+
+		render(<Parent />);
+		expect(screen.getByTestId("reach").textContent).toBe("0");
+		expect(childRenders).toBe(1);
+
+		await act(async () => {
+			const state = (globalThis as { __reach?: { count: number } }).__reach;
+
+			if (state === undefined) throw new Error("missing state");
+
+			state.count = 1;
+		});
+
+		expect(childRenders).toBe(2);
+		expect(screen.getByTestId("reach").textContent).toBe("1");
 	});
 });
