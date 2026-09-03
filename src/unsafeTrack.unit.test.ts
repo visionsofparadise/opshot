@@ -4,7 +4,7 @@ import { handleOf } from "./handle";
 import { isSameIdentity } from "./identity";
 import { isUnsafeMarked, unsafeTrack } from "./unsafeTrack";
 
-describe("unsafeTrack occupancy", () => {
+describe("§7.2 unsafeTrack occupancy", () => {
 	it("throws when an unmarked replacement enters a slot whose previous occupant was unsafe-marked", () => {
 		const first = new Map<string, number>([["a", 1]]);
 		const second = new Map<string, number>([["b", 2]]);

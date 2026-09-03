@@ -53,7 +53,7 @@ const buildProbe = (): { Probe: FC<{ holder: unknown }>; renders: { count: numbe
 	return { Probe, renders };
 };
 
-describe("scope reachability", () => {
+describe("§6.3 scope reachability", () => {
 	it("skips a state nested in React element props", async () => {
 		const nested = createMutableState<NestedState>({ label: 0 });
 		const element = createElement("div", { nested });

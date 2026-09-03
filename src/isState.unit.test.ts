@@ -2,7 +2,7 @@ import { createReadTracker } from "./react/readTracker";
 import { createMutableState } from "./createMutableState";
 import { isState } from "./isState";
 
-describe("isState", () => {
+describe("§2.2 isState", () => {
 	it("recognizes a live state", () => {
 		expect(isState(createMutableState({ count: 0 }))).toBe(true);
 		expect(isState({ count: 1 })).toBe(false);

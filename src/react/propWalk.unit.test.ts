@@ -23,7 +23,7 @@ const wrapSource = (source: object): object => ({ wrapper: source });
 
 const discoveredKeys = (container: object): Array<string> => [...discoverStateKeys(container)].sort();
 
-describe("discoverStateKeys", () => {
+describe("§6.3 discoverStateKeys", () => {
 	it("finds every state at mixed depths and counts no key that leads to none", () => {
 		const first = createState();
 		const second = createState();
@@ -154,7 +154,7 @@ describe("discoverStateKeys", () => {
 	});
 });
 
-describe("substituteStates", () => {
+describe("§6.3 substituteStates", () => {
 	it("finds a state on a frozen entry root", () => {
 		const state = createState();
 		const result = substituteStates(Object.freeze({ inner: state }), wrapSource);
