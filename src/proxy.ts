@@ -9,6 +9,30 @@ import { isUnsafeMarked } from "./unsafeTrack";
 import { isObjectLike } from "./utils/predicates";
 import type { DataEntry } from "./utils/dataEntries";
 
+const prototypeFunctionOf = (target: object, key: string | symbol): Function | undefined => {
+	for (let holder = Reflect.getPrototypeOf(target); holder !== null; holder = Reflect.getPrototypeOf(holder)) {
+		const descriptor = Reflect.getOwnPropertyDescriptor(holder, key);
+
+		if (descriptor === undefined) continue;
+
+		const method: unknown = "value" in descriptor ? descriptor.value : undefined;
+
+		return typeof method === "function" ? method : undefined;
+	}
+
+	return undefined;
+};
+
+const isRideAlongKey = (target: object, key: string): boolean => {
+	if (key === "__proto__") return true;
+
+	if (key === "length") return false;
+
+	const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+
+	return descriptor?.enumerable === false;
+};
+
 const writesThroughAccessor = (target: object, property: string | symbol): boolean => {
 	let holder: object | null = target;
 
@@ -72,18 +96,31 @@ export const handler: ProxyHandler<object> = {
 
 		if (locked || !isObjectLike(value)) return value;
 
+		if (typeof value === "function") {
+			const method = prototypeFunctionOf(target, key);
+			const kind = classifyValue(target);
+
+			if (method !== undefined && value === method && (kind === "nativeClass" || kind === "privateClass")) {
+				const bound: unknown = Function.prototype.bind.call(method, target);
+
+				return typeof bound === "function" ? bound : value;
+			}
+
+			return value;
+		}
+
 		return recordOf(value)?.proxy ?? value;
 	},
 
 	set(target, key, value, receiver) {
-		if (typeof key !== "string" || writesThroughAccessor(target, key)) {
+		if (typeof key !== "string" || writesThroughAccessor(target, key) || isRideAlongKey(target, key)) {
 			return Reflect.set(target, key, value, receiver);
 		}
 
 		const { hadPrevious, previous, writable: previousWritable } = ownDataDescriptor(target, key);
 		const resolved: unknown = isObjectLike(value) ? rawOf(value) : value;
 		const handles = handlesOf(target);
-		const truncated = truncatedOwnEntriesOf(target, resolved);
+		const truncated = key === "length" ? truncatedOwnEntriesOf(target, resolved) : [];
 		const previousLength = Array.isArray(target) ? target.length : undefined;
 
 		for (const handle of handles) {
@@ -167,7 +204,7 @@ export const handler: ProxyHandler<object> = {
 	},
 
 	deleteProperty(target, key) {
-		if (typeof key !== "string") return Reflect.deleteProperty(target, key);
+		if (typeof key !== "string" || isRideAlongKey(target, key)) return Reflect.deleteProperty(target, key);
 
 		const { hadPrevious, previous, writable } = ownDataDescriptor(target, key);
 		const result = Reflect.deleteProperty(target, key);
