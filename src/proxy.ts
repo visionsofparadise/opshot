@@ -173,7 +173,7 @@ export const handler: ProxyHandler<object> = {
 				detach(handle, previous);
 			}
 
-			if (isObjectLike(resolved) && isTrackedEntry(handle, target, newEntry)) {
+			if (isObjectLike(resolved) && resolved !== previous && isTrackedEntry(handle, target, newEntry)) {
 				attach(handle, target, resolved);
 			}
 

@@ -139,6 +139,48 @@ describe("§1.3 a node with no route of tracked edges from a root is untracked",
 		expect(heard).toEqual([]);
 		expect(held.n).toBe(2);
 	});
+
+	it("a self-assign then delete leaves the node untracked", async () => {
+		const state = createMutableState({ a: { n: 1 } } as { a?: { n: number } });
+		const held = state.a;
+
+		if (held === undefined) throw new Error("missing child");
+
+		state.a = held;
+		delete state.a;
+
+		await Promise.resolve();
+
+		const heard = listen(state);
+
+		held.n = 2;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("re-aliasing an already-shared child does not keep it after every route is deleted", async () => {
+		const child = { n: 1 };
+		const state = createMutableState({ a: child, b: child } as { a?: { n: number }; b?: { n: number } });
+		const held = state.a;
+
+		if (held === undefined) throw new Error("missing child");
+
+		state.b = state.a;
+		delete state.a;
+		delete state.b;
+
+		await Promise.resolve();
+
+		const heard = listen(state);
+
+		held.n = 2;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
 });
 
 describe("§1.4 an edge is dangerous and untracked when it is", () => {
