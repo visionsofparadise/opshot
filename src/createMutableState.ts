@@ -21,7 +21,7 @@ export type EmissionScheduler = (flush: () => void) => void;
  * Options for `createMutableState`.
  *
  * @example
- * createMutableState({ count: 0 }, { group, emitOn, strict: false })
+ * createMutableState({ count: 0 }, { emitOn, strict: false })
  */
 export interface MutableStateOptions {
 	/**

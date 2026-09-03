@@ -73,6 +73,10 @@ describe("package build", () => {
 				jsdocBefore(declaration, /readonly\s+emitOn\s*\?/) !== undefined,
 				"emitOn must be preceded by a /** */ block",
 			).toBe(true);
+
+			expect(declaration.includes("A change to one key of a node."), "Operation must carry its summary line").toBe(
+				true,
+			);
 		} finally {
 			await rm(outDir, { recursive: true, force: true });
 		}

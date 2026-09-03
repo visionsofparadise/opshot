@@ -154,12 +154,8 @@ const Counter = () => {
 
 	useEffect(
 		() =>
-			subscribe(counter, (ops, meta) => {
-				// ops: [{
-				//   do:   { verb: "assign", path: ["count"], value: 1 },
-				//   undo: { verb: "assign", path: ["count"], value: 0 },
-				// }]
-				// meta: whatever the writer passed, or undefined for bare writes
+			subscribe(counter, (operations) => {
+				// operations: [{ node, key: "count", before: 0, after: 1, meta: undefined }]
 			}),
 		[counter],
 	);
@@ -168,103 +164,25 @@ const Counter = () => {
 };
 ```
 
-## Ops
+## Operations
 
-An op is an invertible pair of halves. Every half uses one of three verbs:
+An operation is one key's change on one node:
 
 ```ts
-type OperationPath = ReadonlyArray<string | number>;
-
 interface Operation {
-	readonly do:
-		| {
-				readonly verb: "assign";
-				readonly path: OperationPath;
-				readonly value: unknown;
-				readonly ids?: ReadonlyArray<number>;
-		  }
-		| { readonly verb: "delete"; readonly path: OperationPath }
-		| { readonly verb: "link"; readonly path: OperationPath; readonly ref: number };
-	readonly undo: Operation["do"];
+	readonly node: object;
+	readonly key: string;
+	readonly before?: unknown;
+	readonly after?: unknown;
+	readonly meta: unknown;
 }
 ```
 
-`ids` on an assign half and `ref` on a link half carry intern ids. Assigning a node into a state it currently occupies keeps its identity. `applyOperations` puts ops back on a state; undo is `applyOperations` with `"undo"`.
-
-```tsx
-import { useEffect, useRef } from "react";
-import { applyOperations, subscribe, useMutableState, type Operation } from "opshot";
-
-const replay = {};
-
-const Counter = () => {
-	const counter = useMutableState({ count: 0 });
-	const history = useRef<Array<ReadonlyArray<Operation>>>([]);
-
-	useEffect(
-		() =>
-			subscribe(counter, (ops, meta) => {
-				// Skip our own replays, so undo doesn't record itself.
-				if (meta === replay) return;
-
-				history.current.push(ops);
-			}),
-		[counter],
-	);
-
-	const undo = () => {
-		const ops = history.current.pop();
-
-		if (!ops) return;
-
-		applyOperations(counter, ops, "undo", replay);
-	};
-
-	return (
-		<>
-			<button onClick={() => counter.count++}>+</button>
-			<button onClick={undo}>Undo</button>
-		</>
-	);
-};
-```
-
-Replay is exact for anything opshot can see: plain data. State behind a constraint is the exception.
-
-If your state is JSON serializable, **then ops are too**.
-
-## Groups
-
-A group creates states and hears every op from the states it created: one stream for history, sync, persistence, etc.
-
-```tsx
-import { useEffect } from "react";
-import { subscribe, useGroup, useMutableState } from "opshot";
-
-const Editor = () => {
-	const group = useGroup();
-
-	// Created through the group, so their ops reach the group's subscribers.
-	const doc = useMutableState({ items: new Array<string>() }, { group });
-	const selection = useMutableState({ index: 0 }, { group });
-
-	useEffect(
-		() =>
-			// Fires for doc, selection, and every other state the group created.
-			// state is whichever one changed.
-			subscribe(group, (state, ops, meta) => {
-				// ...
-			}),
-		[group],
-	);
-
-	// ...
-};
-```
+`before` and `after` are absent properties when the key was absent. A node is the same proxy the reader holds. Undo, redo, and persistence are the reader's to build from `before` and `after`.
 
 ## Batches
 
-`batch` runs its callback synchronously. Writes inside it reach subscribers as one emission carrying the batch's meta. A state's pending ordinary Writes emit first. Nested batches each deliver their own writes with their own meta. A throwing callback emits its completed writes, then rethrows. The emitted undo halves are the consumer's rollback.
+`batch` runs its callback synchronously. Writes inside it reach subscribers as one emission carrying the batch's meta. A state's pending ordinary Writes emit first. Nested batches each deliver their own writes with their own meta. A throwing callback emits its completed writes, then rethrows. A write inside batch carries the call's meta; operations with different metas never merge.
 
 ```tsx
 import { useEffect } from "react";
@@ -275,8 +193,8 @@ const TitleBar = () => {
 
 	useEffect(
 		() =>
-			subscribe(doc, (ops, meta) => {
-				if (meta === "replay") return;
+			subscribe(doc, (operations) => {
+				if (operations[0]?.meta === "replay") return;
 
 				// ...
 			}),

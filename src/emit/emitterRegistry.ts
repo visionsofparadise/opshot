@@ -3,9 +3,7 @@ import type { Operation } from "../operation";
 /**
  * Listener for one state's changes.
  *
- * @param ops - Ops for the change.
- * @param meta - Writer meta, if any.
- * @returns Nothing.
+ * @param operations - Operations for the change.
  */
 export type StateListener = (operations: ReadonlyArray<Operation>) => void;
 

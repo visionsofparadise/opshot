@@ -5,11 +5,10 @@ export function currentMeta(): unknown {
 }
 
 /**
- * Runs writes in one batch and notifies listeners with optional `meta`.
+ * Runs writes carrying `meta`.
  *
  * @param callback - Function that writes any states.
- * @param meta - Passed to listeners.
- * @returns Nothing.
+ * @param meta - Carried by each write's operation.
  */
 export function batch(callback: () => void, meta?: unknown): void {
 	metaStack.push(meta);
