@@ -1,5 +1,5 @@
-import { admissionLane, unfrozenAdmissionLane } from "../classify";
-import { isIgnored } from "../ignore";
+import { classifyValue } from "../classify";
+import { isTrackedEntry } from "../edges";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
 import { walkDataEntries, type DataEntry } from "../utils/dataEntries";
@@ -33,20 +33,22 @@ const noStateKeys: ReadonlySet<string> = new Set<string>();
 const isReactOwnNode = (value: object): boolean =>
 	"$$typeof" in value || (typeof Node !== "undefined" && value instanceof Node);
 
+const canRebuild = (container: object): boolean => {
+	const kind = classifyValue(container);
+
+	return kind === "plain" || kind === "plainArray" || kind === "cleanClass";
+};
+
 const childRole = (value: unknown, writable: boolean, mode: WalkMode): ChildRole => {
 	if (typeof value !== "object" || value === null) return "skip";
 
-	if (isIgnored(value)) return "skip";
-
 	if (isReactOwnNode(value)) return "skip";
 
-	if (mode === "nested" && !writable) return "skip";
-
-	if (admissionLane(value) === "untracked") return "skip";
+	if (!isTrackedEntry(value, mode === "entry" || writable)) return "skip";
 
 	if (isState(value)) return "state";
 
-	if (admissionLane(value) === "tracked") return "descend";
+	if (canRebuild(value)) return "descend";
 
 	return "skip";
 };
@@ -151,7 +153,7 @@ export function discoverStateKeys(container: object): ReadonlySet<string> {
 
 	if (isReactOwnNode(container)) return noStateKeys;
 
-	if (admissionLane(container) !== "tracked") return noStateKeys;
+	if (Object.isFrozen(container) || !canRebuild(container)) return noStateKeys;
 
 	const pass = createDiscoveryPass();
 
@@ -240,7 +242,7 @@ export function substituteStates<T extends object>(root: T, wrap: (source: objec
 		visitedSources: new Set<object>(),
 	};
 
-	if (isReactOwnNode(root) || unfrozenAdmissionLane(root) !== "tracked") {
+	if (isReactOwnNode(root) || !canRebuild(root)) {
 		return { props: root, sources: substitution.sources };
 	}
 

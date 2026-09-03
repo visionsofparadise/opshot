@@ -68,35 +68,3 @@ export function classifyValue(value: object): ValueKind {
 
 	return classifyChain(value.constructor);
 }
-
-export type AdmissionLane = "tracked" | "untracked" | "leaf" | "dangerous";
-
-export type AdmissionDecision =
-	| { readonly lane: "tracked" | "untracked" | "leaf" }
-	| { readonly lane: "dangerous"; readonly kind: Exclude<ValueKind, "plain" | "plainArray"> };
-
-function unfrozenAdmissionDecision(value: unknown): AdmissionDecision {
-	if (typeof value !== "object" || value === null) return { lane: "leaf" };
-
-	const kind = classifyValue(value);
-
-	if (kind === "plain" || kind === "plainArray" || kind === "cleanClass") return { lane: "tracked" };
-
-	return { lane: "dangerous", kind };
-}
-
-export function admissionDecision(value: unknown): AdmissionDecision {
-	if (typeof value !== "object" || value === null) return { lane: "leaf" };
-
-	if (Object.isFrozen(value)) return { lane: "untracked" };
-
-	return unfrozenAdmissionDecision(value);
-}
-
-export function admissionLane(value: unknown): AdmissionLane {
-	return admissionDecision(value).lane;
-}
-
-export function unfrozenAdmissionLane(value: unknown): AdmissionLane {
-	return unfrozenAdmissionDecision(value).lane;
-}

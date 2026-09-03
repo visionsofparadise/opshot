@@ -15,6 +15,12 @@ const listen = (state: object): Array<ReadonlyArray<Operation>> => {
 	return heard;
 };
 
+describe("createMutableState with a non-object", () => {
+	it("a primitive is returned unchanged", () => {
+		expect(createMutableState(1 as never)).toBe(1);
+	});
+});
+
 describe("§1.1 ride-alongs are untracked edges", () => {
 	it("a symbol key produces no operation", async () => {
 		const key = Symbol("hidden");

@@ -1,7 +1,6 @@
 import { createElement } from "react";
 import { createMutableState } from "../createMutableState";
 import { ignore } from "../ignore";
-import { unsafeTrack } from "../unsafeTrack";
 import { discoverStateKeys, substituteStates } from "./propWalk";
 
 class PrivateHolder {
@@ -35,10 +34,10 @@ describe("§6.3 discoverStateKeys", () => {
 		expect(discoveredKeys(root.list)).toEqual(["1"]);
 	});
 
-	it("does not search a live unsafeTrack() wrapper for states", () => {
+	it("leaves a container it cannot rebuild unsearched", () => {
 		const state = createState();
 
-		expect(discoveredKeys({ container: unsafeTrack(new PrivateHolder(state)) })).toEqual([]);
+		expect(discoveredKeys({ container: new PrivateHolder(state) })).toEqual([]);
 	});
 
 	it("leaves a frozen nested container unsearched", () => {

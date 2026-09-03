@@ -1,29 +1,4 @@
-import { createMutableState } from "./createMutableState";
-import { admissionLane, unfrozenAdmissionLane } from "./classify";
-
-describe("admissionLane", () => {
-	it("classifies freeze as untracked", () => {
-		expect(admissionLane(Object.freeze({ a: 1 }))).toBe("untracked");
-	});
-
-	it("classifies a primitive as a leaf and createMutableState returns it unchanged", () => {
-		expect(admissionLane(1)).toBe("leaf");
-		expect(createMutableState(1 as never)).toBe(1);
-	});
-});
-
-describe("unfrozenAdmissionLane", () => {
-	it("classifies a frozen Map as dangerous", () => {
-		const frozenMap = Object.freeze(new Map());
-
-		expect(admissionLane(frozenMap)).toBe("untracked");
-		expect(unfrozenAdmissionLane(frozenMap)).toBe("dangerous");
-	});
-
-	it("classifies a frozen plain object as tracked", () => {
-		expect(unfrozenAdmissionLane(Object.freeze({ a: 1 }))).toBe("tracked");
-	});
-});
+import { classifyValue } from "./classify";
 
 describe("private name detection", () => {
 	const instanceOf = (source: string): object => new (new Function(`return ${source}`)() as new () => object)();
@@ -67,7 +42,7 @@ describe("private name detection", () => {
 		["destructuring target", "class A { #x; f(o){ ({ a: this.#x } = o) } }"],
 		["residual: literal private-field code in a string", 'class A { p(){ return "call this.#x = 1 to set it" } }'],
 	] as const)("refuses %s", (_label, source) => {
-		expect(admissionLane(instanceOf(source))).toBe("dangerous");
+		expect(classifyValue(instanceOf(source))).toBe("privateClass");
 	});
 
 	it.each([
@@ -97,6 +72,6 @@ describe("private name detection", () => {
 		["template literal CSS block", "class A { p(){ return `a { color: #f0a; }` } }"],
 		["template literal line that is only #x", "class A { p(){ return `\n#x\n` } }"],
 	] as const)("tracks %s", (_label, source) => {
-		expect(admissionLane(instanceOf(source))).toBe("tracked");
+		expect(classifyValue(instanceOf(source))).toBe("cleanClass");
 	});
 });
