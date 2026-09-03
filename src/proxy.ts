@@ -84,6 +84,7 @@ export const handler: ProxyHandler<object> = {
 		const resolved: unknown = isObjectLike(value) ? rawOf(value) : value;
 		const handles = handlesOf(target);
 		const truncated = truncatedOwnEntriesOf(target, resolved);
+		const previousLength = Array.isArray(target) ? target.length : undefined;
 
 		for (const handle of handles) {
 			const membership = recordOf(target)?.memberships.get(handle);
@@ -148,6 +149,18 @@ export const handler: ProxyHandler<object> = {
 				hasBefore: hadPrevious,
 				hasAfter: true,
 			});
+
+			if (key !== "length" && Array.isArray(target) && previousLength !== target.length) {
+				recordOperation(handle, target, {
+					node,
+					key: "length",
+					meta,
+					before: previousLength,
+					after: target.length,
+					hasBefore: true,
+					hasAfter: true,
+				});
+			}
 		}
 
 		return result;
