@@ -1,7 +1,5 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
+import { recordOf } from "./node";
 import { peelReadProxy } from "./peelReadProxy";
-
-const { proxyStateMap } = unstable_getInternalStates();
 
 /**
  * Returns whether a value is an opshot state.
@@ -14,5 +12,5 @@ export function isState(value: unknown): value is object {
 
 	if (typeof resolved !== "object" || resolved === null) return false;
 
-	return proxyStateMap.has(resolved);
+	return recordOf(resolved)?.proxy === resolved;
 }

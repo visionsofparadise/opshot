@@ -1,13 +1,8 @@
-import { unstable_getInternalStates } from "valtio/vanilla";
 import { getRegisteredReadProxyTarget } from "./identity";
-
-const { proxyStateMap } = unstable_getInternalStates();
-
-const isObjectLike = (value: unknown): value is object =>
-	value !== null && (typeof value === "object" || typeof value === "function");
+import { isObjectLike } from "./utils/predicates";
 
 export function peelReadProxy(value: unknown): unknown {
-	if (!isObjectLike(value) || proxyStateMap.has(value)) return value;
+	if (!isObjectLike(value)) return value;
 
 	let current: unknown = value;
 

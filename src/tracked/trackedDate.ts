@@ -1,4 +1,3 @@
-import { installBoundary } from "../valtio/boundary";
 import { assertMutableFacade } from "./facadeGuard";
 
 class DateSetYearError extends Error {
@@ -72,8 +71,6 @@ export class TrackedDate {
 	private epochMs: number;
 
 	constructor(...args: DateConstructorArgs) {
-		installBoundary();
-
 		this.epochMs = constructDate(args).getTime();
 	}
 

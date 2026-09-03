@@ -1,18 +1,21 @@
-import { proxy, snapshot } from "valtio/vanilla";
-import { getGroupChain, type Group } from "./createGroup";
-import { seedInEdges } from "./edges";
-import { armWatch } from "./emit/emitter";
-import { requireObjectSnapshot } from "./emit/requireObjectSnapshot";
-import { registerHandle, type Handle } from "./handle";
+import { assertAdmissible } from "./admission";
+import { attach, isTrackedEntry } from "./edges";
+import { handleOf, type Handle } from "./handle";
 import { isIgnored } from "./ignore";
-import { isState } from "./isState";
-import { seedOccupancies } from "./occupancy";
-import { peelReadProxy } from "./peelReadProxy";
+import { installProxyHandler, proxyOf, recordOf, rawOf } from "./node";
+import { handler } from "./proxy";
 import { isUnsafeMarked } from "./unsafeTrack";
-import { assertSafeDataPaths, installBoundary } from "./valtio/boundary";
-import { rejectionError } from "./valtio/boundaryErrors";
-import { admissionDecision } from "./valtio/classify";
-import type { MutableNodeOptions } from "./settings";
+import { walkDataEntries } from "./utils/dataEntries";
+
+installProxyHandler(handler);
+
+/**
+ * Schedules when bare writes notify listeners. Call `flush` once.
+ *
+ * @param flush - Delivers pending ops.
+ * @returns Nothing.
+ */
+export type EmissionScheduler = (flush: () => void) => void;
 
 /**
  * Options for `createMutableState`.
@@ -20,11 +23,16 @@ import type { MutableNodeOptions } from "./settings";
  * @example
  * createMutableState({ count: 0 }, { group, emitOn, strict: false })
  */
-export interface MutableStateOptions extends MutableNodeOptions {
+export interface MutableStateOptions {
 	/**
-	 * Group that receives this state's changes.
+	 * When bare writes notify listeners. Defaults to a microtask.
 	 */
-	readonly group?: Group;
+	readonly emitOn?: EmissionScheduler;
+
+	/**
+	 * When true, throws at a dangerous edge, at the cause. Defaults to true.
+	 */
+	readonly strict?: boolean;
 }
 
 /**
@@ -38,72 +46,42 @@ export interface MutableStateOptions extends MutableNodeOptions {
  * @returns The state.
  */
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {
-	installBoundary();
+	const incoming: unknown = properties;
 
-	const root: unknown = properties;
+	if (typeof incoming !== "object" || incoming === null) return properties;
 
-	if (typeof root !== "object" || root === null) return root as T;
+	if (isIgnored(incoming)) return properties;
 
-	if (isIgnored(root)) return root as T;
+	if (Object.isFrozen(incoming)) return properties;
 
-	if (Object.isFrozen(root)) return root as T;
+	const root = rawOf(incoming);
 
-	if (isState(root)) {
-		const peeled = peelReadProxy(root);
+	if (handleOf(incoming) !== undefined) return proxyOf(incoming) as T;
 
-		if (typeof peeled === "object" && peeled !== null) return peeled as T;
-	}
-
-	const decision = admissionDecision(root);
 	const strict = options?.strict !== false;
-
-	if (decision.lane === "leaf") return root as T;
-
-	const base = Object.create(Reflect.getPrototypeOf(root)) as object;
-
-	Object.defineProperties(base, Object.getOwnPropertyDescriptors(root));
-
-	const exempt = isUnsafeMarked(root);
-
-	if (decision.lane === "dangerous" && strict && !exempt) {
-		throw rejectionError(base, decision.kind);
-	}
-
-	assertSafeDataPaths(base, [], new Set(), strict ? "admission" : "rootsOnly", exempt);
-
+	const exempt = !strict || isUnsafeMarked(root);
 	const handle: Handle = {
-		proxy: { root: base },
-		lastSnapshot: base,
-		hasPendingWrites: false,
-		isFlushScheduled: false,
-		isFlushHeld: false,
-		flushGeneration: 0,
-		subscribers: new Map(),
-		groups: options?.group !== undefined ? getGroupChain(options.group) : undefined,
-		emitOn: options?.emitOn,
+		root,
 		strict,
-		nodes: new WeakMap(),
-		byId: new Map(),
-		nextInternId: 1,
-		internedThrough: 0,
-		stamp: {},
-		version: 0,
-		replaying: false,
-		pendingOwner: undefined,
+		emitOn: options?.emitOn,
+		subscribers: new Map(),
+		pending: [],
+		pendingIndex: new Map(),
+		isFlushScheduled: false,
 	};
 
-	registerHandle(base, handle);
-	handle.nodes.set(base, { edges: [], id: 0, exempt });
-	handle.byId.set(0, base);
+	if (strict && !exempt) assertAdmissible(handle, root, [], false);
 
-	const instrumented = proxy({ root: base });
+	const proxy = proxyOf(root);
+	const record = recordOf(root);
 
-	handle.proxy = instrumented;
-	handle.lastSnapshot = requireObjectSnapshot(snapshot(instrumented.root));
-	seedInEdges(handle);
-	seedOccupancies(handle);
-	handle.internedThrough = handle.nextInternId - 1;
-	armWatch(handle);
+	if (record === undefined) throw new Error("opshot: node record missing after proxy");
 
-	return instrumented.root as T;
+	record.memberships.set(handle, { edges: 1, exempt });
+
+	for (const entry of walkDataEntries(root)) {
+		if (isTrackedEntry(handle, root, entry)) attach(handle, root, entry.value);
+	}
+
+	return proxy as T;
 }

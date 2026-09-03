@@ -1,8 +1,8 @@
+import { admissionLane, unfrozenAdmissionLane } from "../classify";
 import { isIgnored } from "../ignore";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
 import { walkDataEntries, type DataEntry } from "../utils/dataEntries";
-import { admissionLane, unfrozenAdmissionLane } from "../valtio/classify";
 
 export interface SubstitutionResult<T> {
 	readonly props: T;

@@ -1,4 +1,4 @@
-import { constructorName } from "../utils/constructorName";
+import { constructorName } from "./utils/constructorName";
 
 const ignoreOption = "ignore(value) to store it by reference, untracked";
 const unsafeTrackDataOption = "unsafeTrack(value) to track its data anyway";
@@ -52,11 +52,6 @@ export const nonWritablePropertyError = (value: object, path: ReadonlyArray<stri
 		"a non-writable property's interior is silently mutable and untracked",
 		["make the property writable", "ignore(value) to declare the escape"],
 		path,
-	);
-
-export const snapshotDonationError = (key: string | symbol): Error =>
-	new Error(
-		`opshot: cannot assign a snapshot generation at "${String(key)}": a snapshot generation is a read-view, and assigning it creates a dead region. Clone the value, or replay through applyOperations.`,
 	);
 
 const inheritsFromPrototype = (value: object, prototype: object): boolean => {

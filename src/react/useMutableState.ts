@@ -1,11 +1,10 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import { snapshot } from "valtio/vanilla";
 import { createMutableState, type MutableStateOptions } from "../createMutableState";
-import { handlesOf, type Handle } from "../handle";
+import { handlesOf, proxyOf } from "../node";
 import { subscribe } from "../subscribe";
-import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
 import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
+import type { Handle } from "../handle";
 
 interface MutableStateHolder<T> {
 	readonly writeProxy: T;
@@ -34,16 +33,11 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 	});
 	const [, bump] = useReducer((value: number) => value + 1, 0);
 	const currentHandlesRef = useRef<ReadonlyArray<Handle>>([]);
-	const [gapSnapshots] = useState(() => new WeakMap<Handle, object>());
 	const uniqueHandles = isObjectLike(writeProxy) ? handlesOf(writeProxy) : [];
 
 	readTracker.resetReads();
 
 	const readProxy = isObjectLike(writeProxy) ? readTracker.wrap(writeProxy) : writeProxy;
-
-	for (const handle of uniqueHandles) {
-		gapSnapshots.set(handle, snapshot(handle.proxy.root));
-	}
 
 	useCommitEffect(() => {
 		currentHandlesRef.current = uniqueHandles;
@@ -60,14 +54,8 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 		let cancelled = false;
 		const subscribedHandles = isObjectLike(writeProxy) ? handlesOf(writeProxy) : [];
 
-		for (const handle of subscribedHandles) {
-			const from = gapSnapshots.get(handle);
-
-			if (from !== undefined && readsIntersectDirty(readTracker, dirtySinceSnapshot(handle, from))) bump();
-		}
-
 		const unsubscribes = subscribedHandles.map((handle) =>
-			subscribe(handle.proxy.root, () => {
+			subscribe(proxyOf(handle.root), () => {
 				if (cancelled) return;
 
 				const dirty = handle.lastDirty;
@@ -78,14 +66,6 @@ export function useMutableState<T extends object>(properties: (() => T) | T, opt
 
 		return () => {
 			cancelled = true;
-
-			const currentHandles = new Set(currentHandlesRef.current);
-
-			for (const handle of subscribedHandles) {
-				if (currentHandles.has(handle)) continue;
-
-				gapSnapshots.set(handle, snapshot(handle.proxy.root));
-			}
 
 			for (const unsubscribe of unsubscribes) unsubscribe();
 		};

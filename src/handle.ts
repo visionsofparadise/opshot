@@ -1,82 +1,40 @@
-import { rawOf, rawTargetOf } from "./valtio/rawTarget";
-import type { BatchFrame } from "./batch";
-import type { NodeRecord } from "./edges";
-import type { GroupListeners, StateListeners } from "./emit/emitterRegistry";
-import type { EmissionScheduler } from "./settings";
-
-const occupancies = new WeakMap<object, Set<WeakRef<Handle>>>();
+import { recordOf, rawOf } from "./node";
+import type { StateListeners } from "./emit/emitterRegistry";
 
 export interface DirtyIndex {
-	readonly edges: WeakMap<object, Set<string | symbol>>;
-	readonly nodes: WeakSet<object>;
+	readonly edges: Map<object, Set<string>>;
+	readonly nodes: Set<object>;
+}
+
+export interface PendingOperation {
+	readonly node: object;
+	readonly key: string;
+	readonly meta: unknown;
+	before?: unknown;
+	after?: unknown;
+	hasBefore: boolean;
+	hasAfter: boolean;
 }
 
 export interface Handle {
-	proxy: { readonly root: object };
-	lastSnapshot: object;
-	hasPendingWrites: boolean;
+	readonly root: object;
+	readonly strict: boolean;
+	readonly emitOn?: (flush: () => void) => void;
+	readonly subscribers: StateListeners;
+	readonly pending: Array<PendingOperation>;
+	readonly pendingIndex: Map<object, Map<string, number>>;
 	isFlushScheduled: boolean;
-	isFlushHeld: boolean;
-	flushGeneration: number;
-	subscribers: StateListeners;
-	groups?: ReadonlyArray<GroupListeners>;
-	disarmWatch?: () => void;
-	emitOn?: EmissionScheduler;
-	strict: boolean;
-	nodes: WeakMap<object, NodeRecord>;
-	byId: Map<number, object>;
-	nextInternId: number;
-	internedThrough: number;
 	lastDirty?: DirtyIndex;
-	stamp: object;
-	version: number;
-	replaying: boolean;
-	pendingOwner: BatchFrame | undefined;
 }
 
-export function registerHandle(target: object, handle: Handle): void {
-	let occupants = occupancies.get(target);
+export function handleOf(state: object): Handle | undefined {
+	const raw = rawOf(state);
+	const record = recordOf(raw);
 
-	if (occupants === undefined) {
-		occupants = new Set();
-		occupancies.set(target, occupants);
-	}
+	if (record === undefined) return undefined;
 
-	for (const reference of occupants) {
-		if (reference.deref() === handle) return;
-	}
-
-	occupants.add(new WeakRef(handle));
-}
-
-export function handlesOf(node: object): Array<Handle> {
-	const target = rawOf(node);
-	const occupants = occupancies.get(target);
-
-	if (occupants === undefined) return [];
-
-	const handles = new Array<Handle>();
-
-	for (const reference of occupants) {
-		const handle = reference.deref();
-
-		if (handle === undefined) {
-			occupants.delete(reference);
-
-			continue;
-		}
-
-		handles.push(handle);
-	}
-
-	return handles;
-}
-
-export function handleOf(node: object): Handle | undefined {
-	const target = rawOf(node);
-
-	for (const handle of handlesOf(node)) {
-		if (rawTargetOf(handle.proxy.root) === target) return handle;
+	for (const handle of record.memberships.keys()) {
+		if (handle.root === raw) return handle;
 	}
 
 	return undefined;

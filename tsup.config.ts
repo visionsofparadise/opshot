@@ -8,5 +8,4 @@ export default defineConfig({
 	clean: true,
 	splitting: false,
 	external: ["react"],
-	noExternal: ["valtio", "proxy-compare"],
 });

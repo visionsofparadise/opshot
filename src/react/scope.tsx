@@ -1,14 +1,13 @@
-import { createElement, memo, useEffect, useReducer, useRef, useState, type ComponentType, type FC } from "react";
-import { snapshot } from "valtio/vanilla";
-import { handlesOf, type Handle } from "../handle";
+import { createElement, memo, useEffect, useReducer, useRef, type ComponentType, type FC } from "react";
 import { isSameIdentity } from "../identity";
 import { isState } from "../isState";
+import { handlesOf, proxyOf } from "../node";
 import { subscribe } from "../subscribe";
 import { addressOf } from "../tracked/address";
-import { dirtySinceSnapshot } from "./dirtySinceSnapshot";
 import { substituteStates } from "./propWalk";
 import { createReadTracker, readsIntersectDirty, type ReadTracker } from "./readTracker";
 import { useCommitEffect } from "./useCommitEffect";
+import type { Handle } from "../handle";
 
 const sourcesKey = (sources: ReadonlyArray<object>): string =>
 	`${sources.length}:${sources.map((source) => addressOf(source)).join(",")}`;
@@ -71,7 +70,6 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 	const Scoped: FC<P> = (props) => {
 		const readTrackerRef = useRef<ReadTracker | undefined>(undefined);
 		const currentHandlesRef = useRef<ReadonlyArray<Handle>>([]);
-		const [gapSnapshots] = useState(() => new WeakMap<Handle, object>());
 
 		readTrackerRef.current ??= createReadTracker();
 
@@ -82,10 +80,6 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 
 		const { props: renderedProps, sources } = substituteStates(props, (source) => readTracker.wrap(source));
 		const uniqueHandles = uniqueHandlesOf(sources);
-
-		for (const handle of uniqueHandles) {
-			gapSnapshots.set(handle, snapshot(handle.proxy.root));
-		}
 
 		useCommitEffect(() => {
 			currentHandlesRef.current = uniqueHandles;
@@ -102,14 +96,8 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 			let cancelled = false;
 			const subscribedHandles = uniqueHandlesOf(sources);
 
-			for (const handle of subscribedHandles) {
-				const from = gapSnapshots.get(handle);
-
-				if (from !== undefined && readsIntersectDirty(readTracker, dirtySinceSnapshot(handle, from))) bump();
-			}
-
 			const unsubscribes = subscribedHandles.map((handle) =>
-				subscribe(handle.proxy.root, () => {
+				subscribe(proxyOf(handle.root), () => {
 					if (cancelled) return;
 
 					const dirty = handle.lastDirty;
@@ -120,14 +108,6 @@ export function scope<P extends object>(Component: ComponentType<P>): FC<P> {
 
 			return () => {
 				cancelled = true;
-
-				const currentHandles = new Set(currentHandlesRef.current);
-
-				for (const handle of subscribedHandles) {
-					if (currentHandles.has(handle)) continue;
-
-					gapSnapshots.set(handle, snapshot(handle.proxy.root));
-				}
 
 				for (const unsubscribe of unsubscribes) unsubscribe();
 			};

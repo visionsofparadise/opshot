@@ -1,4 +1,4 @@
-import { storageIdentityOf } from "./identity";
+import { rawOf } from "./node";
 
 const unsafeMarked = new WeakSet<object>();
 
@@ -13,10 +13,10 @@ const unsafeMarked = new WeakSet<object>();
 export function unsafeTrack<T>(value: T, on = true): T {
 	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
 
-	if (on) unsafeMarked.add(storageIdentityOf(value));
-	else unsafeMarked.delete(storageIdentityOf(value));
+	if (on) unsafeMarked.add(rawOf(value));
+	else unsafeMarked.delete(rawOf(value));
 
 	return value;
 }
 
-export const isUnsafeMarked = (value: object): boolean => unsafeMarked.has(storageIdentityOf(value));
+export const isUnsafeMarked = (value: object): boolean => unsafeMarked.has(rawOf(value));

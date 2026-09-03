@@ -1,4 +1,4 @@
-import { createMutableState } from "../createMutableState";
+import { createMutableState } from "./createMutableState";
 import { admissionLane, unfrozenAdmissionLane } from "./classify";
 
 describe("admissionLane", () => {

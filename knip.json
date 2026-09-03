@@ -13,9 +13,5 @@
 		"textlint-filter-rule-comments",
 		"textlint-rule-no-dead-link",
 		"@commitlint/cli"
-	],
-	"ignoreIssues": {
-		"src/occupancy.ts": ["exports", "types"],
-		"src/valtio/boundary.ts": ["exports", "types"]
-	}
+	]
 }

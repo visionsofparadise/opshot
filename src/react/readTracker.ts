@@ -1,20 +1,15 @@
-import { getVersion, unstable_getInternalStates } from "valtio/vanilla";
-import { getRegisteredReadProxyTarget, registerReadProxyTarget } from "../identity";
+import { registerReadProxyTarget } from "../identity";
+import { recordOf, rawOf } from "../node";
+import { isObjectLike } from "../utils/predicates";
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
 import type { DirtyIndex } from "../handle";
-
-const { proxyStateMap } = unstable_getInternalStates();
 
 const KEYS_PROPERTY = "k";
 const HAS_KEY_PROPERTY = "h";
 const HAS_OWN_KEY_PROPERTY = "o";
 const ALL_OWN_KEYS_PROPERTY = "w";
 
-const isObjectLike = (value: unknown): value is object =>
-	value !== null && (typeof value === "object" || typeof value === "function");
-const isLiveProxy = (value: object): value is object => proxyStateMap.has(value);
-const getProxyTarget = (writeProxy: object): object => proxyStateMap.get(writeProxy)?.[0] ?? writeProxy;
-const getProxyVersion = (writeProxy: object): number => getVersion(writeProxy) ?? 0;
+const isWriteProxy = (value: object): boolean => recordOf(value)?.proxy === value;
 
 interface UsageRecord {
 	[KEYS_PROPERTY]?: Set<string | symbol>;
@@ -26,7 +21,7 @@ interface UsageRecord {
 interface SourcePartition {
 	readonly affected: Map<object, UsageRecord>;
 	readonly identityReads: Set<object>;
-	readonly proxyCache: WeakMap<object, { readProxy: object; version: number }>;
+	readonly proxyCache: WeakMap<object, object>;
 }
 
 export interface ReadTracker {
@@ -85,9 +80,6 @@ const getPrototypeMethod = (target: object, prop: string | symbol): Function | u
 	return undefined;
 };
 
-export const isReadProxy = (value: unknown): boolean =>
-	isObjectLike(value) && getRegisteredReadProxyTarget(value) !== undefined;
-
 class UnregisteredReadTrackerError extends Error {
 	constructor() {
 		super("opshot: readsIntersectDirty received an unregistered tracker");
@@ -116,11 +108,13 @@ export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): bo
 
 	for (const partition of partitions.values()) {
 		for (const [writeProxy, used] of partition.affected) {
-			const raw = getProxyTarget(writeProxy);
+			const raw = rawOf(writeProxy);
 			const edges = dirty.edges.get(raw);
 
 			for (const keys of recordedKeysOf(used)) {
 				for (const key of keys) {
+					if (typeof key === "symbol") continue;
+
 					if (edges?.has(key) === true) return true;
 				}
 			}
@@ -131,7 +125,7 @@ export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): bo
 		for (const writeProxy of partition.identityReads) {
 			if (partition.affected.has(writeProxy)) continue;
 
-			if (dirty.nodes.has(getProxyTarget(writeProxy))) return true;
+			if (dirty.nodes.has(rawOf(writeProxy))) return true;
 		}
 	}
 
@@ -166,16 +160,16 @@ export function createReadTracker(): ReadTracker {
 	const recordIdentity = (partition: SourcePartition, value: unknown): void => {
 		if (!shouldRecord()) return;
 
-		if (isObjectLike(value) && isLiveProxy(value)) partition.identityReads.add(value);
+		if (isObjectLike(value) && isWriteProxy(value)) partition.identityReads.add(value);
 	};
 
 	const toReadProxy = <T extends object>(writeProxy: T, partition: SourcePartition): T => {
-		const currentVersion = getProxyVersion(writeProxy);
-		const cached = partition.proxyCache.get(writeProxy);
+		const raw = rawOf(writeProxy);
+		const cached = partition.proxyCache.get(raw);
 
-		if (cached?.version === currentVersion) return cached.readProxy as T;
+		if (cached !== undefined) return cached as T;
 
-		const target = getProxyTarget(writeProxy);
+		const target = raw;
 
 		const readProxyBox: { current?: object } = {};
 		const boundMethods = new WeakMap<Function, Function>();
@@ -214,7 +208,7 @@ export function createReadTracker(): ReadTracker {
 
 				if (typeof value === "function") return value;
 
-				if (!isLiveProxy(value)) return value;
+				if (!isWriteProxy(value)) return value;
 
 				return toReadProxy(value, partition);
 			},
@@ -251,14 +245,14 @@ export function createReadTracker(): ReadTracker {
 
 		readProxyBox.current = readProxy;
 		registerReadProxyTarget(readProxy, writeProxy);
-		partition.proxyCache.set(writeProxy, { readProxy, version: currentVersion });
+		partition.proxyCache.set(raw, readProxy);
 
 		return readProxy;
 	};
 
 	const tracker: ReadTracker = {
 		wrap<T extends object>(writeProxy: T): T {
-			if (!isLiveProxy(writeProxy)) {
+			if (!isWriteProxy(writeProxy)) {
 				throw new Error("opshot: ReadTracker.wrap requires a write proxy");
 			}
 

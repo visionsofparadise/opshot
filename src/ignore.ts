@@ -1,4 +1,4 @@
-import { storageIdentityOf } from "./identity";
+import { rawOf } from "./node";
 
 const ignored = new WeakSet<object>();
 
@@ -13,10 +13,10 @@ const ignored = new WeakSet<object>();
 export function ignore<T>(value: T, on = true): T {
 	if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
 
-	if (on) ignored.add(storageIdentityOf(value));
-	else ignored.delete(storageIdentityOf(value));
+	if (on) ignored.add(rawOf(value));
+	else ignored.delete(rawOf(value));
 
 	return value;
 }
 
-export const isIgnored = (value: object): boolean => ignored.has(storageIdentityOf(value));
+export const isIgnored = (value: object): boolean => ignored.has(rawOf(value));

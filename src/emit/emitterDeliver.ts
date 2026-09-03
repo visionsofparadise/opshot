@@ -1,47 +1,16 @@
-import { handleOf, type DirtyIndex, type Handle } from "../handle";
-import type { GroupDeliver, StateDeliver } from "./emitterRegistry";
-import type { Operation } from "../ops/operation";
-
-type Delivery =
-	| { readonly kind: "group"; readonly deliver: GroupDeliver }
-	| { readonly kind: "own"; readonly deliver: StateDeliver };
+import type { Handle } from "../handle";
+import type { Operation } from "../operation";
+import type { StateDeliver } from "./emitterRegistry";
 
 export interface PendingDelivery {
-	readonly writeProxy: object;
-	readonly deliveries: ReadonlyArray<Delivery>;
-	readonly ops: ReadonlyArray<Operation>;
-	readonly meta: unknown;
-	readonly dirty: DirtyIndex;
+	readonly deliveries: ReadonlyArray<StateDeliver>;
+	readonly operations: ReadonlyArray<Operation>;
 }
 
-const collectDeliveries = (handle: Handle): Array<Delivery> => {
-	const deliveries: Array<Delivery> = [];
-
-	for (const groupListeners of handle.groups ?? []) {
-		for (const deliverToListener of groupListeners.values()) {
-			deliveries.push({ kind: "group", deliver: deliverToListener });
-		}
-	}
-
-	for (const deliverToListener of handle.subscribers.values()) {
-		deliveries.push({ kind: "own", deliver: deliverToListener });
-	}
-
-	return deliveries;
-};
-
 const runDelivery = (pending: PendingDelivery, failures: Array<unknown>): void => {
-	const handle = handleOf(pending.writeProxy);
-
-	if (handle !== undefined) handle.lastDirty = pending.dirty;
-
-	for (const delivery of pending.deliveries) {
+	for (const deliver of pending.deliveries) {
 		try {
-			if (delivery.kind === "group") {
-				delivery.deliver(pending.writeProxy, pending.ops, pending.meta);
-			} else {
-				delivery.deliver(pending.ops, pending.meta);
-			}
+			deliver(pending.operations);
 		} catch (error) {
 			failures.push(error);
 		}
@@ -61,17 +30,9 @@ const deliveryFailures: Array<unknown> = [];
 
 let isDraining = false;
 
-export const prepareDelivery = (
-	handle: Handle,
-	ops: ReadonlyArray<Operation>,
-	meta: unknown,
-	dirty: DirtyIndex,
-): PendingDelivery => ({
-	writeProxy: handle.proxy.root,
-	deliveries: collectDeliveries(handle),
-	ops,
-	meta,
-	dirty,
+export const prepareDelivery = (handle: Handle, operations: ReadonlyArray<Operation>): PendingDelivery => ({
+	deliveries: [...handle.subscribers.values()],
+	operations,
 });
 
 export const enqueueDelivery = (pending: PendingDelivery): void => {

@@ -1,10 +1,6 @@
-import { getUntracked } from "proxy-compare";
-import { unstable_getInternalStates } from "valtio/vanilla";
+import { rawOf } from "./node";
+import { isObjectLike } from "./utils/predicates";
 
-const isObjectLike = (value: unknown): value is object =>
-	value !== null && (typeof value === "object" || typeof value === "function");
-
-const targetRegistry = new WeakMap<object, object>();
 const readProxyTargets = new WeakMap<object, object>();
 
 interface IdentityRecord {
@@ -15,69 +11,34 @@ interface IdentityRecord {
 const identityRecords = new WeakMap<WeakKey, IdentityRecord>();
 let nextInternId = 0;
 
-const { proxyStateMap } = unstable_getInternalStates();
-
-export function registerSnapshotCopy(copy: object, target: object): void {
-	targetRegistry.set(copy, target);
-}
-
-export function getRegisteredTarget(copy: object): object | undefined {
-	return targetRegistry.get(copy);
-}
-
-export const storageIdentityOf = (value: object): object => {
-	const registered = targetRegistry.get(value);
-	const object = registered ?? value;
-
-	return proxyStateMap.get(object)?.[0] ?? object;
-};
-
 export const registerReadProxyTarget = (readProxy: object, target: object): void => {
 	readProxyTargets.set(readProxy, target);
 };
 
 export const getRegisteredReadProxyTarget = (readProxy: object): object | undefined => readProxyTargets.get(readProxy);
 
-export function peelIdentityLayer(current: object): object | undefined {
-	const untracked = getUntracked(current);
+function resolveIdentity(value: object | symbol): object | symbol;
 
-	if (untracked !== null && untracked !== current) return untracked;
+function resolveIdentity(value: unknown): unknown;
 
-	const readProxyTarget = getRegisteredReadProxyTarget(current);
-
-	if (readProxyTarget !== undefined && readProxyTarget !== current) return readProxyTarget;
-
-	const registeredTarget = targetRegistry.get(current);
-
-	if (registeredTarget !== undefined && registeredTarget !== current) return registeredTarget;
-
-	return undefined;
-}
-
-export function resolveIdentity(value: object | symbol): object | symbol;
-export function resolveIdentity(value: unknown): unknown;
-export function resolveIdentity(value: unknown): unknown {
+function resolveIdentity(value: unknown): unknown {
 	let current = value;
 
 	while (isObjectLike(current)) {
-		const peeled = peelIdentityLayer(current);
+		const readTarget = getRegisteredReadProxyTarget(current);
 
-		if (peeled !== undefined) {
-			current = peeled;
+		if (readTarget !== undefined && readTarget !== current) {
+			current = readTarget;
 
 			continue;
 		}
 
-		const entry = proxyStateMap.get(current);
+		const raw = rawOf(current);
 
-		if (entry !== undefined) {
-			const target = entry[0];
+		if (raw !== current) {
+			current = raw;
 
-			if (target !== current) {
-				current = target;
-
-				continue;
-			}
+			continue;
 		}
 
 		break;

@@ -1,4 +1,4 @@
-import { isCanonicalArrayIndexString } from "../ops/predicates";
+import { isCanonicalArrayIndexString } from "./predicates";
 
 export interface DataEntry {
 	readonly key: string;
@@ -44,6 +44,3 @@ export const dataEntryValuesOf = (value: object): Map<string, unknown> => {
 
 	return entries;
 };
-
-export const carriedOwnKeysOf = (value: object): Array<string | symbol> =>
-	Reflect.ownKeys(value).filter((key) => key !== "__proto__");
