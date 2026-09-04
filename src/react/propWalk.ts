@@ -1,4 +1,4 @@
-import { classifyValue } from "../classify";
+import { isDangerousKind, classifyValue } from "../classify";
 import { isTrackedEntry } from "../edges";
 import { isState } from "../isState";
 import { peelReadProxy } from "../peelReadProxy";
@@ -33,11 +33,7 @@ const noStateKeys: ReadonlySet<string> = new Set<string>();
 const isReactOwnNode = (value: object): boolean =>
 	"$$typeof" in value || (typeof Node !== "undefined" && value instanceof Node);
 
-const canRebuild = (container: object): boolean => {
-	const kind = classifyValue(container);
-
-	return kind === "plain" || kind === "plainArray" || kind === "cleanClass";
-};
+const canRebuild = (container: object): boolean => !isDangerousKind(classifyValue(container));
 
 const childRole = (value: unknown, writable: boolean, mode: WalkMode): ChildRole => {
 	if (typeof value !== "object" || value === null) return "skip";

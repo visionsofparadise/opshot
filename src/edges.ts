@@ -1,5 +1,5 @@
 import { nonWritablePropertyError, rejectionError } from "./boundaryErrors";
-import { classifyValue } from "./classify";
+import { classifyValue, isDangerousKind } from "./classify";
 import { isIgnored } from "./ignore";
 import { proxyOf, recordOf, rawOf } from "./node";
 import { isUnsafeMarked } from "./unsafeTrack";
@@ -12,7 +12,7 @@ export const isTrackedEntry = (value: unknown, writable: boolean): value is obje
 const checkNode = (node: object, entries: Array<DataEntry>, route: ReadonlyArray<string>): void => {
 	const kind = classifyValue(node);
 
-	if (kind !== "plain" && kind !== "plainArray" && kind !== "cleanClass") throw rejectionError(node, kind, route);
+	if (isDangerousKind(kind)) throw rejectionError(node, kind, route);
 
 	for (const entry of entries) {
 		if (typeof entry.value === "function") {

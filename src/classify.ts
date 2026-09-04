@@ -1,5 +1,8 @@
 export type ValueKind = "plain" | "plainArray" | "arraySubclass" | "cleanClass" | "privateClass" | "nativeClass";
 
+export const isDangerousKind = (kind: ValueKind): kind is Exclude<ValueKind, "plain" | "plainArray" | "cleanClass"> =>
+	kind !== "plain" && kind !== "plainArray" && kind !== "cleanClass";
+
 const sourceCache = new WeakMap<Function, string>();
 const kindCache = new WeakMap<Function, ValueKind>();
 
