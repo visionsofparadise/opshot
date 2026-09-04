@@ -46,17 +46,7 @@ export function proxyOf(raw: object): object {
 }
 
 export function handlesOf(node: object): Array<Handle> {
-	const record = recordOf(rawOf(node));
-
-	if (record === undefined) return [];
-
-	const handles = new Array<Handle>();
-
-	for (const [handle, membership] of record.memberships) {
-		if (membership.edges > 0) handles.push(handle);
-	}
-
-	return handles;
+	return membershipsOf(node).map(([handle]) => handle);
 }
 
 export function membershipsOf(node: object): Array<[Handle, Membership]> {
