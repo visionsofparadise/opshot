@@ -95,10 +95,10 @@ const Player = () => {
 	const player: PlayerState = useMutableState({
 		position: 0,
 
-		// ignore() marks an object; every edge to it is untracked in every state.
+		// ignore() stores it as-is; opshot never looks inside.
 		element: ignore(new Audio()),
 
-		// unsafeTrack() marks an object; a node entering while marked, or entering beneath it, is exempt from strict.
+		// unsafeTrack() takes it anyway, tracking the plain data on it.
 		queue: unsafeTrack(new Playlist()),
 
 		seek(position: number) {
@@ -125,9 +125,9 @@ It can't track:
 - Own function properties on class instances
 - Non-writable properties that hold an object
 
-`strict: true` throws at a dangerous edge, at the cause.
+By default opshot throws when it meets one of these, naming the value that caused it. Pass `strict: false` and it takes the value anyway — the parts it can't see simply never re-render.
 
-`ignore(value)` marks an object; every edge to it is untracked in every state. `ignore(value, false)` clears the mark. Marking or clearing changes no existing edge. `unsafeTrack(value)` marks an object so a node entering a state while marked, or entering beneath an exempt node, is exempt from strict.
+`ignore(value)` stores a value without ever looking inside it, and `ignore(value, false)` undoes that. `unsafeTrack(value)` does the reverse: it takes a value strict mode would reject, tracking the plain data on it and quietly missing the rest. Either mark only affects states the value enters afterwards.
 
 ## Tracked collections
 
@@ -178,11 +178,11 @@ interface Operation {
 }
 ```
 
-`before` and `after` are absent properties when the key was absent. A node is the same proxy the reader holds. Undo, redo, and persistence are the reader's to build from `before` and `after`.
+`before` and `after` are absent properties when the key was absent. `node` is the same object you read from the state, so you can compare it by identity.
 
 ## Batches
 
-`batch` runs its callback synchronously and tags each write with the call's meta; nested calls use the innermost meta. It does not emit. A throw propagates, and writes already made still carry that meta. Emission is the state's window (`emitOn`, default a microtask). A write inside batch carries the call's meta; operations with different metas never merge.
+`batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's.
 
 ```tsx
 import { useEffect } from "react";
