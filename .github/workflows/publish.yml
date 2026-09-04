@@ -17,11 +17,14 @@ jobs:
 
          - uses: actions/setup-node@v4
            with:
-              node-version: "22"
+              node-version: "24"
               registry-url: "https://registry.npmjs.org"
 
-         - name: Upgrade npm for OIDC support
-           run: npm install -g npm@latest
+         - name: Pin npm 12
+           run: npm install -g npm@12
+
+         - name: Enforce install-script allowlist
+           run: npm config set strict-allow-scripts=true --location=project
 
          - name: Check if version is already published
            id: check
