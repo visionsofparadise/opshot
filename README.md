@@ -125,9 +125,9 @@ It can't track:
 - Own function properties on class instances
 - Non-writable properties that hold an object
 
-By default opshot throws when it meets one of these, naming the value that caused it. Pass `strict: false` and it takes the value anyway — the parts it can't see simply never re-render.
+By default opshot throws when it meets one of these, naming the value that caused it. Passing `strict: false` turns off those errors but may cause unpredictable behaviour.
 
-`ignore(value)` stores a value without ever looking inside it, and `ignore(value, false)` undoes that. `unsafeTrack(value)` does the reverse: it takes a value strict mode would reject, tracking the plain data on it and quietly missing the rest. Either mark only affects states the value enters afterwards.
+`ignore(value)` stores a value without state inside it being tracked, and `ignore(value, false)` undoes that. `unsafeTrack(value)` does the reverse: it takes a value strict mode would reject, tracking the plain data on it and quietly missing the rest. Either mark only affects states the value enters afterwards.
 
 ## Tracked collections
 
@@ -178,7 +178,33 @@ interface Operation {
 }
 ```
 
-`before` and `after` are absent properties when the key was absent. `node` is the same object you read from the state, so you can compare it by identity.
+`before` and `after` are absent properties when the key was absent.
+
+## Emission
+
+A state gathers its writes and delivers them together. The window is a microtask by default, so everything you change in one go arrives as one emission carrying the net change — a listener hears where a field ended up, not every step it took there.
+
+`emitOn` sets the window instead. opshot hands you a `flush`, and the state waits until you call it.
+
+```tsx
+import { useEffect } from "react";
+import { subscribe, useMutableState } from "opshot";
+
+const Chart = () => {
+	// One emission per frame, however many writes land in between.
+	const cursor = useMutableState({ x: 0, y: 0 }, { emitOn: (flush) => requestAnimationFrame(flush) });
+
+	useEffect(
+		() =>
+			subscribe(cursor, (operations) => {
+				// ...
+			}),
+		[cursor],
+	);
+
+	// ...
+};
+```
 
 ## Batches
 
