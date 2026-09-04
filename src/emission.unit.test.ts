@@ -1,4 +1,6 @@
+import { batch } from "./batch";
 import { createMutableState } from "./createMutableState";
+import { flush } from "./flush";
 import type { Operation } from "./operation";
 import { subscribe } from "./subscribe";
 
@@ -216,5 +218,103 @@ describe("§5.3 emitOn sets the window", () => {
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.[0]).toMatchObject({ key: "n", before: 0, after: 2 });
+	});
+});
+
+describe("flush ends the window", () => {
+	it("two writes then a flush deliver one emission before any await", () => {
+		const state = createMutableState({ n: 0 });
+		const heard = listen(state);
+
+		state.n = 1;
+		state.n = 2;
+
+		flush(state);
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]).toHaveLength(1);
+		expect(heard[0]?.[0]).toMatchObject({ key: "n", before: 0, after: 2 });
+	});
+
+	it("a flush with nothing pending delivers nothing", async () => {
+		const state = createMutableState({ n: 0 });
+		const heard = listen(state);
+
+		flush(state);
+
+		expect(heard).toEqual([]);
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
+	it("a flush leaves a scheduler with no run, and a later write schedules one", async () => {
+		const scheduled: Array<() => void> = [];
+		const state = createMutableState({ n: 0 }, { emitOn: (run) => scheduled.push(run) });
+		const heard = listen(state);
+
+		state.n = 1;
+
+		flush(state);
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]).toMatchObject({ key: "n", before: 0, after: 1 });
+
+		await Promise.resolve();
+
+		expect(scheduled).toEqual([]);
+
+		state.n = 2;
+
+		await Promise.resolve();
+
+		expect(scheduled).toHaveLength(1);
+
+		scheduled[0]?.();
+
+		expect(heard).toHaveLength(2);
+		expect(heard[1]).toHaveLength(1);
+		expect(heard[1]?.[0]).toMatchObject({ key: "n", before: 1, after: 2 });
+	});
+
+	it("a run a scheduler already holds delivers nothing after a flush", async () => {
+		const scheduled: Array<() => void> = [];
+		const state = createMutableState({ n: 0 }, { emitOn: (run) => scheduled.push(run) });
+		const heard = listen(state);
+
+		state.n = 1;
+
+		await Promise.resolve();
+
+		expect(scheduled).toHaveLength(1);
+
+		flush(state);
+
+		expect(heard).toHaveLength(1);
+
+		scheduled[0]?.();
+
+		expect(heard).toHaveLength(1);
+	});
+
+	it("a flush inside a batch carries that batch's meta", () => {
+		const state = createMutableState({ n: 0 });
+		const heard = listen(state);
+		const meta = { source: "flush" };
+
+		batch(() => {
+			state.n = 1;
+
+			flush(state);
+		}, meta);
+
+		expect(heard).toHaveLength(1);
+		expect(heard[0]?.[0]).toMatchObject({ key: "n", before: 0, after: 1 });
+		expect(heard[0]?.[0]?.meta).toBe(meta);
+	});
+
+	it("a flush of a plain object throws", () => {
+		expect(() => flush({})).toThrow("opshot: flush requires a state");
 	});
 });

@@ -10,5 +10,6 @@ export { TrackedSet } from "./tracked/trackedSet";
 export { type StateListener } from "./emit/emitterRegistry";
 export { subscribe } from "./subscribe";
 export { batch } from "./batch";
+export { flush } from "./flush";
 export { scope } from "./react/scope";
 export { useMutableState } from "./react/useMutableState";

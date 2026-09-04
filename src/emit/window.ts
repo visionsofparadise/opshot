@@ -24,15 +24,19 @@ export function recordOperation(handle: Handle, raw: object, pending: PendingOpe
 	handle.pending.push(pending);
 	byKey.set(pending.key, handle.pending.length - 1);
 
-	if (handle.isFlushScheduled) return;
-
-	handle.isFlushScheduled = true;
+	if (handle.scheduledFlush !== undefined) return;
 
 	const run = (): void => {
-		flush(handle);
+		if (handle.scheduledFlush !== run) return;
+
+		flushWindow(handle);
 	};
 
+	handle.scheduledFlush = run;
+
 	void Promise.resolve().then(() => {
+		if (handle.scheduledFlush !== run) return;
+
 		const emitOn = handle.emitOn;
 
 		if (emitOn === undefined) run();
@@ -40,8 +44,8 @@ export function recordOperation(handle: Handle, raw: object, pending: PendingOpe
 	});
 }
 
-function flush(handle: Handle): void {
-	handle.isFlushScheduled = false;
+export function flushWindow(handle: Handle): void {
+	handle.scheduledFlush = undefined;
 
 	const pending = handle.pending.splice(0);
 
@@ -63,6 +67,8 @@ function flush(handle: Handle): void {
 		operations.push(Object.freeze(operation));
 	}
 
+	if (operations.length === 0) return;
+
 	const edges = new Map<object, Set<string>>();
 	const nodes = new Set<object>();
 
@@ -81,10 +87,6 @@ function flush(handle: Handle): void {
 
 	const dirty: DirtyIndex = { edges, nodes };
 
-	handle.lastDirty = dirty;
-
-	if (operations.length === 0) return;
-
-	enqueueDelivery(prepareDelivery(handle, operations));
+	enqueueDelivery(prepareDelivery(handle, operations, dirty));
 	drainDeliveries();
 }

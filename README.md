@@ -206,6 +206,8 @@ const Chart = () => {
 };
 ```
 
+Separate from that callback, the `flush(state)` export ends the window from outside, whether it is the default microtask or one your scheduler holds: subscribers hear what the state has gathered before it returns, and any callback your scheduler still holds for that window delivers nothing when it runs.
+
 ## Batches
 
 `batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's.

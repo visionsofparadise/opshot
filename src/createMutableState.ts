@@ -65,7 +65,6 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 		subscribers: new Map(),
 		pending: [],
 		pendingIndex: new Map(),
-		isFlushScheduled: false,
 	};
 
 	const proxy = proxyOf(root);

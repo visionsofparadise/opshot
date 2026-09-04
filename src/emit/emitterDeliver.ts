@@ -1,13 +1,17 @@
-import type { Handle } from "../handle";
+import type { DirtyIndex, Handle } from "../handle";
 import type { Operation } from "../operation";
 import type { StateDeliver } from "./emitterRegistry";
 
 export interface PendingDelivery {
 	readonly deliveries: ReadonlyArray<StateDeliver>;
 	readonly operations: ReadonlyArray<Operation>;
+	readonly handle: Handle;
+	readonly dirty: DirtyIndex;
 }
 
 const runDelivery = (pending: PendingDelivery, failures: Array<unknown>): void => {
+	pending.handle.lastDirty = pending.dirty;
+
 	for (const deliver of pending.deliveries) {
 		try {
 			deliver(pending.operations);
@@ -30,9 +34,15 @@ const deliveryFailures: Array<unknown> = [];
 
 let isDraining = false;
 
-export const prepareDelivery = (handle: Handle, operations: ReadonlyArray<Operation>): PendingDelivery => ({
+export const prepareDelivery = (
+	handle: Handle,
+	operations: ReadonlyArray<Operation>,
+	dirty: DirtyIndex,
+): PendingDelivery => ({
 	deliveries: [...handle.subscribers.values()],
 	operations,
+	handle,
+	dirty,
 });
 
 export const enqueueDelivery = (pending: PendingDelivery): void => {

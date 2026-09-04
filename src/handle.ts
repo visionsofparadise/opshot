@@ -23,7 +23,7 @@ export interface Handle {
 	readonly subscribers: StateListeners;
 	readonly pending: Array<PendingOperation>;
 	readonly pendingIndex: Map<object, Map<string, number>>;
-	isFlushScheduled: boolean;
+	scheduledFlush?: () => void;
 	lastDirty?: DirtyIndex;
 }
 

@@ -6,6 +6,8 @@ import { useLayoutEffect, useRef, useState, type FC } from "react";
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
 import { batch } from "../batch";
+import { flush } from "../flush";
+import { subscribe } from "../subscribe";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
@@ -413,5 +415,34 @@ describe("§6.2 re-render on a read edge", () => {
 
 		expect(screen.getByTestId("count").textContent).toBe("1");
 		expect(renders).toBe(3);
+	});
+
+	it("re-renders for the outer emission when a listener writes and flushes", async () => {
+		const state = createMutableState({ x: 0, y: 0 });
+
+		subscribe(state, () => {
+			if (state.y === 0) {
+				state.y = 1;
+
+				flush(state);
+			}
+		});
+
+		const Reader: FC = () => {
+			const read = useMutableState(state);
+
+			return <span>{read.x}</span>;
+		};
+
+		render(<Reader />);
+
+		expect(screen.getByText("0")).toBeTruthy();
+
+		await act(async () => {
+			state.x = 1;
+		});
+
+		expect(screen.getByText("1")).toBeTruthy();
+		expect(state.y).toBe(1);
 	});
 });
