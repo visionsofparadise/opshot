@@ -130,6 +130,33 @@ describe("§7.1 strict: true throws at a dangerous edge, at the cause", () => {
 		expect(heard).toEqual([]);
 	});
 
+	it("a write the target refuses attaches no edge", async () => {
+		const raw = { keep: { n: 0 }, locked: 0 };
+
+		Object.defineProperty(raw, "locked", { value: 0, writable: false, enumerable: true, configurable: true });
+
+		const state = createMutableState(raw as { keep?: { n: number }; locked: unknown });
+		const keep = state.keep;
+
+		if (keep === undefined) throw new Error("missing child");
+
+		expect(() => {
+			state.locked = keep;
+		}).toThrow(TypeError);
+
+		delete state.keep;
+
+		await Promise.resolve();
+
+		const heard = listen(state);
+
+		keep.n = 1;
+
+		await Promise.resolve();
+
+		expect(heard).toEqual([]);
+	});
+
 	it("a throwing creation leaves no membership behind", () => {
 		const raw = { ok: {}, bad: new Map() };
 

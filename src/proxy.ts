@@ -135,24 +135,26 @@ export const handler: ProxyHandler<object> = {
 
 		const incoming: object | undefined =
 			resolved !== previous && isTrackedEntry(resolved, true) ? resolved : undefined;
-		const started = new Array<MembershipWrite>();
-
-		const rollBack = (attached: object): void => {
-			for (const { handle, membership, hadKey } of started) {
-				detach(handle, attached);
-
-				if (!hadKey) membership.keys.delete(key);
-			}
-		};
+		let rollBack: (() => void) | undefined;
 
 		if (incoming !== undefined) {
+			const started = new Array<MembershipWrite>();
+
+			rollBack = () => {
+				for (const { handle, membership, hadKey } of started) {
+					detach(handle, incoming);
+
+					if (!hadKey) membership.keys.delete(key);
+				}
+			};
+
 			try {
 				for (const write of memberships) {
 					started.push(write);
 					attach(write.handle, target, key, incoming, [key]);
 				}
 			} catch (error) {
-				rollBack(incoming);
+				rollBack();
 
 				throw error;
 			}
@@ -161,7 +163,7 @@ export const handler: ProxyHandler<object> = {
 		const result = Reflect.set(target, key, resolved, receiver);
 
 		if (!result) {
-			if (incoming !== undefined) rollBack(incoming);
+			rollBack?.();
 
 			return result;
 		}
