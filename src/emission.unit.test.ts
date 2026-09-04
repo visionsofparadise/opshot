@@ -298,6 +298,33 @@ describe("flush ends the window", () => {
 		expect(heard).toHaveLength(1);
 	});
 
+	it("a run a scheduler held before a flush delivers nothing, and the run scheduled after it delivers", async () => {
+		const scheduled: Array<() => void> = [];
+		const state = createMutableState({ n: 0 }, { emitOn: (run) => scheduled.push(run) });
+		const heard = listen(state);
+
+		state.n = 1;
+
+		await Promise.resolve();
+
+		flush(state);
+
+		state.n = 2;
+
+		await Promise.resolve();
+
+		expect(scheduled).toHaveLength(2);
+
+		scheduled[0]?.();
+
+		expect(heard).toHaveLength(1);
+
+		scheduled[1]?.();
+
+		expect(heard).toHaveLength(2);
+		expect(heard[1]?.[0]).toMatchObject({ key: "n", before: 1, after: 2 });
+	});
+
 	it("a flush inside a batch carries that batch's meta", () => {
 		const state = createMutableState({ n: 0 });
 		const heard = listen(state);
