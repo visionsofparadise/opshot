@@ -123,7 +123,7 @@ const Player = () => {
 
 ## Identity
 
-A component holds its own view of a state: the same object across its renders until a change lands at or beneath it, and a different object from the state held outside it. A dependency array can name a state or a field object and re-runs only when something under it changed. Any view is accepted wherever a state is: assign it into a state, subscribe to it, flush it. `isSameIdentity(a, b)` says whether two objects are one state, `identify(state)` returns one stable token per state for a dependency array or a Map key, and `isState(value)` tells a state from a plain object.
+A component holds its own view of a state: the same object across its renders until a change lands at or beneath it, and a different object from the state held outside it. A dependency array can name a state or a field object and re-runs only when something under it changed. `subscribe` and `flush` accept a component's view of the root state. Any view can be assigned into a state. `isSameIdentity(a, b)` says whether two objects are one state, `identify(state)` returns one stable token per state for a dependency array or a Map key, and `isState(value)` tells a state from a plain object.
 
 ## Constraints
 
