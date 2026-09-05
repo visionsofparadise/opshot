@@ -118,6 +118,16 @@ const recordedKeysOf = (used: UsageRecord): Array<Map<string | symbol, unknown>>
 	return keyMaps;
 };
 
+const identityReadsChanged = (partition: SourcePartition): boolean => {
+	for (const [writeProxy, version] of partition.identityReads) {
+		if (partition.affected.has(writeProxy)) continue;
+
+		if (versionOf(rawOf(writeProxy)) !== version) return true;
+	}
+
+	return false;
+};
+
 export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): boolean {
 	for (const partition of partitionsOf(tracker).values()) {
 		for (const [writeProxy, used] of partition.affected) {
@@ -135,11 +145,7 @@ export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): bo
 			if (used[ALL_OWN_KEYS_PROPERTY] !== undefined && dirty.nodes.has(raw)) return true;
 		}
 
-		for (const [writeProxy, version] of partition.identityReads) {
-			if (partition.affected.has(writeProxy)) continue;
-
-			if (versionOf(rawOf(writeProxy)) !== version) return true;
-		}
+		if (identityReadsChanged(partition)) return true;
 	}
 
 	return false;
@@ -186,6 +192,8 @@ export function readsChanged(tracker: ReadTracker): boolean {
 				}
 			}
 		}
+
+		if (identityReadsChanged(partition)) return true;
 	}
 
 	return false;

@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import { createMutableState } from "../createMutableState";
+import { flush } from "../flush";
 import { handleOf } from "../handle";
 import { batch } from "../batch";
 import { scope } from "./scope";
@@ -235,6 +236,34 @@ describe("§6.2 re-render on a read edge", () => {
 		expect(screen.getByTestId("count").textContent).toBe("1");
 		expect(childRenders).toBe(3);
 	});
+
+	it.each(["identity", "field"] as const)(
+		"rechecks a %s read after a descendant emission before subscription",
+		(readKind) => {
+			const state = createMutableState({ child: { other: 0, deep: { value: 0 } } });
+			const identities = new Array<object>();
+			const Reader = scope<{ state: typeof state }>(({ state: read }) => {
+				const child = read.child;
+
+				identities.push(child);
+
+				if (readKind === "field") void child.other;
+
+				useLayoutEffect(() => {
+					state.child.deep.value = 1;
+					flush(state);
+				}, []);
+
+				return null;
+			});
+
+			render(<Reader state={state} />);
+
+			expect(identities).toHaveLength(readKind === "identity" ? 2 : 1);
+
+			if (readKind === "identity") expect(identities[1]).not.toBe(identities[0]);
+		},
+	);
 
 	it("§6.2 a change between render and subscription re-renders", () => {
 		const queued = new Array<() => void>();
