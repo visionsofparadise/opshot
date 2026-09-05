@@ -10,6 +10,8 @@ Mutable state for React, with re-render for only the components that read what c
 npm install opshot
 ```
 
+`opshot` is the state package. `useMutableState` and `scope` import from `opshot/react`; the root entry needs no React.
+
 ## Mutable state
 
 React state is immutable: changing one field means spreading the old object into a new one.
@@ -79,10 +81,13 @@ const Child = scope<{ user: User }>(({ user }) => <p>{user.age}</p>);
 
 This is how you optimize re-rendering across your component tree: place `scope` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useMutableState` is a boundary itself.
 
+Wrap a memoized child that reads state in `scope`, so it owns its subscriptions when React skips a render. `scope(memo(Child))` keeps those subscriptions with the child as its parent re-renders.
+
 ## Creating State
 
 ```tsx
-import { ignore, unsafeTrack, useMutableState } from "opshot";
+import { ignore, unsafeTrack } from "opshot";
+import { useMutableState } from "opshot/react";
 
 interface PlayerState {
 	position: number;
@@ -114,6 +119,12 @@ const Player = () => {
 };
 ```
 
+`createMutableState(properties, options)` creates the same state outside a component, for a store or a process with no React.
+
+## Identity
+
+A component holds its own view of a state: the same object across its renders until a change lands at or beneath it, and a different object from the state held outside it. A dependency array can name a state or a field object and re-runs only when something under it changed. Any view is accepted wherever a state is: assign it into a state, subscribe to it, flush it. `isSameIdentity(a, b)` says whether two objects are one state, `identify(state)` returns one stable token per state for a dependency array or a Map key, and `isState(value)` tells a state from a plain object.
+
 ## Constraints
 
 opshot tracks plain data.
@@ -127,14 +138,15 @@ It can't track:
 
 By default opshot throws when it meets one of these, naming the value that caused it. Passing `strict: false` turns off those errors but may cause unpredictable behaviour.
 
-`ignore(value)` stores a value without state inside it being tracked, and `ignore(value, false)` undoes that. `unsafeTrack(value)` does the reverse: it takes a value strict mode would reject, tracking the plain data on it and quietly missing the rest. Either mark only affects states the value enters afterwards.
+`ignore(value)` stores a value without state inside it being tracked, and `ignore(value, false)` undoes that. `unsafeTrack(value)` does the reverse: it takes a value strict mode would reject, tracking the plain data on it and quietly missing the rest. Either mark only affects states the value enters afterwards. Reads inside an ignored value are untracked too, so a component does not re-render for them.
 
 ## Tracked collections
 
 `TrackedMap`, `TrackedSet`, and `TrackedDate` stand in for the built-ins opshot rejects. They have the exact same API as their counterparts.
 
 ```ts
-import { TrackedMap, useMutableState } from "opshot";
+import { TrackedMap } from "opshot";
+import { useMutableState } from "opshot/react";
 
 const state = useMutableState({ index: new TrackedMap<string, number>() });
 
@@ -147,7 +159,8 @@ state.index.set("a", 1);
 
 ```tsx
 import { useEffect } from "react";
-import { subscribe, useMutableState } from "opshot";
+import { subscribe } from "opshot";
+import { useMutableState } from "opshot/react";
 
 const Counter = () => {
 	const counter = useMutableState({ count: 0 });
@@ -155,7 +168,7 @@ const Counter = () => {
 	useEffect(
 		() =>
 			subscribe(counter, (operations) => {
-				// operations: [{ node, key: "count", before: 0, after: 1, meta: undefined }]
+				// operations: [{ kind: "change", node, key: "count", before: 0, after: 1, meta: undefined }]
 			}),
 		[counter],
 	);
@@ -164,21 +177,42 @@ const Counter = () => {
 };
 ```
 
+Type the meta your batches carry with `subscribe<Meta>(state, listener)`.
+
 ## Operations
 
 An operation is one key's change on one node:
 
 ```ts
-interface Operation {
-	readonly node: object;
+interface AddOperation<Meta = unknown> {
+	readonly kind: "add";
+	readonly node: Record<string, unknown>;
 	readonly key: string;
-	readonly before?: unknown;
-	readonly after?: unknown;
-	readonly meta: unknown;
+	readonly after: unknown;
+	readonly meta: Meta;
 }
+
+// ChangeOperation carries before and after; DeleteOperation carries before.
+type Operation<Meta = unknown> = AddOperation<Meta> | ChangeOperation<Meta> | DeleteOperation<Meta>;
 ```
 
-`before` and `after` are absent properties when the key was absent.
+`node` is the live state, so writing through it is tracked like any other write. Operations arrive in the order of the first write each contains. An edit to an array that changes its length also emits a `length` operation. For an array edit with one operation per key, applying the emission's values back in any order converges.
+
+Undo and redo are a switch on `kind`:
+
+```ts
+const revert = (operation: Operation) => {
+	if (operation.kind === "add") delete operation.node[operation.key];
+	else operation.node[operation.key] = operation.before;
+};
+
+const apply = (operation: Operation) => {
+	if (operation.kind === "delete") delete operation.node[operation.key];
+	else operation.node[operation.key] = operation.after;
+};
+```
+
+Revert an emission in reverse and apply it forward. The package's tests replay push, splice, and a whole-array assignment both ways.
 
 ## Emission
 
@@ -188,7 +222,8 @@ A state gathers its writes and delivers them together. The window is a microtask
 
 ```tsx
 import { useEffect } from "react";
-import { subscribe, useMutableState } from "opshot";
+import { subscribe } from "opshot";
+import { useMutableState } from "opshot/react";
 
 const Chart = () => {
 	// One emission per frame, however many writes land in between.
@@ -206,15 +241,16 @@ const Chart = () => {
 };
 ```
 
-Separate from that callback, the `flush(state)` export ends the window from outside.
+Separate from that callback, the `flush(state, ...states)` export ends each state's window from outside.
 
 ## Batches
 
-`batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's.
+`batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's. Writes to one key fold into one operation only when their metas are the same value, so pass a string or an object you hold rather than a fresh literal.
 
 ```tsx
 import { useEffect } from "react";
-import { batch, subscribe, useMutableState } from "opshot";
+import { batch, subscribe } from "opshot";
+import { useMutableState } from "opshot/react";
 
 const TitleBar = () => {
 	const doc = useMutableState({ title: "Untitled" });
@@ -222,7 +258,7 @@ const TitleBar = () => {
 	useEffect(
 		() =>
 			subscribe(doc, (operations) => {
-				if (operations[0]?.meta === "replay") return;
+				const edits = operations.filter((operation) => operation.meta !== "replay");
 
 				// ...
 			}),
@@ -230,12 +266,9 @@ const TitleBar = () => {
 	);
 
 	const rename = () => {
-		batch(
-			() => {
-				doc.title = "Draft";
-			},
-			{ source: "editor" },
-		);
+		batch(() => {
+			doc.title = "Draft";
+		}, "editor");
 	};
 
 	// ...
