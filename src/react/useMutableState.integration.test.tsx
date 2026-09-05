@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen } from "../../tests/harness";
-import { useLayoutEffect, useRef, useState, type FC } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
@@ -444,5 +444,63 @@ describe("§6.2 re-render on a read edge", () => {
 
 		expect(screen.getByText("1")).toBeTruthy();
 		expect(state.y).toBe(1);
+	});
+
+	it("subscribe and flush accept the value the hook returns", async () => {
+		const heard: Array<number> = [];
+		const Counter: FC = () => {
+			const counter = useMutableState({ count: 0 });
+
+			useEffect(
+				() =>
+					subscribe(counter, (operations) => {
+						heard.push(operations.length);
+					}),
+				[counter],
+			);
+
+			return (
+				<button
+					type="button"
+					onClick={() => {
+						counter.count += 1;
+
+						flush(counter);
+
+						heard.push(-1);
+					}}
+				>
+					{counter.count}
+				</button>
+			);
+		};
+
+		render(<Counter />);
+
+		await act(async () => {
+			screen.getByRole("button").click();
+		});
+
+		expect(heard).toEqual([1, -1]);
+		expect(screen.getByRole("button").textContent).toBe("1");
+	});
+
+	it("createMutableState returns the state behind the value the hook returns", () => {
+		const state = createMutableState({ n: 0 });
+		let resolved: object | undefined;
+
+		const Reader: FC = () => {
+			const read = useMutableState(state);
+
+			useEffect(() => {
+				resolved = createMutableState(read);
+			}, [read]);
+
+			return <span>{read.n}</span>;
+		};
+
+		render(<Reader />);
+
+		expect(resolved).toBe(state);
 	});
 });

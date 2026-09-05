@@ -2,6 +2,7 @@ import { attachRoot } from "./edges";
 import { handleOf, type Handle } from "./handle";
 import { isIgnored } from "./ignore";
 import { installProxyHandler, proxyOf, rawOf } from "./node";
+import { peelReadProxy } from "./peelReadProxy";
 import { handler } from "./proxy";
 import { isUnsafeMarked } from "./unsafeTrack";
 
@@ -44,7 +45,7 @@ export interface MutableStateOptions {
  * @returns The state.
  */
 export function createMutableState<T extends object>(properties: T, options?: MutableStateOptions): T {
-	const incoming: unknown = properties;
+	const incoming: unknown = peelReadProxy(properties);
 
 	if (typeof incoming !== "object" || incoming === null) return properties;
 

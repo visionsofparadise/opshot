@@ -1,4 +1,6 @@
 import { recordOf, rawOf } from "./node";
+import { peelReadProxy } from "./peelReadProxy";
+import { isObjectLike } from "./utils/predicates";
 import type { StateListeners } from "./emit/emitterRegistry";
 
 export interface DirtyIndex {
@@ -28,7 +30,11 @@ export interface Handle {
 }
 
 export function handleOf(state: object): Handle | undefined {
-	const raw = rawOf(state);
+	const peeled = peelReadProxy(state);
+
+	if (!isObjectLike(peeled)) return undefined;
+
+	const raw = rawOf(peeled);
 	const record = recordOf(raw);
 
 	if (record === undefined) return undefined;
