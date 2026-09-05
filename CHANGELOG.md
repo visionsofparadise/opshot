@@ -2,7 +2,7 @@
 
 Notable changes to opshot, from 0.6.0 on. The format follows Keep a Changelog, and a minor carries breaking changes while the package is pre-1.0.
 
-## Unreleased
+## 0.6.0 - 2026-09-05
 
 ### Changed
 
