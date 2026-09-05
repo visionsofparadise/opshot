@@ -5,7 +5,7 @@ import type { Operation } from "../operation";
  *
  * @param operations - Operations for the change.
  */
-export type StateListener = (operations: ReadonlyArray<Operation>) => void;
+export type StateListener<M = unknown> = (operations: ReadonlyArray<Operation<M>>) => void;
 
 export type StateDeliver = StateListener;
 

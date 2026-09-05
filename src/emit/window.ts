@@ -56,13 +56,12 @@ export function flushWindow(handle: Handle): void {
 	for (const item of pending) {
 		if (item.hasBefore === item.hasAfter && (!item.hasBefore || Object.is(item.before, item.after))) continue;
 
-		const operation: Operation = {
-			node: item.node,
-			key: item.key,
-			meta: item.meta,
-			...(item.hasBefore ? { before: item.before } : {}),
-			...(item.hasAfter ? { after: item.after } : {}),
-		};
+		const node = item.node as Record<string, unknown>;
+		const operation: Operation = item.hasBefore
+			? item.hasAfter
+				? { node, key: item.key, meta: item.meta, kind: "change", before: item.before, after: item.after }
+				: { node, key: item.key, meta: item.meta, kind: "delete", before: item.before }
+			: { node, key: item.key, meta: item.meta, kind: "add", after: item.after };
 
 		operations.push(Object.freeze(operation));
 	}

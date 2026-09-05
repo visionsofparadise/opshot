@@ -478,7 +478,7 @@ describe("§1.7 marking or clearing an object changes no existing edge", () => {
 
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.[0]?.key).toBe("n");
-		expect(heard[0]?.[0]?.after).toBe(2);
+		expect(heard[0]?.[0]).toMatchObject({ after: 2 });
 	});
 
 	it("a node ignored after admission detaches when its edge is deleted", async () => {
@@ -524,8 +524,7 @@ describe("§1.9 a state observes assignment and deletion made through it", () =>
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.map((operation) => operation.key)).toEqual(["count", "extra"]);
 		expect(heard[0]?.[0]).toMatchObject({ key: "count", before: 8, after: 1 });
-		expect("after" in (heard[0]?.[1] ?? {})).toBe(false);
-		expect(heard[0]?.[1]?.before).toBe(1);
+		expect(heard[0]?.[1]).toMatchObject({ kind: "delete", before: 1 });
 	});
 });
 
@@ -593,7 +592,7 @@ describe("§2.2 assigning a node into a state it currently occupies keeps its id
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.[0]?.node).toBe(held);
 		expect(heard[0]?.[0]?.key).toBe("n");
-		expect(heard[0]?.[0]?.after).toBe(2);
+		expect(heard[0]?.[0]).toMatchObject({ after: 2 });
 	});
 
 	it("aliasing a member keeps its children at one edge each", async () => {

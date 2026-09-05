@@ -79,7 +79,9 @@ describe("§5.1 every change to a tracked node reaches that state's subscribers"
 		const keys = heard[0]?.map((operation) => operation.key) ?? [];
 
 		expect(keys).toEqual(expect.arrayContaining(["0", "length", "sa", "count"]));
-		expect(heard[0]?.some((operation) => operation.node === state.map && operation.key === "count")).toBe(true);
+		expect(heard[0]?.some((operation) => Object.is(operation.node, state.map) && operation.key === "count")).toBe(
+			true,
+		);
 		expect(state.map.get("a")).toBe(1);
 	});
 });

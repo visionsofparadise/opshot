@@ -1,5 +1,6 @@
 import { batch } from "./batch";
 import { createMutableState } from "./createMutableState";
+import { flush } from "./flush";
 import type { Operation } from "./operation";
 import { subscribe } from "./subscribe";
 
@@ -43,19 +44,21 @@ describe("§3 an operation is node, key, before, after, meta", () => {
 		expect(count).toMatchObject({ key: "count", before: 0, after: 1, meta: undefined });
 
 		expect(extra?.node).toBe(state);
-		expect(extra?.before).toBe(1);
-		expect("after" in (extra ?? {})).toBe(false);
+		expect(extra).toMatchObject({ kind: "delete", before: 1 });
 		expect(extra?.meta).toBeUndefined();
 
 		expect(stored?.node).toBe(state);
-		expect("before" in (stored ?? {})).toBe(false);
-		expect("after" in (stored ?? {})).toBe(true);
-		expect(stored?.after).toBeUndefined();
+		if (stored?.kind !== "add") throw new Error("expected add");
 
-		expect(child?.node).toBe(state);
-		expect(child?.before).toBe(previousChild);
-		expect(child?.after).toBe(state.child);
-		expect(child?.after).not.toBe(nextChild);
+		expect(Object.hasOwn(stored, "after")).toBe(true);
+		expect(stored.after).toBeUndefined();
+
+		if (child?.kind !== "change") throw new Error("expected change");
+
+		expect(child.node).toBe(state);
+		expect(child.before).toBe(previousChild);
+		expect(child.after).toBe(state.child);
+		expect(child.after).not.toBe(nextChild);
 	});
 });
 
@@ -133,5 +136,78 @@ describe("§4.1 a write inside batch carries its meta", () => {
 		await Promise.resolve();
 
 		expect(heard[0]?.[0]).toMatchObject({ key: "n", before: 0, after: 1, meta: "tagged" });
+	});
+});
+
+describe("an emission replays both ways", () => {
+	it("replays push, splice, and a whole-array assignment in either order", () => {
+		const revert = (operation: Operation): void => {
+			if (operation.kind === "add") delete operation.node[operation.key];
+			else operation.node[operation.key] = operation.before;
+		};
+		const apply = (operation: Operation): void => {
+			if (operation.kind === "delete") delete operation.node[operation.key];
+			else operation.node[operation.key] = operation.after;
+		};
+		const state = createMutableState({ list: [{ id: "a" }, { id: "b" }, { id: "c" }] });
+		const heard = listen(state);
+		const originalFirst = state.list[0];
+		const edits = [
+			() => {
+				state.list.push({ id: "d" });
+			},
+			() => {
+				state.list.splice(1, 1);
+			},
+			() => {
+				const [first, second, third] = state.list;
+				if (first === undefined || second === undefined || third === undefined) throw new Error("missing entry");
+				state.list = [third, second, first];
+			},
+		];
+
+		for (const edit of edits) {
+			flush(state);
+			heard.length = 0;
+
+			const before = JSON.stringify(state.list);
+			const beforeLength = state.list.length;
+
+			edit();
+			flush(state);
+
+			const operations = heard[0];
+			if (operations === undefined) throw new Error("missing emission");
+
+			const after = JSON.stringify(state.list);
+			const afterLength = state.list.length;
+
+			[...operations].reverse().forEach(revert);
+			expect(JSON.stringify(state.list)).toBe(before);
+			expect(state.list.length).toBe(beforeLength);
+			operations.forEach(apply);
+			expect(JSON.stringify(state.list)).toBe(after);
+			expect(state.list.length).toBe(afterLength);
+			operations.forEach(revert);
+			expect(JSON.stringify(state.list)).toBe(before);
+			expect(state.list.length).toBe(beforeLength);
+		}
+
+		expect(state.list[0]).toBe(originalFirst);
+	});
+
+	it("a listener types its meta", () => {
+		const state = createMutableState({ count: 0 });
+		const metas: Array<"replay" | undefined> = [];
+
+		subscribe<"replay" | undefined>(state, (operations) => {
+			metas.push(operations[0]?.meta);
+		});
+		batch(() => {
+			state.count = 1;
+		}, "replay");
+		flush(state);
+
+		expect(metas).toEqual(["replay"]);
 	});
 });

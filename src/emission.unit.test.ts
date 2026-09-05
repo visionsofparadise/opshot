@@ -38,7 +38,7 @@ describe("§5.1 every change to a tracked node reaches subscribers", () => {
 
 		expect(heard[0]?.map((operation) => operation.key)).toEqual(["0", "length"]);
 		expect(heard[0]?.[0]).toMatchObject({ key: "0", after: "a" });
-		expect("before" in (heard[0]?.[0] ?? {})).toBe(false);
+		expect(heard[0]?.[0]?.kind).toBe("add");
 		expect(heard[0]?.[1]).toMatchObject({ key: "length", before: 0, after: 1 });
 		expect(heard[0]?.[0]?.node).toBe(state.items);
 	});
@@ -52,8 +52,7 @@ describe("§5.1 every change to a tracked node reaches subscribers", () => {
 		await Promise.resolve();
 
 		expect(heard[0]?.map((operation) => operation.key)).toEqual(["2", "1", "length"]);
-		expect("after" in (heard[0]?.[0] ?? {})).toBe(false);
-		expect(heard[0]?.[0]?.before).toBe("c");
+		expect(heard[0]?.[0]).toMatchObject({ kind: "delete", before: "c" });
 		expect(heard[0]?.[1]).toMatchObject({ key: "1", before: "b", after: "z" });
 		expect(heard[0]?.[2]).toMatchObject({ key: "length", before: 3, after: 2 });
 	});
@@ -68,11 +67,9 @@ describe("§5.1 every change to a tracked node reaches subscribers", () => {
 
 		expect(heard[0]).toHaveLength(3);
 		expect(heard[0]?.[0]?.key).toBe("1");
-		expect(heard[0]?.[0]?.before).toBe("b");
-		expect("after" in (heard[0]?.[0] ?? {})).toBe(false);
+		expect(heard[0]?.[0]).toMatchObject({ kind: "delete", before: "b" });
 		expect(heard[0]?.[1]?.key).toBe("2");
-		expect(heard[0]?.[1]?.before).toBe("c");
-		expect("after" in (heard[0]?.[1] ?? {})).toBe(false);
+		expect(heard[0]?.[1]).toMatchObject({ kind: "delete", before: "c" });
 		expect(heard[0]?.[2]).toMatchObject({ key: "length", before: 3, after: 1 });
 	});
 

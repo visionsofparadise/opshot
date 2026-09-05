@@ -1,7 +1,7 @@
 export { createMutableState, type MutableStateOptions, type EmissionScheduler } from "./createMutableState";
 export { identify, isSameIdentity } from "./identity";
 export { isState } from "./isState";
-export { type Operation } from "./operation";
+export { type Operation, type AddOperation, type ChangeOperation, type DeleteOperation } from "./operation";
 export { ignore } from "./ignore";
 export { unsafeTrack } from "./unsafeTrack";
 export { TrackedDate } from "./tracked/trackedDate";
