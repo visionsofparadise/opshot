@@ -9,6 +9,9 @@ interface PackageManifest {
 		".": {
 			import: string;
 		};
+		"./react": {
+			import: string;
+		};
 	};
 }
 
@@ -36,7 +39,7 @@ const jsdocBefore = (source: string, declaration: RegExp): string | undefined =>
 };
 
 describe("package build", () => {
-	it("emits one entry matching exports['.']", async () => {
+	it("emits the root and react entries over one shared chunk, and only the react entry imports React", async () => {
 		const outDir = await mkdtemp(join(tmpdir(), "opshot-build-"));
 
 		try {
@@ -49,8 +52,32 @@ describe("package build", () => {
 				await readFile(new URL("../package.json", import.meta.url), "utf8"),
 			) as PackageManifest;
 			const expectedEntry = basename(manifest.exports["."].import);
+			const expectedReactEntry = basename(manifest.exports["./react"].import);
 
-			expect(jsEntries).toEqual([expectedEntry]);
+			expect(jsEntries).toHaveLength(3);
+			expect(jsEntries).toContain(expectedEntry);
+			expect(jsEntries).toContain(expectedReactEntry);
+
+			const chunk = jsEntries.find((name) => name !== expectedEntry && name !== expectedReactEntry);
+
+			expect(chunk).toMatch(/^chunk-[A-Z0-9]+\.js$/);
+
+			if (chunk === undefined) throw new Error("missing shared chunk");
+
+			const [rootSource, chunkSource, reactSource, rootDeclaration, reactDeclaration] = await Promise.all([
+				readFile(join(outDir, expectedEntry), "utf8"),
+				readFile(join(outDir, chunk), "utf8"),
+				readFile(join(outDir, expectedReactEntry), "utf8"),
+				readFile(join(outDir, "index.d.ts"), "utf8"),
+				readFile(join(outDir, "react.d.ts"), "utf8"),
+			]);
+
+			expect(rootSource).not.toMatch(/from ["']react["']/);
+			expect(chunkSource).not.toMatch(/from ["']react["']/);
+			expect(reactSource).toMatch(/from ["']react["']/);
+			expect(rootDeclaration).not.toContain("'react'");
+			expect(reactDeclaration).toContain("scope");
+			expect(reactDeclaration).toContain("useMutableState");
 		} finally {
 			await rm(outDir, { recursive: true, force: true });
 		}
@@ -62,7 +89,11 @@ describe("package build", () => {
 		try {
 			await build({ ...(sharedConfig as Options), outDir, silent: true });
 
-			const declaration = await readFile(join(outDir, "index.d.ts"), "utf8");
+			const emitted = await readdir(outDir);
+			const declarations = await Promise.all(
+				emitted.filter((name) => name.endsWith(".d.ts")).map((name) => readFile(join(outDir, name), "utf8")),
+			);
+			const declaration = declarations.join("\n");
 
 			expect(
 				jsdocBefore(declaration, /declare\s+function\s+createMutableState\b/) !== undefined,

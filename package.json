@@ -7,6 +7,10 @@
 		".": {
 			"import": "./dist/index.js",
 			"types": "./dist/index.d.ts"
+		},
+		"./react": {
+			"import": "./dist/react.js",
+			"types": "./dist/react.d.ts"
 		}
 	},
 	"files": [
@@ -35,6 +39,11 @@
 	},
 	"peerDependencies": {
 		"react": ">=16.8.0"
+	},
+	"peerDependenciesMeta": {
+		"react": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@commitlint/cli": "^19.8.1",
