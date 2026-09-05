@@ -1,4 +1,4 @@
-import { rawOf } from "../node";
+import { bumpVersion, rawOf, recordOf } from "../node";
 import { drainDeliveries, enqueueDelivery, prepareDelivery } from "./emitterDeliver";
 import type { DirtyIndex, Handle, PendingOperation } from "../handle";
 import type { Operation } from "../operation";
@@ -86,6 +86,21 @@ export function flushWindow(handle: Handle): void {
 	}
 
 	const dirty: DirtyIndex = { edges, nodes };
+	const pendingNodes = [...dirty.nodes];
+	const visited = new Set<object>();
+
+	while (pendingNodes.length > 0) {
+		const raw = pendingNodes.pop();
+
+		if (raw === undefined || visited.has(raw)) continue;
+
+		visited.add(raw);
+		bumpVersion(raw);
+
+		const parents = recordOf(raw)?.memberships.get(handle)?.parents;
+
+		if (parents !== undefined) pendingNodes.push(...parents.keys());
+	}
 
 	enqueueDelivery(prepareDelivery(handle, operations, dirty));
 	drainDeliveries();

@@ -5,6 +5,7 @@ export interface Membership {
 	edges: number;
 	exempt: boolean;
 	readonly keys: Set<string>;
+	readonly parents: Map<object, number>;
 }
 
 export interface NodeRecord {
@@ -15,6 +16,13 @@ export interface NodeRecord {
 
 const byRaw = new WeakMap<object, NodeRecord>();
 const byProxy = new WeakMap<object, NodeRecord>();
+const versions = new WeakMap<object, number>();
+
+export const versionOf = (raw: object): number => versions.get(raw) ?? 0;
+
+export const bumpVersion = (raw: object): void => {
+	versions.set(raw, versionOf(raw) + 1);
+};
 
 let proxyHandler: ProxyHandler<object> | undefined;
 

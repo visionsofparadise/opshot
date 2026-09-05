@@ -1,4 +1,4 @@
-import { recordOf, rawOf } from "../node";
+import { recordOf, rawOf, versionOf } from "../node";
 import { registerReadProxyTarget } from "../readProxyRegistry";
 import { isObjectLike } from "../utils/predicates";
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
@@ -20,8 +20,8 @@ interface UsageRecord {
 
 interface SourcePartition {
 	readonly affected: Map<object, UsageRecord>;
-	readonly identityReads: Set<object>;
-	proxyCache: WeakMap<object, object>;
+	readonly identityReads: Map<object, number>;
+	readonly proxyCache: WeakMap<object, { readonly proxy: object; readonly version: number }>;
 }
 
 export interface ReadTracker {
@@ -135,10 +135,10 @@ export function readsIntersectDirty(tracker: ReadTracker, dirty: DirtyIndex): bo
 			if (used[ALL_OWN_KEYS_PROPERTY] !== undefined && dirty.nodes.has(raw)) return true;
 		}
 
-		for (const writeProxy of partition.identityReads) {
+		for (const [writeProxy, version] of partition.identityReads) {
 			if (partition.affected.has(writeProxy)) continue;
 
-			if (dirty.nodes.has(rawOf(writeProxy))) return true;
+			if (versionOf(rawOf(writeProxy)) !== version) return true;
 		}
 	}
 
@@ -202,7 +202,7 @@ export function createReadTracker(): ReadTracker {
 		if (partition === undefined) {
 			partition = {
 				affected: new Map(),
-				identityReads: new Set(),
+				identityReads: new Map(),
 				proxyCache: new WeakMap(),
 			};
 			partitions.set(writeProxy, partition);
@@ -219,14 +219,16 @@ export function createReadTracker(): ReadTracker {
 	const recordIdentity = (partition: SourcePartition, value: unknown): void => {
 		if (!shouldRecord()) return;
 
-		if (isObjectLike(value) && isWriteProxy(value)) partition.identityReads.add(value);
+		if (isObjectLike(value) && isWriteProxy(value) && !partition.identityReads.has(value)) {
+			partition.identityReads.set(value, versionOf(rawOf(value)));
+		}
 	};
 
 	const toReadProxy = <T extends object>(writeProxy: T, partition: SourcePartition): T => {
 		const raw = rawOf(writeProxy);
 		const cached = partition.proxyCache.get(raw);
 
-		if (cached !== undefined) return cached as T;
+		if (cached?.version === versionOf(raw)) return cached.proxy as T;
 
 		const target = raw;
 
@@ -307,7 +309,7 @@ export function createReadTracker(): ReadTracker {
 
 		readProxyBox.current = readProxy;
 		registerReadProxyTarget(readProxy, writeProxy);
-		partition.proxyCache.set(raw, readProxy);
+		partition.proxyCache.set(raw, { proxy: readProxy, version: versionOf(raw) });
 
 		return readProxy;
 	};
@@ -335,7 +337,6 @@ export function createReadTracker(): ReadTracker {
 			for (const partition of partitions.values()) {
 				partition.affected.clear();
 				partition.identityReads.clear();
-				partition.proxyCache = new WeakMap();
 			}
 		},
 

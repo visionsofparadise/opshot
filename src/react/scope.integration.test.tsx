@@ -19,6 +19,73 @@ import { batch } from "../batch";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
 
+describe("§6.4 a component's value for a node keeps its identity until a change lands at or beneath it", () => {
+	it.each(["parent render", "node change", "descendant change"] as const)(
+		"preserves identity by version after %s",
+		async (change) => {
+			const received = new Array<{ age: number; profile: { city: string } }>();
+			const profiles = new Array<{ city: string }>();
+			let user: { age: number; profile: { city: string } } | undefined;
+			let increment: (() => void) | undefined;
+			const Child = scope<{ user: { age: number; profile: { city: string } }; tick: number }>(
+				({ user: current }) => {
+					received.push(current);
+					profiles.push(current.profile);
+
+					return (
+						<span data-testid="identity-value">
+							{current.age} {current.profile.city}
+						</span>
+					);
+				},
+			);
+			const Parent: FC = () => {
+				const [state] = useState(() => createMutableState({ age: 36, profile: { city: "London" } }));
+				const [tick, setTick] = useState(0);
+
+				user = state;
+				increment = () => {
+					setTick((value) => value + 1);
+				};
+
+				return <Child user={state} tick={tick} />;
+			};
+
+			render(<Parent />);
+
+			await act(async () => {
+				if (user === undefined || increment === undefined) throw new Error("missing parent");
+
+				if (change === "parent render") increment();
+				else if (change === "node change") user.age = 37;
+				else user.profile.city = "Paris";
+
+				await Promise.resolve();
+			});
+
+			if (change === "parent render") {
+				await act(async () => {
+					increment?.();
+				});
+
+				expect(received).toHaveLength(3);
+				expect(new Set(received).size).toBe(1);
+				expect(new Set(profiles).size).toBe(1);
+			} else {
+				expect(received).toHaveLength(2);
+				expect(received[1]).not.toBe(received[0]);
+
+				if (change === "node change") expect(profiles[1]).toBe(profiles[0]);
+				else expect(profiles[1]).not.toBe(profiles[0]);
+
+				expect(screen.getByTestId("identity-value").textContent).toBe(
+					change === "node change" ? "37 London" : "36 Paris",
+				);
+			}
+		},
+	);
+});
+
 describe("§6.2 re-render on a read edge", () => {
 	it("rerenders a scoped child when a read prop field changes", async () => {
 		let childRenders = 0;

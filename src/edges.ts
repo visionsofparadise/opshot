@@ -68,7 +68,7 @@ const cascade = (handle: Handle, node: object, keys: ReadonlySet<string>): void 
 
 		const child = rawOf(value);
 
-		if (recordOf(child)?.memberships.has(handle) === true) detach(handle, child);
+		if (recordOf(child)?.memberships.has(handle) === true) detach(handle, node, child);
 	}
 };
 
@@ -80,6 +80,7 @@ export function attach(handle: Handle, parent: object, key: string, child: objec
 	parentMembership.keys.add(key);
 
 	const rawChild = rawOf(child);
+	const rawParent = rawOf(parent);
 
 	proxyOf(rawChild);
 
@@ -91,13 +92,19 @@ export function attach(handle: Handle, parent: object, key: string, child: objec
 	const membership = record.memberships.get(handle);
 
 	if (membership === undefined) {
-		record.memberships.set(handle, { edges: 1, exempt: edgeExempt, keys: new Set() });
+		record.memberships.set(handle, {
+			edges: 1,
+			exempt: edgeExempt,
+			keys: new Set(),
+			parents: new Map([[rawParent, 1]]),
+		});
 		descend(handle, rawChild, route, !edgeExempt);
 
 		return;
 	}
 
 	membership.edges += 1;
+	membership.parents.set(rawParent, (membership.parents.get(rawParent) ?? 0) + 1);
 
 	if (membership.exempt && !edgeExempt) flip(handle, rawChild, route);
 }
@@ -107,7 +114,7 @@ export function attachRoot(handle: Handle, root: object, exempt: boolean): void 
 
 	if (record === undefined) return;
 
-	record.memberships.set(handle, { edges: 1, exempt, keys: new Set() });
+	record.memberships.set(handle, { edges: 1, exempt, keys: new Set(), parents: new Map() });
 
 	try {
 		descend(handle, root, [], !exempt);
@@ -118,7 +125,7 @@ export function attachRoot(handle: Handle, root: object, exempt: boolean): void 
 	}
 }
 
-export function detach(handle: Handle, child: object): void {
+export function detach(handle: Handle, parent: object, child: object): void {
 	const rawChild = rawOf(child);
 	const record = recordOf(rawChild);
 	const membership = record?.memberships.get(handle);
@@ -126,6 +133,12 @@ export function detach(handle: Handle, child: object): void {
 	if (record === undefined || membership === undefined) return;
 
 	membership.edges -= 1;
+
+	const rawParent = rawOf(parent);
+	const parentEdges = membership.parents.get(rawParent);
+
+	if (parentEdges === 1) membership.parents.delete(rawParent);
+	else if (parentEdges !== undefined) membership.parents.set(rawParent, parentEdges - 1);
 
 	if (membership.edges > 0) return;
 

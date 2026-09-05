@@ -1,6 +1,8 @@
 import { createMutableState } from "./createMutableState";
+import { flush } from "./flush";
 import { ignore, isIgnored } from "./ignore";
 import { isState } from "./isState";
+import { rawOf, versionOf } from "./node";
 import type { Operation } from "./operation";
 import { createReadTracker } from "./react/readTracker";
 import { subscribe } from "./subscribe";
@@ -15,6 +17,44 @@ const listen = (state: object): Array<ReadonlyArray<Operation>> => {
 
 	return heard;
 };
+
+describe("§6.4 a change bumps the node and every node with a route to it", () => {
+	it("bumps the changed branch and root while preserving a sibling", () => {
+		const state = createMutableState({ a: { x: 1 }, b: { y: 1 } });
+		const nodes = [state, state.a, state.b].map(rawOf);
+		const before = nodes.map(versionOf);
+
+		state.a.x = 2;
+		flush(state);
+
+		expect(nodes.map(versionOf)).toEqual(before.map((version, index) => version + (index < 2 ? 1 : 0)));
+	});
+
+	it("bumps each ancestor once across two routes and removes detached parents", () => {
+		const state = createMutableState({ a: { x: 1 }, b: { c: {} as { shared?: { x: number } } } });
+
+		state.b.c.shared = state.a;
+		flush(state);
+
+		const nodes = [state.a, state, state.b.c, state.b].map(rawOf);
+		const sharedBefore = nodes.map(versionOf);
+
+		state.a.x = 2;
+		flush(state);
+
+		expect(nodes.map(versionOf)).toEqual(sharedBefore.map((version) => version + 1));
+
+		delete state.b.c.shared;
+		flush(state);
+
+		const detachedBefore = nodes.map(versionOf);
+
+		state.a.x = 3;
+		flush(state);
+
+		expect(nodes.map(versionOf)).toEqual(detachedBefore.map((version, index) => version + (index < 2 ? 1 : 0)));
+	});
+});
 
 describe("createMutableState with a non-object", () => {
 	it("a primitive is returned unchanged", () => {

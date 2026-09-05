@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen } from "../../tests/harness";
-import { useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type FC } from "react";
 
 import { createMutableState } from "../createMutableState";
 import { isSameIdentity } from "../identity";
@@ -10,6 +10,211 @@ import { flush } from "../flush";
 import { subscribe } from "../subscribe";
 import { scope } from "./scope";
 import { useMutableState } from "./useMutableState";
+
+describe("§6.4 a component's value for a node keeps its identity until a change lands at or beneath it", () => {
+	it("tracks a scoped memo child's deep reads independently of its parent's field reads", async () => {
+		let stateRef: { count: number; child: { other: number; deep: { value: number } } } | undefined;
+		let parentRenders = 0;
+		let childRenders = 0;
+		const Child = scope(
+			memo<{ child: { deep: { value: number } } }>(({ child }) => {
+				childRenders += 1;
+
+				return <span data-testid="scoped-memo-deep">{child.deep.value}</span>;
+			}),
+		);
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0, child: { other: 0, deep: { value: 0 } } });
+			const child = state.child;
+
+			stateRef = state;
+			parentRenders += 1;
+
+			return (
+				<div>
+					{state.count} {child.other}
+					<Child child={child} />
+				</div>
+			);
+		};
+
+		render(<Parent />);
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.count = 1;
+			await Promise.resolve();
+		});
+
+		expect(parentRenders).toBe(2);
+		expect(childRenders).toBe(1);
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.child.deep.value = 1;
+			await Promise.resolve();
+		});
+
+		expect(parentRenders).toBe(2);
+		expect(childRenders).toBe(2);
+		expect(screen.getByTestId("scoped-memo-deep").textContent).toBe("1");
+	});
+
+	it("drops a conditional deep read while retaining the same child's field read", async () => {
+		let stateRef: { count: number; child: { other: number; deep: { value: number } } } | undefined;
+		let renders = 0;
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0, child: { other: 0, deep: { value: 0 } } });
+			const count = state.count;
+			const child = state.child;
+
+			stateRef = state;
+			renders += 1;
+
+			return (
+				<span>
+					{count} {child.other} {count === 0 ? child.deep.value : null}
+				</span>
+			);
+		};
+
+		render(<Parent />);
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.count = 1;
+			await Promise.resolve();
+		});
+
+		expect(renders).toBe(2);
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.child.deep.value = 1;
+			await Promise.resolve();
+		});
+
+		expect(renders).toBe(2);
+	});
+
+	it("keeps a skipped memo child's descendant subscribed and drops it when the branch leaves", async () => {
+		let stateRef: { count: number; visible: boolean; child: { deep: { value: number } } } | undefined;
+		let parentRenders = 0;
+		let childRenders = 0;
+		const Child = memo<{ child: { deep: { value: number } } }>(({ child }) => {
+			childRenders += 1;
+
+			return <span data-testid="memo-deep">{child.deep.value}</span>;
+		});
+		const Parent: FC = () => {
+			const state = useMutableState({ count: 0, visible: true, child: { deep: { value: 0 } } });
+
+			stateRef = state;
+			parentRenders += 1;
+
+			return (
+				<div>
+					{state.count}
+					{state.visible ? <Child child={state.child} /> : null}
+				</div>
+			);
+		};
+
+		render(<Parent />);
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.count = 1;
+			await Promise.resolve();
+		});
+
+		expect(parentRenders).toBe(2);
+		expect(childRenders).toBe(1);
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.child.deep.value = 1;
+			await Promise.resolve();
+		});
+
+		expect(childRenders).toBe(2);
+		expect(screen.getByTestId("memo-deep").textContent).toBe("1");
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.visible = false;
+			await Promise.resolve();
+		});
+
+		const before = parentRenders;
+
+		await act(async () => {
+			if (stateRef === undefined) throw new Error("missing state");
+
+			stateRef.child.deep.value = 2;
+			await Promise.resolve();
+		});
+
+		expect(parentRenders).toBe(before);
+		expect(screen.queryByTestId("memo-deep")).toBeNull();
+	});
+
+	it("keeps parent-render identities and re-mints only the changed node", async () => {
+		const received = new Array<{ n: number; child: { m: number } }>();
+		const children = new Array<{ m: number }>();
+		let increment: (() => void) | undefined;
+		let change: (() => void) | undefined;
+		const Child: FC<{ tick: number }> = () => {
+			const state = useMutableState({ n: 0, child: { m: 0 } });
+			const stateRef = useRef(state);
+
+			received.push(state);
+			children.push(state.child);
+			change = () => {
+				stateRef.current.n = 1;
+			};
+
+			return (
+				<span data-testid="identity-value">
+					{state.n} {state.child.m}
+				</span>
+			);
+		};
+		const Parent: FC = () => {
+			const [tick, setTick] = useState(0);
+
+			increment = () => {
+				setTick((value) => value + 1);
+			};
+
+			return <Child tick={tick} />;
+		};
+
+		render(<Parent />);
+
+		await act(async () => {
+			increment?.();
+		});
+		await act(async () => {
+			change?.();
+			await Promise.resolve();
+		});
+
+		expect(received).toHaveLength(3);
+		expect(received[1]).toBe(received[0]);
+		expect(children[1]).toBe(children[0]);
+		expect(received[2]).not.toBe(received[1]);
+		expect(children[2]).toBe(children[1]);
+		expect(screen.getByTestId("identity-value").textContent).toBe("1 0");
+	});
+});
 
 describe("§6.2 re-render on a read edge", () => {
 	it("rerenders on tracked mutation and preserves read-your-writes", async () => {

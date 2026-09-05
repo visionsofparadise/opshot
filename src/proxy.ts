@@ -142,7 +142,7 @@ export const handler: ProxyHandler<object> = {
 
 			rollBack = () => {
 				for (const { handle, membership, hadKey } of started) {
-					detach(handle, incoming);
+					detach(handle, target, incoming);
 
 					if (!hadKey) membership.keys.delete(key);
 				}
@@ -173,7 +173,7 @@ export const handler: ProxyHandler<object> = {
 
 		for (const { handle, membership, hadKey } of memberships) {
 			for (const entry of truncated) {
-				if (membership.keys.delete(entry.key) && isObjectLike(entry.value)) detach(handle, entry.value);
+				if (membership.keys.delete(entry.key) && isObjectLike(entry.value)) detach(handle, target, entry.value);
 
 				recordOperation(handle, target, {
 					node,
@@ -186,7 +186,7 @@ export const handler: ProxyHandler<object> = {
 			}
 
 			if (hadKey && previous !== resolved) {
-				if (isObjectLike(previous)) detach(handle, previous);
+				if (isObjectLike(previous)) detach(handle, target, previous);
 
 				if (incoming === undefined) membership.keys.delete(key);
 			}
@@ -229,7 +229,7 @@ export const handler: ProxyHandler<object> = {
 		const node = proxyOf(target);
 
 		for (const [handle, membership] of membershipsOf(target)) {
-			if (membership.keys.delete(key) && isObjectLike(previous)) detach(handle, previous);
+			if (membership.keys.delete(key) && isObjectLike(previous)) detach(handle, target, previous);
 
 			recordOperation(handle, target, {
 				node,
