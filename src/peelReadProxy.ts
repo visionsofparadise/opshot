@@ -1,5 +1,9 @@
-import { getRegisteredReadProxyTarget } from "./identity";
+import { getRegisteredReadProxyTarget } from "./readProxyRegistry";
 import { isObjectLike } from "./utils/predicates";
+
+export function peelReadProxy(value: object): object;
+
+export function peelReadProxy(value: unknown): unknown;
 
 export function peelReadProxy(value: unknown): unknown {
 	if (!isObjectLike(value)) return value;

@@ -1,3 +1,4 @@
+import { peelReadProxy } from "./peelReadProxy";
 import type { Handle } from "./handle";
 
 export interface Membership {
@@ -22,11 +23,13 @@ export function installProxyHandler(handler: ProxyHandler<object>): void {
 }
 
 export function recordOf(value: object): NodeRecord | undefined {
-	return byRaw.get(value) ?? byProxy.get(value);
+	const peeled = peelReadProxy(value);
+
+	return byRaw.get(peeled) ?? byProxy.get(peeled);
 }
 
 export function rawOf(value: object): object {
-	return recordOf(value)?.raw ?? value;
+	return recordOf(value)?.raw ?? peelReadProxy(value);
 }
 
 export function proxyOf(raw: object): object {

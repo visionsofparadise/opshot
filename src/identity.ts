@@ -1,7 +1,6 @@
 import { rawOf } from "./node";
+import { getRegisteredReadProxyTarget } from "./readProxyRegistry";
 import { isObjectLike } from "./utils/predicates";
-
-const readProxyTargets = new WeakMap<object, object>();
 
 interface IdentityRecord {
 	token?: object;
@@ -10,12 +9,6 @@ interface IdentityRecord {
 
 const identityRecords = new WeakMap<WeakKey, IdentityRecord>();
 let nextInternId = 0;
-
-export const registerReadProxyTarget = (readProxy: object, target: object): void => {
-	readProxyTargets.set(readProxy, target);
-};
-
-export const getRegisteredReadProxyTarget = (readProxy: object): object | undefined => readProxyTargets.get(readProxy);
 
 function resolveIdentity(value: object | symbol): object | symbol;
 

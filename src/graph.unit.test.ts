@@ -1,7 +1,8 @@
 import { createMutableState } from "./createMutableState";
-import { ignore } from "./ignore";
+import { ignore, isIgnored } from "./ignore";
 import { isState } from "./isState";
 import type { Operation } from "./operation";
+import { createReadTracker } from "./react/readTracker";
 import { subscribe } from "./subscribe";
 import { unsafeTrack } from "./unsafeTrack";
 
@@ -410,6 +411,19 @@ describe("§1.6 ignore() marks an object; every edge to an ignored object is unt
 		expect(heard).toHaveLength(1);
 		expect(heard[0]?.[0]?.key).toBe("x");
 	});
+
+	it("ignore marks the object behind a read proxy", () => {
+		const state = createMutableState({ n: 0 });
+		const read = createReadTracker().wrap(state);
+
+		ignore(read);
+
+		expect(isIgnored(state)).toBe(true);
+
+		ignore(read, false);
+
+		expect(isIgnored(state)).toBe(false);
+	});
 });
 
 describe("§1.7 marking or clearing an object changes no existing edge", () => {
@@ -499,6 +513,25 @@ describe("§2.2 assigning a node into a state it currently occupies keeps its id
 
 		expect(state.a).toBe(state.b);
 		expect(state.a.n).toBe(1);
+	});
+
+	it("a read proxy written back resolves to the node it reads", () => {
+		const state = createMutableState({ frames: [{ id: "a" }, { id: "b" }] });
+		const first = state.frames[0];
+		const read = createReadTracker().wrap(state);
+
+		read.frames.reverse();
+
+		expect(state.frames[1]).toBe(first);
+
+		const [readSecond, readFirst] = read.frames;
+
+		if (readFirst === undefined || readSecond === undefined) throw new Error("missing frame");
+
+		state.frames = [readFirst, readSecond];
+
+		expect(state.frames[0]).toBe(first);
+		expect(state.frames.map((frame) => frame.id)).toEqual(["a", "b"]);
 	});
 
 	it("an aliased node keeps producing after one route is deleted", async () => {

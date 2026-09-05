@@ -655,6 +655,44 @@ describe("§6.2 re-render on a read edge", () => {
 	});
 });
 
+describe("§2.2 a scoped component writes read proxies back", () => {
+	it("keeps each node's identity through a reorder", async () => {
+		let reverse: (() => void) | undefined;
+		let write: { frames: Array<{ id: string }> } | undefined;
+
+		const Frames = scope<{ state: { frames: Array<{ id: string }> } }>(({ state }) => {
+			reverse = () => {
+				state.frames.reverse();
+			};
+
+			return <span data-testid="order">{state.frames.map((frame) => frame.id).join(",")}</span>;
+		});
+
+		const Parent: FC = () => {
+			const state = useMutableState({ frames: [{ id: "a" }, { id: "b" }] });
+
+			useEffect(() => {
+				write = createMutableState(state);
+			}, [state]);
+
+			return <Frames state={state} />;
+		};
+
+		render(<Parent />);
+
+		if (write === undefined) throw new Error("missing state");
+
+		const first = write.frames[0];
+
+		await act(async () => {
+			reverse?.();
+		});
+
+		expect(screen.getByTestId("order").textContent).toBe("b,a");
+		expect(write.frames[1]).toBe(first);
+	});
+});
+
 describe("§6.1 reads", () => {
 	const mountReader = <T extends object>(state: T, read: (value: T) => ReactNode) => {
 		let renders = 0;

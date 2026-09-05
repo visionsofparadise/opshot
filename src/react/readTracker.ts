@@ -1,5 +1,5 @@
-import { registerReadProxyTarget } from "../identity";
 import { recordOf, rawOf } from "../node";
+import { registerReadProxyTarget } from "../readProxyRegistry";
 import { isObjectLike } from "../utils/predicates";
 import { isRendering, learnNonRenderDispatcher } from "./renderPhase";
 import type { DirtyIndex } from "../handle";
