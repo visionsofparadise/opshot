@@ -2,7 +2,7 @@ import { flushWindow } from "./emit/window";
 import { requireHandle } from "./handle";
 
 /**
- * Ends the state's window now, delivering the operations gathered so far to its subscribers before returning.
+ * Ends the state's window now, delivering the operations gathered so far.
  *
  * @param state - State to flush.
  */
