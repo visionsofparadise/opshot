@@ -101,6 +101,36 @@ describe("§3.1 operations whose metas differ are never collapsed", () => {
 });
 
 describe("§4.1 a write inside batch carries its meta", () => {
+	it("a batch refuses a callable thenable returned by a callback", () => {
+		const thenable = Object.assign(() => undefined, { then: () => undefined });
+
+		expect(() => {
+			// @ts-expect-error
+			batch(() => thenable);
+		}).toThrow("opshot: batch requires a synchronous callback");
+	});
+
+	it("a batch refuses an async callback and leaves the stack balanced", () => {
+		const state = createMutableState({ count: 0, extra: 0 });
+		const heard = listen(state);
+
+		expect(() => {
+			// @ts-expect-error
+			batch(async () => {
+				state.count = 1;
+				await Promise.resolve();
+				state.count = 2;
+			}, "gesture");
+		}).toThrow("opshot: batch requires a synchronous callback");
+
+		batch(() => {
+			state.extra = 5;
+		}, "next");
+		flush(state);
+
+		expect(heard[0]?.find((operation) => operation.key === "extra")).toMatchObject({ meta: "next" });
+	});
+
 	it("tags writes, with nested batches taking the innermost meta", async () => {
 		const state = createMutableState({ n: 0, m: 0 });
 		const heard = listen(state);
