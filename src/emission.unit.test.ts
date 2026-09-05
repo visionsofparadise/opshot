@@ -219,6 +219,28 @@ describe("§5.3 emitOn sets the window", () => {
 });
 
 describe("flush ends the window", () => {
+	it("a flush of several states delivers each in argument order", () => {
+		const first = createMutableState({ count: 0 });
+		const second = createMutableState({ count: 0 });
+		const order: Array<object> = [];
+		const firstListener = vi.fn(() => {
+			order.push(first);
+		});
+		const secondListener = vi.fn(() => {
+			order.push(second);
+		});
+
+		subscribe(first, firstListener);
+		subscribe(second, secondListener);
+		first.count = 1;
+		second.count = 1;
+		flush(second, first);
+
+		expect(order).toEqual([second, first]);
+		expect(firstListener).toHaveBeenCalledTimes(1);
+		expect(secondListener).toHaveBeenCalledTimes(1);
+	});
+
 	it("two writes then a flush deliver one emission before any await", () => {
 		const state = createMutableState({ n: 0 });
 		const heard = listen(state);
