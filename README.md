@@ -10,8 +10,6 @@ Mutable state for React, with re-render for only the components that read what c
 npm install opshot
 ```
 
-`opshot` is the state package. `useMutableState` and `scope` import from `opshot/react`; the root entry needs no React.
-
 ## Mutable state
 
 React state is immutable: changing one field means spreading the old object into a new one.
@@ -81,8 +79,6 @@ const Child = scope<{ user: User }>(({ user }) => <p>{user.age}</p>);
 
 This is how you optimize re-rendering across your component tree: place `scope` boundaries where you want re-renders contained, and each boundary re-renders only when a field it read changes. `useMutableState` is a boundary itself.
 
-Wrap a memoized child that reads state in `scope`, so it owns its subscriptions when React skips a render. `scope(memo(Child))` keeps those subscriptions with the child as its parent re-renders.
-
 ## Creating State
 
 ```tsx
@@ -121,9 +117,7 @@ const Player = () => {
 
 `createMutableState(properties, options)` creates the same state outside a component, for a store or a process with no React.
 
-## Identity
-
-A component holds its own view of a state: the same object across its renders until a change lands at or beneath it, and a different object from the state held outside it. A dependency array can name a state or a field object and re-runs only when something under it changed. `subscribe` and `flush` accept a component's view of the root state. Any view can be assigned into a state. `isSameIdentity(a, b)` says whether two objects are one state, `identify(state)` returns one stable token per state for a dependency array or a Map key, and `isState(value)` tells a state from a plain object.
+`ignore(value, false)` and `unsafeTrack(value, false)` undo these effects on the value.
 
 ## Constraints
 
@@ -137,8 +131,6 @@ It can't track:
 - Non-writable properties that hold an object
 
 By default opshot throws when it meets one of these, naming the value that caused it. Passing `strict: false` turns off those errors but may cause unpredictable behaviour.
-
-`ignore(value)` stores a value without state inside it being tracked, and `ignore(value, false)` undoes that. `unsafeTrack(value)` does the reverse: it takes a value strict mode would reject, tracking the plain data on it and quietly missing the rest. Either mark only affects states the value enters afterwards. Reads inside an ignored value are untracked too, so a component does not re-render for them.
 
 ## Tracked collections
 
@@ -162,12 +154,16 @@ import { useEffect } from "react";
 import { subscribe } from "opshot";
 import { useMutableState } from "opshot/react";
 
+interface Meta {
+	source: string;
+}
+
 const Counter = () => {
 	const counter = useMutableState({ count: 0 });
 
 	useEffect(
 		() =>
-			subscribe(counter, (operations) => {
+			subscribe<Meta | undefined>(counter, (operations) => {
 				// operations: [{ kind: "change", node, key: "count", before: 0, after: 1, meta: undefined }]
 			}),
 		[counter],
@@ -177,8 +173,6 @@ const Counter = () => {
 };
 ```
 
-Type the meta your batches carry with `subscribe<Meta>(state, listener)`.
-
 ## Operations
 
 An operation is one key's change on one node:
@@ -186,19 +180,31 @@ An operation is one key's change on one node:
 ```ts
 interface AddOperation<Meta = unknown> {
 	readonly kind: "add";
-	readonly node: Record<string, unknown>;
+	readonly node: Record<string, unknown>; // The live state being applied to
 	readonly key: string;
 	readonly after: unknown;
 	readonly meta: Meta;
 }
 
-// ChangeOperation carries before and after; DeleteOperation carries before.
+interface ChangeOperation<Meta = unknown> {
+	readonly kind: "change";
+	readonly node: Record<string, unknown>;
+	readonly key: string;
+	readonly before: unknown;
+	readonly after: unknown;
+	readonly meta: Meta;
+}
+
+interface DeleteOperation<Meta = unknown> {
+	readonly kind: "delete";
+	readonly node: Record<string, unknown>;
+	readonly key: string;
+	readonly before: unknown;
+	readonly meta: Meta;
+}
+
 type Operation<Meta = unknown> = AddOperation<Meta> | ChangeOperation<Meta> | DeleteOperation<Meta>;
 ```
-
-`node` is the live state, so writing through it is tracked like any other write. Operations arrive in the order of the first write each contains. An edit to an array that changes its length also emits a `length` operation. For an array edit with one operation per key, applying the emission's values back in any order converges.
-
-Undo and redo are a switch on `kind`:
 
 ```ts
 const revert = (operation: Operation) => {
@@ -212,11 +218,11 @@ const apply = (operation: Operation) => {
 };
 ```
 
-Revert an emission in reverse and apply it forward. The package's tests replay push, splice, and a whole-array assignment both ways.
+Undo and redo are a switch on `kind`. Revert an emission in reverse and apply it forward.
 
 ## Emission
 
-A state gathers its writes and delivers them together. The window is a microtask by default, so everything you change in one go arrives as one emission carrying the net change — a listener hears where a field ended up, not every step it took there.
+A state gathers its writes and delivers them together, in order. The window is a microtask by default, so everything you change in one go arrives as one emission carrying the net change — a listener hears where a field ended up, not every step it took there.
 
 `emitOn` sets the window instead. opshot hands you a `flush`, and the state waits until you call it.
 
@@ -245,9 +251,7 @@ Separate from that callback, the `flush(state, ...states)` export ends each stat
 
 ## Batches
 
-`batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's. Writes to one key fold into one operation only when their metas are the same value, so pass a string or an object you hold rather than a fresh literal.
-
-The callback must be synchronous and return no value. Use a block body for a write expression that returns a value; a returned promise throws because the batch's metadata ends when the callback returns.
+`batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's.
 
 ```tsx
 import { useEffect } from "react";
@@ -275,6 +279,26 @@ const TitleBar = () => {
 
 	// ...
 };
+```
+
+## Identity
+
+```tsx
+const object = { name: "Ada", age: 36 };
+const state = useMutableState(object);
+
+object === state; // false
+isSameIdentity(object, state); // true
+
+isState(object); // false
+isState(state); // true
+```
+
+```tsx
+// The state's identity changes when the state or anything nested inside it changes.
+useEffect(() => {
+	// ...
+}, [state]);
 ```
 
 ## License
