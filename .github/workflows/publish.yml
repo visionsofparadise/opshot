@@ -63,14 +63,9 @@ jobs:
            if: steps.check.outputs.skip == 'false'
            run: npm publish --access public
 
-         - name: Tag and release
+         - name: Tag published version
            if: steps.check.outputs.skip == 'false'
-           env:
-              GH_TOKEN: ${{ github.token }}
            run: |
               PACKAGE_VERSION=$(node -p "require('./package.json').version")
-              awk -v version="$PACKAGE_VERSION" '/^## /{printing = ($2 == version); next} printing' CHANGELOG.md | sed '/./,$!d' > release-notes.md
-              grep -q '[^[:space:]]' release-notes.md
               git tag "v$PACKAGE_VERSION"
               git push origin "v$PACKAGE_VERSION"
-              gh release create "v$PACKAGE_VERSION" --title "v$PACKAGE_VERSION" --notes-file release-notes.md

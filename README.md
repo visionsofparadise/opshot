@@ -247,6 +247,8 @@ Separate from that callback, the `flush(state, ...states)` export ends each stat
 
 `batch` runs a callback and tags every write inside it with your `meta`, so a listener can tell its own writes from everyone else's. Writes to one key fold into one operation only when their metas are the same value, so pass a string or an object you hold rather than a fresh literal.
 
+The callback must be synchronous and return no value. Use a block body for a write expression that returns a value; a returned promise throws because the batch's metadata ends when the callback returns.
+
 ```tsx
 import { useEffect } from "react";
 import { batch, subscribe } from "opshot";
