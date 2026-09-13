@@ -192,3 +192,37 @@ describe("§7.2 a node entering a state while marked, or entering beneath an exe
 		expect(first.size).toBe(1);
 	});
 });
+
+describe("strict defaults to development mode", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("throws outside production", () => {
+		vi.stubEnv("NODE_ENV", "development");
+
+		expect(() => createMutableState({ a: new Map() })).toThrow("Map at /a cannot be tracked");
+	});
+
+	it("admits a dangerous edge untracked in production", () => {
+		vi.stubEnv("NODE_ENV", "production");
+
+		const state = createMutableState({ a: new Map<string, number>() });
+
+		expect(state.a).toBeInstanceOf(Map);
+	});
+
+	it("strict: true overrides production", () => {
+		vi.stubEnv("NODE_ENV", "production");
+
+		expect(() => createMutableState({ a: new Map() }, { strict: true })).toThrow("Map at /a cannot be tracked");
+	});
+
+	it("strict: false overrides development", () => {
+		vi.stubEnv("NODE_ENV", "development");
+
+		const state = createMutableState({ a: new Map<string, number>() }, { strict: false });
+
+		expect(state.a).toBeInstanceOf(Map);
+	});
+});

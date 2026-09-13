@@ -130,7 +130,7 @@ It can't track:
 - Own function properties on class instances
 - Non-writable properties that hold an object
 
-By default opshot throws when it meets one of these, naming the value that caused it. Passing `strict: false` turns off those errors but may cause unpredictable behaviour.
+`strict: true` throws when opshot meets one of these, naming the value that caused it; `strict: false` stores the value untracked. It defaults to true in development and false in production.
 
 ## Tracked collections
 

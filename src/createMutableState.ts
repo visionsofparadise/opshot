@@ -6,6 +6,8 @@ import { peelReadProxy } from "./peelReadProxy";
 import { handler } from "./proxy";
 import { isUnsafeMarked } from "./unsafeTrack";
 
+declare const process: { readonly env: { readonly NODE_ENV?: string } };
+
 installProxyHandler(handler);
 
 /**
@@ -29,7 +31,7 @@ export interface MutableStateOptions {
 	readonly emitOn?: EmissionScheduler;
 
 	/**
-	 * When true, throws at a dangerous edge, at the cause. Defaults to true.
+	 * When true, throws at a dangerous edge, at the cause. Defaults to `process.env.NODE_ENV !== "production"`, so development throws and production tracks what it can.
 	 */
 	readonly strict?: boolean;
 }
@@ -57,7 +59,7 @@ export function createMutableState<T extends object>(properties: T, options?: Mu
 
 	if (handleOf(incoming) !== undefined) return proxyOf(incoming) as T;
 
-	const strict = options?.strict !== false;
+	const strict = options?.strict ?? process.env.NODE_ENV !== "production";
 	const exempt = !strict || isUnsafeMarked(root);
 	const handle: Handle = {
 		root,
