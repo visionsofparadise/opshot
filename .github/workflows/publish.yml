@@ -1,14 +1,10 @@
 name: Publish Package
 
-on:
-   push:
-      branches: [main]
-      paths:
-         - "package.json"
-   workflow_dispatch:
+on: workflow_dispatch
 
 jobs:
    publish:
+      if: github.ref == 'refs/heads/main'
       runs-on: ubuntu-latest
       permissions:
          id-token: write
